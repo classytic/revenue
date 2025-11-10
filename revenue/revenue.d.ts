@@ -105,13 +105,21 @@ export class SubscriptionService {
     amount: number;
     currency?: string;
     gateway?: string;
+    entity?: string;
+    monetizationType?: 'free' | 'subscription' | 'purchase';
     paymentData?: any;
     metadata?: Record<string, any>;
     idempotencyKey?: string;
   }): Promise<{ subscription: any; transaction: any; paymentIntent: PaymentIntent | null }>;
 
   activate(subscriptionId: string, options?: { timestamp?: Date }): Promise<any>;
-  renew(subscriptionId: string, params?: any): Promise<{ subscription: any; transaction: any; paymentIntent: PaymentIntent }>;
+  renew(subscriptionId: string, params?: {
+    gateway?: string;
+    entity?: string;
+    paymentData?: any;
+    metadata?: Record<string, any>;
+    idempotencyKey?: string;
+  }): Promise<{ subscription: any; transaction: any; paymentIntent: PaymentIntent }>;
   cancel(subscriptionId: string, options?: { immediate?: boolean; reason?: string }): Promise<any>;
   pause(subscriptionId: string, options?: { reason?: string }): Promise<any>;
   resume(subscriptionId: string, options?: { extendPeriod?: boolean }): Promise<any>;
@@ -193,7 +201,23 @@ export interface RevenueOptions {
   providers?: Record<string, PaymentProvider>;
   hooks?: Record<string, Function[]>;
   config?: {
-    targetModels?: string[];
+    /**
+     * Maps logical entity identifiers to custom transaction category names
+     *
+     * Entity identifiers are NOT database model names - they are logical identifiers
+     * you choose to organize your business logic.
+     *
+     * @example
+     * categoryMappings: {
+     *   Order: 'order_subscription',              // Customer orders
+     *   PlatformSubscription: 'platform_subscription',  // Tenant/org subscriptions
+     *   TenantUpgrade: 'tenant_upgrade',          // Tenant upgrades
+     *   Membership: 'gym_membership',              // User memberships
+     *   Enrollment: 'course_enrollment',           // Course enrollments
+     * }
+     *
+     * If not specified, falls back to library defaults: 'subscription' or 'purchase'
+     */
     categoryMappings?: Record<string, string>;
     [key: string]: any;
   };
@@ -218,19 +242,10 @@ export const TRANSACTION_STATUS: {
   PARTIALLY_REFUNDED: 'partially_refunded';
 };
 
-export const TRANSACTION_TYPES: {
-  INCOME: 'income';
-  EXPENSE: 'expense';
-};
-
-// Note: PAYMENT_METHOD removed - users define their own payment methods
-
 export const PAYMENT_GATEWAY_TYPE: {
   MANUAL: 'manual';
   STRIPE: 'stripe';
   SSLCOMMERZ: 'sslcommerz';
-  BKASH_GATEWAY: 'bkash_gateway';
-  NAGAD_GATEWAY: 'nagad_gateway';
 };
 
 export const SUBSCRIPTION_STATUS: {
@@ -263,15 +278,6 @@ export const subscriptionPlanSchema: Schema;
 export const gatewaySchema: Schema;
 export const commissionSchema: Schema;
 export const paymentDetailsSchema: Schema;
-export const tenantSnapshotSchema: Schema;
-export const timelineEventSchema: Schema;
-export const customerInfoSchema: Schema;
-export const customDiscountSchema: Schema;
-export const stripeAccountSchema: Schema;
-export const sslcommerzAccountSchema: Schema;
-export const bkashMerchantSchema: Schema;
-export const bankAccountSchema: Schema;
-export const walletSchema: Schema;
 
 // ============ UTILITIES ============
 

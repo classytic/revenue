@@ -17,6 +17,8 @@ import {
   PaymentIntentCreationError,
 } from '../core/errors.js';
 import { triggerHook } from '../utils/hooks.js';
+import { resolveCategory } from '../utils/category-resolver.js';
+import { MONETIZATION_TYPES } from '../enums/monetization.enums.js';
 
 /**
  * Subscription Service
@@ -41,6 +43,9 @@ export class SubscriptionService {
    * @param {Number} params.amount - Subscription amount
    * @param {String} params.currency - Currency code (default: 'BDT')
    * @param {String} params.gateway - Payment gateway to use (default: 'manual')
+   * @param {String} params.entity - Logical entity identifier (e.g., 'Order', 'PlatformSubscription', 'Membership')
+   *                                 NOTE: This is NOT a database model name - it's just a logical identifier for categoryMappings
+   * @param {String} params.monetizationType - Monetization type ('free', 'subscription', 'purchase')
    * @param {Object} params.paymentData - Payment method details
    * @param {Object} params.metadata - Additional metadata
    * @param {String} params.idempotencyKey - Idempotency key for duplicate prevention
@@ -53,6 +58,8 @@ export class SubscriptionService {
       amount,
       currency = 'BDT',
       gateway = 'manual',
+      entity = null,
+      monetizationType = MONETIZATION_TYPES.SUBSCRIPTION,
       paymentData,
       metadata = {},
       idempotencyKey = null,
@@ -99,6 +106,9 @@ export class SubscriptionService {
         throw new PaymentIntentCreationError(gateway, error);
       }
 
+      // Resolve category based on entity and monetizationType
+      const category = resolveCategory(entity, monetizationType, this.config.categoryMappings);
+
       // Create transaction record
       const TransactionModel = this.models.Transaction;
       transaction = await TransactionModel.create({
@@ -106,7 +116,7 @@ export class SubscriptionService {
         customerId: data.customerId || null,
         amount,
         currency,
-        category: 'platform_subscription',
+        category,
         type: 'credit',
         status: paymentIntent.status === 'succeeded' ? 'verified' : 'pending',
         gateway: {
@@ -121,6 +131,8 @@ export class SubscriptionService {
         metadata: {
           ...metadata,
           planKey,
+          entity,
+          monetizationType,
           paymentIntentId: paymentIntent.id,
         },
         idempotencyKey: idempotencyKey || `sub_${nanoid(16)}`,
@@ -146,6 +158,8 @@ export class SubscriptionService {
         metadata: {
           ...metadata,
           isFree,
+          entity,
+          monetizationType,
         },
         ...data,
       });
@@ -218,35 +232,41 @@ export class SubscriptionService {
    *
    * @param {String} subscriptionId - Subscription ID
    * @param {Object} params - Renewal parameters
+   * @param {String} params.gateway - Payment gateway to use (default: 'manual')
+   * @param {String} params.entity - Logical entity identifier (optional, inherits from subscription)
+   * @param {Object} params.paymentData - Payment method details
+   * @param {Object} params.metadata - Additional metadata
+   * @param {String} params.idempotencyKey - Idempotency key for duplicate prevention
    * @returns {Promise<Object>} { subscription, transaction, paymentIntent }
    */
   async renew(subscriptionId, params = {}) {
     const {
       gateway = 'manual',
+      entity = null,
       paymentData,
       metadata = {},
       idempotencyKey = null,
     } = params;
 
     if (!this.models.Subscription) {
-      throw new Error('Subscription model not registered');
+      throw new ModelNotRegisteredError('Subscription');
     }
 
     const SubscriptionModel = this.models.Subscription;
     const subscription = await SubscriptionModel.findById(subscriptionId);
 
     if (!subscription) {
-      throw new Error('Subscription not found');
+      throw new SubscriptionNotFoundError(subscriptionId);
     }
 
     if (subscription.amount === 0) {
-      throw new Error('Free subscriptions do not require renewal');
+      throw new InvalidAmountError(0, 'Free subscriptions do not require renewal');
     }
 
     // Get provider
     const provider = this.providers[gateway];
     if (!provider) {
-      throw new Error(`Payment provider "${gateway}" not found`);
+      throw new ProviderNotFoundError(gateway, Object.keys(this.providers));
     }
 
     // Create payment intent
@@ -260,6 +280,11 @@ export class SubscriptionService {
       },
     });
 
+    // Resolve category - use provided entity or inherit from subscription metadata
+    const effectiveEntity = entity || subscription.metadata?.entity;
+    const effectiveMonetizationType = subscription.metadata?.monetizationType || MONETIZATION_TYPES.SUBSCRIPTION;
+    const category = resolveCategory(effectiveEntity, effectiveMonetizationType, this.config.categoryMappings);
+
     // Create transaction
     const TransactionModel = this.models.Transaction;
     const transaction = await TransactionModel.create({
@@ -267,7 +292,7 @@ export class SubscriptionService {
       customerId: subscription.customerId,
       amount: subscription.amount,
       currency: subscription.currency || 'BDT',
-      category: 'platform_subscription',
+      category,
       type: 'credit',
       status: paymentIntent.status === 'succeeded' ? 'verified' : 'pending',
       gateway: {
@@ -282,6 +307,8 @@ export class SubscriptionService {
       metadata: {
         ...metadata,
         subscriptionId: subscription._id.toString(),
+        entity: effectiveEntity,
+        monetizationType: effectiveMonetizationType,
         isRenewal: true,
         paymentIntentId: paymentIntent.id,
       },
@@ -322,14 +349,14 @@ export class SubscriptionService {
     const { immediate = false, reason = null } = options;
 
     if (!this.models.Subscription) {
-      throw new Error('Subscription model not registered');
+      throw new ModelNotRegisteredError('Subscription');
     }
 
     const SubscriptionModel = this.models.Subscription;
     const subscription = await SubscriptionModel.findById(subscriptionId);
 
     if (!subscription) {
-      throw new Error('Subscription not found');
+      throw new SubscriptionNotFoundError(subscriptionId);
     }
 
     const now = new Date();
@@ -369,18 +396,18 @@ export class SubscriptionService {
     const { reason = null } = options;
 
     if (!this.models.Subscription) {
-      throw new Error('Subscription model not registered');
+      throw new ModelNotRegisteredError('Subscription');
     }
 
     const SubscriptionModel = this.models.Subscription;
     const subscription = await SubscriptionModel.findById(subscriptionId);
 
     if (!subscription) {
-      throw new Error('Subscription not found');
+      throw new SubscriptionNotFoundError(subscriptionId);
     }
 
     if (!subscription.isActive) {
-      throw new Error('Only active subscriptions can be paused');
+      throw new SubscriptionNotActiveError(subscriptionId, 'Only active subscriptions can be paused');
     }
 
     const pausedAt = new Date();
@@ -412,18 +439,23 @@ export class SubscriptionService {
     const { extendPeriod = false } = options;
 
     if (!this.models.Subscription) {
-      throw new Error('Subscription model not registered');
+      throw new ModelNotRegisteredError('Subscription');
     }
 
     const SubscriptionModel = this.models.Subscription;
     const subscription = await SubscriptionModel.findById(subscriptionId);
 
     if (!subscription) {
-      throw new Error('Subscription not found');
+      throw new SubscriptionNotFoundError(subscriptionId);
     }
 
     if (!subscription.pausedAt) {
-      throw new Error('Only paused subscriptions can be resumed');
+      throw new InvalidStateTransitionError(
+        'resume',
+        'paused',
+        subscription.status,
+        'Only paused subscriptions can be resumed'
+      );
     }
 
     const now = new Date();
@@ -463,7 +495,7 @@ export class SubscriptionService {
    */
   async list(filters = {}, options = {}) {
     if (!this.models.Subscription) {
-      throw new Error('Subscription model not registered');
+      throw new ModelNotRegisteredError('Subscription');
     }
 
     const SubscriptionModel = this.models.Subscription;
@@ -486,14 +518,14 @@ export class SubscriptionService {
    */
   async get(subscriptionId) {
     if (!this.models.Subscription) {
-      throw new Error('Subscription model not registered');
+      throw new ModelNotRegisteredError('Subscription');
     }
 
     const SubscriptionModel = this.models.Subscription;
     const subscription = await SubscriptionModel.findById(subscriptionId);
 
     if (!subscription) {
-      throw new Error('Subscription not found');
+      throw new SubscriptionNotFoundError(subscriptionId);
     }
 
     return subscription;

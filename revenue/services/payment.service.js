@@ -132,7 +132,7 @@ export class PaymentService {
     }
 
     if (!transaction) {
-      throw new Error('Transaction not found');
+      throw new TransactionNotFoundError(paymentIntentId);
     }
 
     // Get provider
@@ -140,7 +140,7 @@ export class PaymentService {
     const provider = this.providers[gatewayType];
 
     if (!provider) {
-      throw new Error(`Payment provider "${gatewayType}" not found`);
+      throw new ProviderNotFoundError(gatewayType, Object.keys(this.providers));
     }
 
     // Get status from provider
@@ -218,7 +218,7 @@ export class PaymentService {
       refundResult = await provider.refund(paymentId, refundAmount, { reason });
     } catch (error) {
       this.logger.error('Refund failed:', error);
-      throw new Error(`Refund failed: ${error.message}`);
+      throw new RefundError(paymentId, error.message);
     }
 
     // Update transaction
@@ -262,7 +262,7 @@ export class PaymentService {
     const provider = this.providers[providerName];
 
     if (!provider) {
-      throw new Error(`Payment provider "${providerName}" not found`);
+      throw new ProviderNotFoundError(providerName, Object.keys(this.providers));
     }
 
     // Process webhook via provider
@@ -271,7 +271,7 @@ export class PaymentService {
       webhookEvent = await provider.handleWebhook(payload, headers);
     } catch (error) {
       this.logger.error('Webhook processing failed:', error);
-      throw new Error(`Webhook processing failed: ${error.message}`);
+      throw new ProviderError(providerName, `Webhook processing failed: ${error.message}`);
     }
 
     // Find transaction by payment intent ID from webhook
@@ -286,7 +286,7 @@ export class PaymentService {
         eventId: webhookEvent.id,
         paymentIntentId: webhookEvent.data.paymentIntentId,
       });
-      throw new Error('Transaction not found for payment intent');
+      throw new TransactionNotFoundError(webhookEvent.data.paymentIntentId);
     }
 
     // Check for duplicate webhook processing (idempotency)
@@ -368,7 +368,7 @@ export class PaymentService {
     const transaction = await TransactionModel.findById(transactionId);
 
     if (!transaction) {
-      throw new Error('Transaction not found');
+      throw new TransactionNotFoundError(transactionId);
     }
 
     return transaction;
@@ -383,7 +383,7 @@ export class PaymentService {
   getProvider(providerName) {
     const provider = this.providers[providerName];
     if (!provider) {
-      throw new Error(`Payment provider "${providerName}" not found. Available: ${Object.keys(this.providers).join(', ')}`);
+      throw new ProviderNotFoundError(providerName, Object.keys(this.providers));
     }
     return provider;
   }

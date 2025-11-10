@@ -6,7 +6,7 @@
  *
  * Usage:
  * ```javascript
- * import { setLogger } from '@fitverse/monetization';
+ * import { setLogger } from '@classytic/revenue';
  *
  * // Optional: Use your own logger
  * setLogger(myPinoLogger);

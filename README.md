@@ -88,24 +88,25 @@ const revenue = createRevenue({
 
 ---
 
-## 📝 Current Status
+## 📝 Publishing
 
-**Local Development (Fitverse):**
-- ✅ Packages are in `lib/revenue` and `lib/revenue-manual`
-- ✅ Imported via `#lib/*` path mappings
-- ✅ Working with `bootstrap/revenue.js`
+**To publish packages:**
+```bash
+# Install dependencies
+npm install
 
-**Ready to Publish:**
-- ✅ Packages copied to `packages/` folder
-- ✅ Workspace configured
-- ✅ Can extract anytime by copying `packages/` folder
+# Publish both packages
+npm run publish:all
 
-**When you're ready:**
-1. Copy this `packages/` folder to new repo
-2. Run `npm install`
-3. Run `npm run publish:all`
-4. Install in fitverse-be: `npm install @classytic/revenue @classytic/revenue-manual`
-5. Update imports from `#lib/revenue` to `@classytic/revenue`
+# Or publish individually
+npm run publish:revenue
+npm run publish:revenue-manual
+```
+
+**After publishing, install in your project:**
+```bash
+npm install @classytic/revenue @classytic/revenue-manual
+```
 
 ---
 

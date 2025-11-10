@@ -29,15 +29,31 @@ Complete guide for building custom payment provider packages (Stripe, PayPal, SS
 
 ## 📖 Examples
 
-### [Basic Usage](./examples/basic-usage.js)
+All examples are in the core package for easy reference:
+
+### [Basic Usage](../revenue/examples/basic-usage.js)
 Shows how to set up the revenue system with subscriptions and payment processing.
 
-### [Transaction Model](./examples/transaction.model.js)
+### [Transaction Model](../revenue/examples/transaction.model.js)
 Complete example showing how to:
 - Merge library enums with your own custom categories
 - Define payment methods for your region/business
 - Set up proper Mongoose schemas
 - Use library-provided schema components
+
+### [Category Mappings](../revenue/examples/category-mappings.js)
+Comprehensive examples showing how to use custom transaction categories:
+- E-commerce platform with multiple order types
+- Gym management system
+- Online learning platform
+- Default behavior without mappings
+
+### [Multivendor Platform](../revenue/examples/multivendor-platform.js)
+Real-world example for multivendor/SaaS platforms:
+- Platform-level subscriptions (tenant billing)
+- Customer-level transactions (orders, memberships)
+- Vendor-level tracking (commissions, payouts)
+- Complete workflow demonstration
 
 ## 🏗️ Architecture
 
@@ -114,18 +130,26 @@ When contributing:
 
 ```
 @classytic/revenue (monorepo)
-├── docs/                         # All documentation
+├── docs/                         # Documentation
 │   ├── README.md                 # This file
-│   ├── guides/
-│   │   └── PROVIDER_GUIDE.md     # Building payment providers
-│   └── examples/
-│       ├── basic-usage.js
-│       └── transaction.model.js
-├── revenue/                      # Core package
-│   └── package.json             # @classytic/revenue
-├── revenue-manual/               # Manual provider
-│   └── package.json             # @classytic/revenue-manual
-└── package.json                  # Workspace root
+│   └── guides/
+│       └── PROVIDER_GUIDE.md     # Building payment providers
+├── revenue/                      # Core package (@classytic/revenue)
+│   ├── core/                     # DI container, builder, errors
+│   ├── services/                 # Subscription, payment, transaction
+│   ├── providers/                # Provider base classes
+│   ├── enums/                    # Monetization, transaction enums
+│   ├── schemas/                  # Reusable Mongoose schemas
+│   ├── utils/                    # Category resolver, hooks, logger
+│   ├── examples/                 # Usage examples (not published to npm)
+│   ├── index.js                  # Main entry point
+│   ├── revenue.d.ts              # TypeScript definitions
+│   └── package.json              # @classytic/revenue
+├── revenue-manual/               # Manual provider package
+│   ├── index.js                  # Provider implementation
+│   ├── revenue-manual.d.ts       # TypeScript definitions
+│   └── package.json              # @classytic/revenue-manual
+└── package.json                  # Workspace root (private)
 ```
 
 ## 🔍 Key Concepts

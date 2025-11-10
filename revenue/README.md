@@ -21,6 +21,51 @@ Thin, focused, production-ready library with smart defaults. Built for SaaS, mar
 npm install @classytic/revenue
 ```
 
+## Core Concepts
+
+### Monetization Types (Strict)
+The library supports **3 monetization types** (strict):
+- **FREE**: No payment required
+- **SUBSCRIPTION**: Recurring payments
+- **PURCHASE**: One-time payments
+
+### Transaction Categories (Flexible)
+You can use **custom category names** for your business logic while using the strict monetization types:
+- `'order_subscription'` for subscription orders
+- `'gym_membership'` for gym memberships
+- `'course_enrollment'` for course enrollments
+- Or any custom names you need
+
+### How It Works
+```javascript
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    categoryMappings: {
+      Order: 'order_subscription',              // Customer orders
+      PlatformSubscription: 'platform_subscription',  // Tenant/org subscriptions
+      Membership: 'gym_membership',              // User memberships
+      Enrollment: 'course_enrollment',           // Course enrollments
+    }
+  }
+});
+
+// All these use SUBSCRIPTION monetization type but different categories
+await revenue.subscriptions.create({
+  entity: 'Order',                // Logical identifier → maps to 'order_subscription'
+  monetizationType: 'subscription',
+  // ...
+});
+
+await revenue.subscriptions.create({
+  entity: 'PlatformSubscription',  // Logical identifier → maps to 'platform_subscription'
+  monetizationType: 'subscription',
+  // ...
+});
+```
+
+**Note:** `entity` is NOT a database model name - it's just a logical identifier you choose to organize your business logic.
+
 ## Transaction Model Setup
 
 Spread library enums/schemas into your Transaction model:
@@ -37,9 +82,13 @@ import {
   paymentDetailsSchema,
 } from '@classytic/revenue/schemas';
 
-// Merge library categories with your own
+// Merge library categories with your custom ones
 const MY_CATEGORIES = {
-  ...LIBRARY_CATEGORIES,  // subscription, purchase
+  ...LIBRARY_CATEGORIES,           // subscription, purchase (library defaults)
+  ORDER_SUBSCRIPTION: 'order_subscription',
+  ORDER_PURCHASE: 'order_purchase',
+  GYM_MEMBERSHIP: 'gym_membership',
+  COURSE_ENROLLMENT: 'course_enrollment',
   SALARY: 'salary',
   RENT: 'rent',
   EQUIPMENT: 'equipment',
@@ -90,6 +139,145 @@ const { subscription, transaction } = await revenue.subscriptions.create({
 ```
 
 That's it! The package works immediately with sensible defaults.
+
+## Real-World Use Cases
+
+### E-commerce Platform with Multiple Order Types
+
+```javascript
+// Setup
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    categoryMappings: {
+      Order: 'order_subscription',      // Recurring orders (meal kits, subscriptions)
+      Purchase: 'order_purchase',        // One-time orders
+    }
+  }
+});
+
+// Subscription order (meal kit subscription)
+const { subscription, transaction } = await revenue.subscriptions.create({
+  data: { organizationId, customerId },
+  entity: 'Order',                    // Logical identifier
+  monetizationType: 'subscription',    // STRICT: Must be subscription/purchase/free
+  planKey: 'monthly',
+  amount: 49.99,
+  metadata: { productType: 'meal_kit' }
+});
+// Transaction created with category: 'order_subscription'
+
+// One-time purchase order
+const { transaction } = await revenue.subscriptions.create({
+  data: { organizationId, customerId },
+  entity: 'Purchase',                 // Logical identifier
+  monetizationType: 'purchase',
+  amount: 99.99,
+  metadata: { productType: 'electronics' }
+});
+// Transaction created with category: 'order_purchase'
+```
+
+### Gym Management System
+
+```javascript
+// Setup
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    categoryMappings: {
+      Membership: 'gym_membership',
+      PersonalTraining: 'personal_training',
+      DayPass: 'day_pass',
+    }
+  }
+});
+
+// Monthly gym membership
+await revenue.subscriptions.create({
+  entity: 'Membership',
+  monetizationType: 'subscription',
+  planKey: 'monthly',
+  amount: 59.99,
+});
+// Transaction: 'gym_membership'
+
+// Personal training package (one-time purchase)
+await revenue.subscriptions.create({
+  entity: 'PersonalTraining',
+  monetizationType: 'purchase',
+  amount: 299.99,
+});
+// Transaction: 'personal_training'
+
+// Day pass (free trial)
+await revenue.subscriptions.create({
+  entity: 'DayPass',
+  monetizationType: 'free',
+  amount: 0,
+});
+// No transaction created for free
+```
+
+### Online Learning Platform
+
+```javascript
+// Setup
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    categoryMappings: {
+      CourseEnrollment: 'course_enrollment',
+      MembershipPlan: 'membership_plan',
+    }
+  }
+});
+
+// One-time course purchase
+await revenue.subscriptions.create({
+  entity: 'CourseEnrollment',
+  monetizationType: 'purchase',
+  amount: 99.00,
+  metadata: { courseId: 'react-advanced' }
+});
+// Transaction: 'course_enrollment'
+
+// Monthly all-access membership
+await revenue.subscriptions.create({
+  entity: 'MembershipPlan',
+  monetizationType: 'subscription',
+  planKey: 'monthly',
+  amount: 29.99,
+});
+// Transaction: 'membership_plan'
+```
+
+### Without Category Mappings (Defaults)
+
+```javascript
+// No mappings defined - uses library defaults
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    categoryMappings: {}  // Empty or omit this
+  }
+});
+
+// All subscriptions use default 'subscription' category
+await revenue.subscriptions.create({
+  monetizationType: 'subscription',
+  planKey: 'monthly',
+  amount: 49.99,
+});
+// Transaction created with category: 'subscription' (library default)
+
+// All purchases use default 'purchase' category
+await revenue.subscriptions.create({
+  monetizationType: 'purchase',
+  amount: 99.99,
+});
+// Transaction created with category: 'purchase' (library default)
+```
 
 ## Usage Examples
 
