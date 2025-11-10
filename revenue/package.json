@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Enterprise revenue management system with subscriptions, purchases, proration, and payment processing",
   "main": "index.js",
   "types": "revenue.d.ts",
@@ -39,10 +39,22 @@
     "node": ">=18.0.0"
   },
   "exports": {
-    ".": "./index.js",
-    "./enums": "./enums/index.js",
-    "./schemas": "./schemas/index.js",
-    "./utils": "./utils/index.js"
+    ".": {
+      "types": "./revenue.d.ts",
+      "default": "./index.js"
+    },
+    "./enums": {
+      "types": "./enums/index.d.ts",
+      "default": "./enums/index.js"
+    },
+    "./schemas": {
+      "types": "./schemas/index.d.ts",
+      "default": "./schemas/index.js"
+    },
+    "./utils": {
+      "types": "./utils/index.d.ts",
+      "default": "./utils/index.js"
+    }
   },
   "files": [
     "index.js",

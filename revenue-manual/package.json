@@ -1,8 +1,9 @@
 {
   "name": "@classytic/revenue-manual",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Manual payment provider for @classytic/revenue - Reference implementation",
   "main": "index.js",
+  "types": "revenue-manual.d.ts",
   "type": "module",
   "keywords": [
     "revenue",
@@ -24,11 +25,18 @@
   },
   "files": [
     "index.js",
+    "revenue-manual.d.ts",
     "LICENSE",
     "README.md"
   ],
+  "exports": {
+    ".": {
+      "types": "./revenue-manual.d.ts",
+      "default": "./index.js"
+    }
+  },
   "peerDependencies": {
-    "@classytic/revenue": "^0.0.1"
+    "@classytic/revenue": ">=0.0.1 <1.0.0"
   },
   "dependencies": {
     "nanoid": "^5.1.6"
