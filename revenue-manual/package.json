@@ -1,0 +1,39 @@
+{
+  "name": "@classytic/revenue-manual",
+  "version": "0.0.1",
+  "description": "Manual payment provider for @classytic/revenue - Reference implementation",
+  "main": "index.js",
+  "type": "module",
+  "keywords": [
+    "revenue",
+    "payment",
+    "manual",
+    "provider",
+    "cash",
+    "bank-transfer",
+    "mobile-money",
+    "bkash",
+    "nagad",
+    "rocket"
+  ],
+  "author": "Sadman Chowdhury",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/classytic/revenue"
+  },
+  "files": [
+    "index.js",
+    "LICENSE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@classytic/revenue": "^0.0.1"
+  },
+  "dependencies": {
+    "nanoid": "^5.1.6"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

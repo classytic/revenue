@@ -1,0 +1,28 @@
+{
+  "name": "@classytic/revenue-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Revenue management monorepo - Core + Providers",
+  "type": "module",
+  "workspaces": [
+    "revenue",
+    "revenue-manual"
+  ],
+  "scripts": {
+    "publish:revenue": "npm publish --workspace=@classytic/revenue --access public",
+    "publish:revenue-manual": "npm publish --workspace=@classytic/revenue-manual --access public",
+    "publish:all": "npm run publish:revenue && npm run publish:revenue-manual"
+  },
+  "keywords": [
+    "revenue",
+    "monetization",
+    "subscription",
+    "payment"
+  ],
+  "author": "Sadman Chowdhury",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/classytic/revenue"
+  }
+}

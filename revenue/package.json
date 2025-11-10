@@ -1,0 +1,62 @@
+{
+  "name": "@classytic/revenue",
+  "version": "0.0.1",
+  "description": "Enterprise revenue management system with subscriptions, purchases, proration, and payment processing",
+  "main": "index.js",
+  "types": "revenue.d.ts",
+  "type": "module",
+  "keywords": [
+    "revenue",
+    "monetization",
+    "subscription",
+    "payment",
+    "saas",
+    "billing",
+    "proration",
+    "recurring",
+    "gateway",
+    "webhook",
+    "stripe",
+    "sslcommerz",
+    "bkash",
+    "transaction",
+    "invoice"
+  ],
+  "author": "Sadman Chowdhury",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/classytic/revenue"
+  },
+  "bugs": {
+    "url": "https://github.com/classytic/revenue/issues"
+  },
+  "homepage": "https://github.com/classytic/revenue#readme",
+  "peerDependencies": {
+    "mongoose": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./enums": "./enums/index.js",
+    "./schemas": "./schemas/index.js",
+    "./utils": "./utils/index.js"
+  },
+  "files": [
+    "index.js",
+    "revenue.d.ts",
+    "LICENSE",
+    "README.md",
+    "core/",
+    "providers/",
+    "services/",
+    "enums/",
+    "schemas/",
+    "utils/"
+  ],
+  "dependencies": {
+    "nanoid": "^5.1.6"
+  }
+}
