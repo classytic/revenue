@@ -70,10 +70,16 @@ async function demonstrateCompleteFlow() {
   // ============================================================
   console.log('📦 PHASE 1: Creating Subscription\n');
 
+  // Example: Link transaction to an Order or Subscription
+  const demoSubscriptionId = new mongoose.Types.ObjectId();
+
   const { subscription, transaction } = await revenue.subscriptions.create({
     data: {
       organizationId: orgId,
       customerId: customerId,
+      // ⭐ Polymorphic reference (top-level for proper querying)
+      referenceId: demoSubscriptionId,
+      referenceModel: 'Subscription',
     },
     planKey: 'monthly',
     amount: 1500,
@@ -91,7 +97,8 @@ async function demonstrateCompleteFlow() {
   console.log(`  - Status: ${transaction.status} (pending)`);
   console.log(`  - Type: ${transaction.type} (income)`);
   console.log(`  - Method: ${transaction.method} (bkash)`);
-  console.log(`  - Amount: ${transaction.amount} BDT\n`);
+  console.log(`  - Amount: ${transaction.amount} BDT`);
+  console.log(`  - Reference: ${transaction.referenceModel} ${transaction.referenceId} ⭐\n`);
 
   // ============================================================
   // PHASE 2: TRY TO REFUND UNVERIFIED TRANSACTION (SHOULD FAIL)
@@ -257,6 +264,14 @@ async function demonstrateCompleteFlow() {
  * 4. ✅ Refunds create NEW expense transactions (double-entry)
  * 5. ✅ Original transaction status updates (refunded/partially_refunded)
  * 6. ✅ Both transactions linked via metadata (audit trail)
+ * 
+ * POLYMORPHIC REFERENCES:
+ * 
+ * - Pass referenceId and referenceModel in data param
+ * - Library stores at TOP LEVEL (not in metadata)
+ * - Enables proper Mongoose queries: Transaction.find({ referenceModel: 'Order', referenceId })
+ * - Supports population: .populate('referenceId')
+ * - Refund transactions inherit reference from original
  * 
  * ACCOUNTING PATTERN:
  * 

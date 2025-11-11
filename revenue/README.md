@@ -9,6 +9,7 @@ Thin, focused, production-ready library with smart defaults. Built for SaaS, mar
 - **Subscriptions**: Create, renew, pause, cancel with lifecycle management
 - **Payment Processing**: Multi-gateway support (Stripe, SSLCommerz, manual, etc.)
 - **Transaction Management**: Income/expense tracking with verification and refunds
+- **Commission Tracking**: Automatic platform commission calculation with gateway fee deduction
 - **Provider Pattern**: Pluggable payment providers (like LangChain/Vercel AI SDK)
 - **Framework Agnostic**: Works with Express, Fastify, Next.js, or standalone
 - **TypeScript Ready**: Full type definitions included
@@ -35,7 +36,12 @@ const revenue = createRevenue({
 
 // 2. Create subscription
 const { subscription, transaction } = await revenue.subscriptions.create({
-  data: { organizationId, customerId },
+  data: {
+    organizationId,
+    customerId,
+    referenceId: orderId,        // Optional: Link to Order, Subscription, etc.
+    referenceModel: 'Order',     // Optional: Model name for polymorphic ref
+  },
   planKey: 'monthly',
   amount: 1500,
   gateway: 'manual',
@@ -79,6 +85,17 @@ const transactionSchema = new mongoose.Schema({
   gateway: gatewaySchema,              // Payment gateway details
   paymentDetails: paymentDetailsSchema, // Payment info (wallet, bank, etc.)
 
+  // ============ POLYMORPHIC REFERENCE (recommended) ============
+  // Links transaction to any entity (Order, Subscription, Enrollment, etc.)
+  referenceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    refPath: 'referenceModel',
+  },
+  referenceModel: {
+    type: String,
+    enum: ['Subscription', 'Order', 'Enrollment', 'Membership'], // Your models
+  },
+
   // ============ YOUR CUSTOM FIELDS ============
   customerId: String,
   currency: { type: String, default: 'BDT' },
@@ -98,7 +115,7 @@ export default mongoose.model('Transaction', transactionSchema);
 |--------|---------|------------|
 | `gatewaySchema` | Payment gateway integration | `type`, `paymentIntentId`, `sessionId` |
 | `paymentDetailsSchema` | Payment method info | `walletNumber`, `trxId`, `bankName` |
-| `commissionSchema` | Commission tracking | `rate`, `grossAmount`, `netAmount` |
+| `commissionSchema` | Commission tracking (marketplace) | `rate`, `grossAmount`, `gatewayFeeAmount`, `netAmount` |
 | `currentPaymentSchema` | Latest payment (for Order/Subscription models) | `transactionId`, `status`, `verifiedAt` |
 | `subscriptionInfoSchema` | Subscription details (for Order models) | `planKey`, `startDate`, `endDate` |
 
@@ -244,6 +261,84 @@ await revenue.subscriptions.create({
 
 **Note:** `entity` is a logical identifier (not a database model name) for organizing your business logic.
 
+## Commission Tracking (Marketplace)
+
+Automatically calculate platform commission with gateway fee deduction:
+
+```javascript
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    // Commission rates by category
+    commissionRates: {
+      'product_order': 0.10,     // 10% platform commission
+      'course_enrollment': 0.10, // 10% on courses
+      'gym_membership': 0,       // No commission
+    },
+    
+    // Gateway fees (deducted from commission)
+    gatewayFeeRates: {
+      'stripe': 0.029,    // 2.9% Stripe fee
+      'bkash': 0.018,     // 1.8% bKash fee
+      'manual': 0,        // No fee
+    },
+  },
+});
+
+// Commission calculated automatically
+const { transaction } = await revenue.subscriptions.create({
+  amount: 10000, // $100
+  entity: 'ProductOrder',  // → 10% commission
+  gateway: 'stripe',       // → 2.9% fee
+});
+
+console.log(transaction.commission);
+// {
+//   rate: 0.10,
+//   grossAmount: 1000,      // $10 (10% of $100)
+//   gatewayFeeAmount: 290,  // $2.90 (2.9% of $100)
+//   netAmount: 710,         // $7.10 (platform keeps)
+//   status: 'pending'
+// }
+
+// Query pending commissions
+const pending = await Transaction.find({ 'commission.status': 'pending' });
+```
+
+**Refund handling:** Commission automatically reversed proportionally when refunds are processed.
+
+**See:** [`examples/commission-tracking.js`](examples/commission-tracking.js) for complete guide.
+
+## Polymorphic References
+
+Link transactions to any entity (Order, Subscription, Enrollment):
+
+```javascript
+// Create transaction linked to Order
+const { transaction } = await revenue.subscriptions.create({
+  data: {
+    organizationId,
+    customerId,
+    referenceId: order._id,      // ⭐ Direct field (not metadata)
+    referenceModel: 'Order',     // ⭐ Model name
+  },
+  amount: 1500,
+  // ...
+});
+
+// Query all transactions for an order
+const orderTransactions = await Transaction.find({
+  referenceModel: 'Order',
+  referenceId: order._id,
+});
+
+// Use Mongoose populate
+const transactions = await Transaction.find({ ... })
+  .populate('referenceId');  // Populates based on referenceModel
+```
+
+**Why top-level?** Enables proper Mongoose queries and population. Storing in metadata prevents querying and indexing.
+
 ## Hooks
 
 ```javascript
@@ -269,9 +364,24 @@ const revenue = createRevenue({
 - `payment.verified`, `payment.refunded`
 - `payment.webhook.{type}` (for webhook events)
 
-## Building Payment Providers
+## Provider Patterns
 
-Create custom providers for Stripe, PayPal, etc.:
+Ready-to-use patterns for popular payment gateways (copy to your project):
+
+### Available Patterns
+
+| Pattern | Use Case | Location |
+|---------|----------|----------|
+| **stripe-checkout** | Single-tenant Stripe | [`provider-patterns/stripe-checkout/`](../provider-patterns/stripe-checkout/) |
+| **stripe-connect-standard** | Multi-tenant marketplace | [`provider-patterns/stripe-connect-standard/`](../provider-patterns/stripe-connect-standard/) |
+| **stripe-platform-manual** | Platform collects, manual payout | [`provider-patterns/stripe-platform-manual/`](../provider-patterns/stripe-platform-manual/) |
+| **sslcommerz** | Bangladesh payment gateway | [`provider-patterns/sslcommerz/`](../provider-patterns/sslcommerz/) |
+
+**See:** [`provider-patterns/INDEX.md`](../provider-patterns/INDEX.md) for complete guide.
+
+## Building Custom Providers
+
+Create providers for any payment gateway:
 
 ```javascript
 import { PaymentProvider, PaymentIntent, PaymentResult } from '@classytic/revenue';
@@ -340,6 +450,8 @@ const subscription = await revenue.subscriptions.create({ ... });
 - [`examples/transaction.model.js`](examples/transaction.model.js) - Complete model setup
 - [`examples/transaction-type-mapping.js`](examples/transaction-type-mapping.js) - Income/expense configuration
 - [`examples/complete-flow.js`](examples/complete-flow.js) - Full lifecycle with state management
+- [`examples/commission-tracking.js`](examples/commission-tracking.js) - Platform commission calculation
+- [`examples/polymorphic-references.js`](examples/polymorphic-references.js) - Link transactions to entities
 - [`examples/multivendor-platform.js`](examples/multivendor-platform.js) - Multi-tenant setup
 
 ## Error Handling

@@ -77,6 +77,29 @@ export function triggerHook(
   logger: Logger
 ): void;
 
+// ============ COMMISSION UTILITIES ============
+
+export interface CommissionObject {
+  rate: number;
+  grossAmount: number;
+  gatewayFeeRate: number;
+  gatewayFeeAmount: number;
+  netAmount: number;
+  status: 'pending' | 'due' | 'paid' | 'waived';
+}
+
+export function calculateCommission(
+  amount: number,
+  commissionRate: number,
+  gatewayFeeRate?: number
+): CommissionObject | null;
+
+export function reverseCommission(
+  originalCommission: CommissionObject,
+  originalAmount: number,
+  refundAmount: number
+): CommissionObject | null;
+
 // ============ DEFAULT EXPORT ============
 
 declare const _default: {
@@ -94,6 +117,8 @@ declare const _default: {
   logger: typeof logger;
   setLogger: typeof setLogger;
   triggerHook: typeof triggerHook;
+  calculateCommission: typeof calculateCommission;
+  reverseCommission: typeof reverseCommission;
 };
 
 export default _default;

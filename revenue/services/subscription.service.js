@@ -19,6 +19,7 @@ import {
 } from '../core/errors.js';
 import { triggerHook } from '../utils/hooks.js';
 import { resolveCategory } from '../utils/category-resolver.js';
+import { calculateCommission } from '../utils/commission.js';
 import { MONETIZATION_TYPES } from '../enums/monetization.enums.js';
 import { TRANSACTION_TYPE } from '../enums/transaction.enums.js';
 
@@ -40,7 +41,7 @@ export class SubscriptionService {
    * Create a new subscription
    *
    * @param {Object} params - Subscription parameters
-   * @param {Object} params.data - Subscription data (organizationId, customerId, etc.)
+   * @param {Object} params.data - Subscription data (organizationId, customerId, referenceId, referenceModel, etc.)
    * @param {String} params.planKey - Plan key ('monthly', 'quarterly', 'yearly')
    * @param {Number} params.amount - Subscription amount
    * @param {String} params.currency - Currency code (default: 'BDT')
@@ -51,6 +52,20 @@ export class SubscriptionService {
    * @param {Object} params.paymentData - Payment method details
    * @param {Object} params.metadata - Additional metadata
    * @param {String} params.idempotencyKey - Idempotency key for duplicate prevention
+   * 
+   * @example
+   * // With polymorphic reference (recommended)
+   * await revenue.subscriptions.create({
+   *   data: {
+   *     organizationId: '...',
+   *     customerId: '...',
+   *     referenceId: subscription._id,      // Links to entity
+   *     referenceModel: 'Subscription',     // Model name
+   *   },
+   *   amount: 1500,
+   *   // ...
+   * });
+   * 
    * @returns {Promise<Object>} { subscription, transaction, paymentIntent }
    */
   async create(params) {
@@ -116,6 +131,11 @@ export class SubscriptionService {
         || this.config.transactionTypeMapping?.[monetizationType]
         || TRANSACTION_TYPE.INCOME;
 
+      // Calculate commission if configured
+      const commissionRate = this.config.commissionRates?.[category] || 0;
+      const gatewayFeeRate = this.config.gatewayFeeRates?.[gateway] || 0;
+      const commission = calculateCommission(amount, commissionRate, gatewayFeeRate);
+
       // Create transaction record
       const TransactionModel = this.models.Transaction;
       transaction = await TransactionModel.create({
@@ -136,6 +156,10 @@ export class SubscriptionService {
           provider: gateway,
           ...paymentData,
         },
+        ...(commission && { commission }), // Only include if commission exists
+        // Polymorphic reference (top-level, not metadata)
+        ...(data.referenceId && { referenceId: data.referenceId }),
+        ...(data.referenceModel && { referenceModel: data.referenceModel }),
         metadata: {
           ...metadata,
           planKey,
@@ -152,7 +176,8 @@ export class SubscriptionService {
     if (this.models.Subscription) {
       const SubscriptionModel = this.models.Subscription;
 
-      subscription = await SubscriptionModel.create({
+      // Create subscription with proper reference tracking
+      const subscriptionData = {
         organizationId: data.organizationId,
         customerId: data.customerId || null,
         planKey,
@@ -170,7 +195,13 @@ export class SubscriptionService {
           monetizationType,
         },
         ...data,
-      });
+      };
+
+      // Remove referenceId/referenceModel from subscription (they're for transactions)
+      delete subscriptionData.referenceId;
+      delete subscriptionData.referenceModel;
+
+      subscription = await SubscriptionModel.create(subscriptionData);
     }
 
     // Trigger hook
@@ -299,6 +330,11 @@ export class SubscriptionService {
       || this.config.transactionTypeMapping?.[effectiveMonetizationType]
       || TRANSACTION_TYPE.INCOME;
 
+    // Calculate commission if configured
+    const commissionRate = this.config.commissionRates?.[category] || 0;
+    const gatewayFeeRate = this.config.gatewayFeeRates?.[gateway] || 0;
+    const commission = calculateCommission(subscription.amount, commissionRate, gatewayFeeRate);
+
     // Create transaction
     const TransactionModel = this.models.Transaction;
     const transaction = await TransactionModel.create({
@@ -319,9 +355,13 @@ export class SubscriptionService {
         provider: gateway,
         ...paymentData,
       },
+      ...(commission && { commission }), // Only include if commission exists
+      // Polymorphic reference to subscription
+      referenceId: subscription._id,
+      referenceModel: 'Subscription',
       metadata: {
         ...metadata,
-        subscriptionId: subscription._id.toString(),
+        subscriptionId: subscription._id.toString(), // Keep for backward compat
         entity: effectiveEntity,
         monetizationType: effectiveMonetizationType,
         isRenewal: true,

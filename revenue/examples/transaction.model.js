@@ -59,15 +59,25 @@ const transactionSchema = new mongoose.Schema({
   currentPayment: currentPaymentSchema,
   paymentDetails: paymentDetailsSchema,
 
+  // ============ POLYMORPHIC REFERENCE ============
+  // Links transaction to any entity (Order, Subscription, Enrollment, etc.)
+  // Library automatically populates these if provided in data param
+  referenceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    refPath: 'referenceModel',
+    index: true,
+  },
+  referenceModel: {
+    type: String,
+    enum: ['Subscription', 'Order', 'Enrollment', 'Membership'], // Your models
+    index: true,
+  },
+
   // Optional but recommended
   customerId: String,
   currency: { type: String, default: 'BDT' },
   verifiedAt: Date,
   verifiedBy: mongoose.Schema.Types.ObjectId,
-
-  // Reference tracking (for subscriptions/purchases)
-  referenceModel: String,
-  referenceId: mongoose.Schema.Types.ObjectId,
 
   // Idempotency
   idempotencyKey: { type: String, unique: true, sparse: true },
@@ -81,7 +91,7 @@ const transactionSchema = new mongoose.Schema({
 transactionSchema.index({ organizationId: 1, status: 1 });
 transactionSchema.index({ organizationId: 1, type: 1 });  // For income/expense queries
 transactionSchema.index({ customerId: 1 });
-transactionSchema.index({ referenceModel: 1, referenceId: 1 });
+transactionSchema.index({ referenceModel: 1, referenceId: 1 });  // For polymorphic queries
 transactionSchema.index({ 'gateway.paymentIntentId': 1 });
 
 export default mongoose.model('Transaction', transactionSchema);

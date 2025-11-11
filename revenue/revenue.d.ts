@@ -238,6 +238,36 @@ export interface RevenueOptions {
      * If not specified, library defaults to 'income' for all payment transactions
      */
     transactionTypeMapping?: Record<string, 'income' | 'expense'>;
+    
+    /**
+     * Commission rates by category (0 to 1)
+     * 
+     * Automatically calculates platform commission for each transaction.
+     * Gateway fees are automatically deducted from gross commission.
+     * 
+     * @example
+     * commissionRates: {
+     *   'course_enrollment': 0.10,     // 10% commission
+     *   'product_order': 0.05,          // 5% commission
+     *   'gym_membership': 0,            // No commission
+     * }
+     */
+    commissionRates?: Record<string, number>;
+    
+    /**
+     * Gateway fee rates by provider (0 to 1)
+     * 
+     * Gateway fees are deducted from gross commission.
+     * 
+     * @example
+     * gatewayFeeRates: {
+     *   'bkash': 0.018,      // 1.8% fee
+     *   'stripe': 0.029,     // 2.9% fee
+     *   'manual': 0,         // No fee
+     * }
+     */
+    gatewayFeeRates?: Record<string, number>;
+    
     [key: string]: any;
   };
   logger?: Console | any;

@@ -16,6 +16,7 @@ import {
   ProviderCapabilityError,
 } from '../core/errors.js';
 import { triggerHook } from '../utils/hooks.js';
+import { reverseCommission } from '../utils/commission.js';
 import { TRANSACTION_TYPE } from '../enums/transaction.enums.js';
 
 /**
@@ -225,6 +226,11 @@ export class PaymentService {
     // Create separate refund transaction (EXPENSE) for proper accounting
     const refundTransactionType = this.config.transactionTypeMapping?.refund || TRANSACTION_TYPE.EXPENSE;
     
+    // Reverse commission proportionally for refund
+    const refundCommission = transaction.commission 
+      ? reverseCommission(transaction.commission, transaction.amount, refundAmount)
+      : null;
+
     const refundTransaction = await TransactionModel.create({
       organizationId: transaction.organizationId,
       customerId: transaction.customerId,
@@ -240,6 +246,10 @@ export class PaymentService {
         provider: refundResult.provider,
       },
       paymentDetails: transaction.paymentDetails,
+      ...(refundCommission && { commission: refundCommission }), // Reversed commission
+      // Polymorphic reference (copy from original transaction)
+      ...(transaction.referenceId && { referenceId: transaction.referenceId }),
+      ...(transaction.referenceModel && { referenceModel: transaction.referenceModel }),
       metadata: {
         ...transaction.metadata,
         isRefund: true,

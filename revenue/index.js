@@ -47,6 +47,8 @@ export * from './schemas/index.js';
 export {
   logger,
   setLogger,
+  calculateCommission,
+  reverseCommission,
 } from './utils/index.js';
 
 // ============ DEFAULT EXPORT ============
