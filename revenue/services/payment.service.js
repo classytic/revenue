@@ -16,6 +16,7 @@ import {
   ProviderCapabilityError,
 } from '../core/errors.js';
 import { triggerHook } from '../utils/hooks.js';
+import { TRANSACTION_TYPE } from '../enums/transaction.enums.js';
 
 /**
  * Payment Service
@@ -221,15 +222,43 @@ export class PaymentService {
       throw new RefundError(paymentId, error.message);
     }
 
-    // Update transaction
+    // Create separate refund transaction (EXPENSE) for proper accounting
+    const refundTransactionType = this.config.transactionTypeMapping?.refund || TRANSACTION_TYPE.EXPENSE;
+    
+    const refundTransaction = await TransactionModel.create({
+      organizationId: transaction.organizationId,
+      customerId: transaction.customerId,
+      amount: refundAmount,
+      currency: transaction.currency,
+      category: transaction.category,
+      type: refundTransactionType,  // EXPENSE - money going out
+      method: transaction.method || 'manual',
+      status: 'completed',
+      gateway: {
+        type: transaction.gateway?.type || 'manual',
+        paymentIntentId: refundResult.id,
+        provider: refundResult.provider,
+      },
+      paymentDetails: transaction.paymentDetails,
+      metadata: {
+        ...transaction.metadata,
+        isRefund: true,
+        originalTransactionId: transaction._id.toString(),
+        refundReason: reason,
+        refundResult: refundResult.metadata,
+      },
+      idempotencyKey: `refund_${transaction._id}_${Date.now()}`,
+    });
+
+    // Update original transaction status
     const isPartialRefund = refundAmount < transaction.amount;
     transaction.status = isPartialRefund ? 'partially_refunded' : 'refunded';
     transaction.refundedAmount = (transaction.refundedAmount || 0) + refundAmount;
     transaction.refundedAt = refundResult.refundedAt || new Date();
     transaction.metadata = {
       ...transaction.metadata,
+      refundTransactionId: refundTransaction._id.toString(),
       refundReason: reason,
-      refundResult: refundResult.metadata,
     };
 
     await transaction.save();
@@ -237,6 +266,7 @@ export class PaymentService {
     // Trigger hook
     this._triggerHook('payment.refunded', {
       transaction,
+      refundTransaction,
       refundResult,
       refundAmount,
       reason,
@@ -245,6 +275,7 @@ export class PaymentService {
 
     return {
       transaction,
+      refundTransaction,
       refundResult,
       status: transaction.status,
     };

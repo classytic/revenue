@@ -42,19 +42,19 @@ export class ManualProvider extends PaymentProvider {
 
   /**
    * Verify manual payment
-   * Note: This is called by admin after checking payment proof
+   * For manual provider, verification is done by admin approval
+   * When admin calls revenue.payments.verify(), this confirms the payment
    */
   async verifyPayment(intentId) {
-    // Manual verification doesn't auto-verify
-    // Admin must explicitly call payment verification endpoint
     return new PaymentResult({
       id: intentId,
       provider: 'manual',
-      status: 'requires_manual_approval',
+      status: 'succeeded',  // Admin has verified, mark as succeeded
       amount: 0, // Amount will be filled by transaction
       currency: 'BDT',
+      paidAt: new Date(),
       metadata: {
-        message: 'Manual payment requires admin verification',
+        manuallyVerified: true,
       },
     });
   }

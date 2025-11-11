@@ -1,192 +1,148 @@
 # @classytic/revenue Documentation
 
-Complete documentation for the @classytic/revenue monorepo - an enterprise-grade revenue management system combining monetization (subscriptions, purchases) and payment processing.
+Enterprise-grade revenue management system for subscriptions and payments.
 
-## Quick Links
+## 📦 Packages
 
-- [Main README](../README.md) - Package overview and quick start
-- [Core Package (@classytic/revenue)](../revenue/README.md) - Core library documentation
-- [Manual Provider (@classytic/revenue-manual)](../revenue-manual/README.md) - Manual payment provider
+### [@classytic/revenue](../revenue/README.md)
+Core library providing subscription management, payment processing, and transaction tracking.
 
-## 📚 Guides
+**Install:** `npm install @classytic/revenue`
 
-### [Building Payment Providers](./guides/PROVIDER_GUIDE.md)
-Complete guide for building custom payment provider packages (Stripe, PayPal, SSLCommerz, etc.)
+### [@classytic/revenue-manual](../revenue-manual/README.md)
+Manual payment provider for cash, bank transfers, mobile money without API.
 
-**Topics covered:**
-- Minimal provider implementation (5 required methods)
-- Creating payment intents
-- Verifying payments
-- Handling refunds
-- Webhook integration
-- Complete working examples (Stripe, SSLCommerz)
-- Publishing your provider to npm
+**Install:** `npm install @classytic/revenue-manual`
 
-**Perfect for:**
-- Community developers building payment integrations
-- Teams implementing custom payment gateways
-- Anyone extending the revenue system
-
-## 📖 Examples
-
-All examples are in the core package for easy reference:
-
-### [Basic Usage](../revenue/examples/basic-usage.js)
-Shows how to set up the revenue system with subscriptions and payment processing.
-
-### [Transaction Model](../revenue/examples/transaction.model.js)
-Complete example showing how to:
-- Merge library enums with your own custom categories
-- Define payment methods for your region/business
-- Set up proper Mongoose schemas
-- Use library-provided schema components
-
-### [Category Mappings](../revenue/examples/category-mappings.js)
-Comprehensive examples showing how to use custom transaction categories:
-- E-commerce platform with multiple order types
-- Gym management system
-- Online learning platform
-- Default behavior without mappings
-
-### [Multivendor Platform](../revenue/examples/multivendor-platform.js)
-Real-world example for multivendor/SaaS platforms:
-- Platform-level subscriptions (tenant billing)
-- Customer-level transactions (orders, memberships)
-- Vendor-level tracking (commissions, payouts)
-- Complete workflow demonstration
-
-## 🏗️ Architecture
-
-The @classytic/revenue monorepo consists of:
-
-### Core Package (`@classytic/revenue`)
-The main library providing:
-- Subscription management (create, renew, cancel, prorate)
-- Payment processing (verify, refund, webhooks)
-- Transaction tracking
-- Hook system for extensibility
-- Provider abstraction layer
-
-### Provider Packages
-Payment gateway implementations as separate packages:
-- `@classytic/revenue-manual` - Manual payment verification (included)
-- Community providers: `@yourorg/revenue-stripe`, `@yourorg/revenue-paypal`, etc.
-
-## 🔧 Configuration
-
-The system is designed to be:
-- **Framework agnostic** - Works with Express, Fastify, Next.js, etc.
-- **Database flexible** - Uses your existing Mongoose models
-- **Region neutral** - Define your own payment methods and categories
-- **Provider pluggable** - Mix multiple payment providers
-
-Example configuration:
+## 🚀 Quick Start
 
 ```javascript
 import { createRevenue } from '@classytic/revenue';
 import { ManualProvider } from '@classytic/revenue-manual';
 
 const revenue = createRevenue({
-  models: {
-    Transaction: YourTransactionModel,
-    Subscription: YourSubscriptionModel,
-  },
-  providers: {
-    manual: new ManualProvider(),
-    // Add more providers as needed
-  },
-  hooks: {
-    'subscription.created': async (data) => {
-      // Your logic
-    },
-  },
+  models: { Transaction },
+  providers: { manual: new ManualProvider() },
 });
+
+// Create subscription
+const { subscription, transaction } = await revenue.subscriptions.create({
+  data: { organizationId, customerId },
+  planKey: 'monthly',
+  amount: 1500,
+  gateway: 'manual',
+});
+
+// Verify payment
+await revenue.payments.verify(transaction.gateway.paymentIntentId);
 ```
 
-## 📦 Publishing Packages
+## 📚 Guides
 
-This monorepo uses npm workspaces. To publish:
+### [Building Payment Providers](./guides/PROVIDER_GUIDE.md)
+Complete guide for building custom payment provider packages (Stripe, PayPal, SSLCommerz, etc.).
 
-```bash
-# Publish core package
-npm run publish:revenue
+**Topics:**
+- Minimal provider implementation (5 required methods)
+- Creating payment intents
+- Verifying payments and handling refunds
+- Webhook integration
+- Complete working examples
+- Publishing to npm
 
-# Publish manual provider
-npm run publish:revenue-manual
+**Perfect for:** Community developers building payment integrations or teams implementing custom gateways.
 
-# Publish both
-npm run publish:all
-```
+## 📖 Examples
 
-## 🤝 Contributing
+Located in [`revenue/examples/`](../revenue/examples/):
 
-When contributing:
-1. Keep the core package **generic and region-neutral**
-2. Don't hardcode payment methods or business-specific categories
-3. Provider packages should be standalone and publishable
-4. Follow the patterns in PROVIDER_GUIDE.md for new providers
+| Example | Description |
+|---------|-------------|
+| [`basic-usage.js`](../revenue/examples/basic-usage.js) | Simple setup with subscriptions |
+| [`transaction.model.js`](../revenue/examples/transaction.model.js) | Complete model setup with schemas |
+| [`transaction-type-mapping.js`](../revenue/examples/transaction-type-mapping.js) | Income/expense configuration |
+| [`complete-flow.js`](../revenue/examples/complete-flow.js) | Full lifecycle with state guards |
+| [`multivendor-platform.js`](../revenue/examples/multivendor-platform.js) | Multi-tenant SaaS setup |
+
+## 🏗️ Architecture
+
+### Core Package (`@classytic/revenue`)
+- Subscription management (create, renew, cancel, pause)
+- Payment processing (verify, refund, webhooks)
+- Transaction tracking (income/expense)
+- Hook system for extensibility
+- Provider abstraction layer
+
+### Provider Packages
+Payment gateway implementations as separate packages:
+- `@classytic/revenue-manual` - Manual payment verification (built-in)
+- Community: `@yourorg/revenue-stripe`, `@yourorg/revenue-paypal`, etc.
+
+### Design Principles
+- **Framework agnostic** - Works with Express, Fastify, Next.js
+- **Database flexible** - Uses your existing Mongoose models
+- **Region neutral** - Define your own payment methods/categories
+- **Provider pluggable** - Mix multiple payment providers
+- **DI-based** - Fully testable with dependency injection
 
 ## 📋 Package Structure
 
 ```
 @classytic/revenue (monorepo)
-├── docs/                         # Documentation
-│   ├── README.md                 # This file
-│   └── guides/
-│       └── PROVIDER_GUIDE.md     # Building payment providers
+├── docs/                         # Documentation (this folder)
 ├── revenue/                      # Core package (@classytic/revenue)
 │   ├── core/                     # DI container, builder, errors
 │   ├── services/                 # Subscription, payment, transaction
 │   ├── providers/                # Provider base classes
-│   ├── enums/                    # Monetization, transaction enums
+│   ├── enums/                    # Enums for types/statuses
 │   ├── schemas/                  # Reusable Mongoose schemas
-│   ├── utils/                    # Category resolver, hooks, logger
-│   ├── examples/                 # Usage examples (not published to npm)
-│   ├── index.js                  # Main entry point
-│   ├── revenue.d.ts              # TypeScript definitions
-│   └── package.json              # @classytic/revenue
-├── revenue-manual/               # Manual provider package
-│   ├── index.js                  # Provider implementation
-│   ├── revenue-manual.d.ts       # TypeScript definitions
-│   └── package.json              # @classytic/revenue-manual
-└── package.json                  # Workspace root (private)
+│   ├── examples/                 # Usage examples
+│   └── package.json
+└── revenue-manual/               # Manual provider package
+    ├── index.js
+    └── package.json
 ```
 
-## 🔍 Key Concepts
+## 🔑 Key Concepts
 
-### Library-Managed vs User-Defined
-
-**The library manages:**
-- Transaction statuses (pending, completed, failed, etc.)
-- Core categories (subscription, purchase)
-- Provider interface and webhook handling
-
-**Users define:**
-- Custom transaction categories (salary, rent, equipment, etc.)
-- Payment methods (bkash, card, bank, cash, etc.)
-- Business-specific models and fields
+### Transaction Types (Double-Entry Accounting)
+- **Income**: Money coming in (payments, subscriptions)
+- **Expense**: Money going out (refunds, payouts)
+- Net Revenue = `SUM(income) - SUM(expense)`
 
 ### Provider System
+Providers are pluggable packages implementing payment gateway integrations:
+- Extend `PaymentProvider` base class
+- Implement 5 required methods
+- Return standardized response types
+- Publishable independently
 
-Providers are pluggable packages that implement payment gateway integrations. Each provider:
-- Extends the `PaymentProvider` base class
-- Implements 5 required methods
-- Returns standardized response types
-- Can be published independently
+### State Management
+- Transactions start as `'pending'`
+- Admin/gateway verifies → `'verified'`
+- Refunds blocked until verified (state guard)
+- Refunds create separate expense transactions
 
 ### Webhook Flow
-
 1. Provider validates signature and parses event
 2. Provider returns standardized `WebhookEvent`
 3. Library automatically updates transaction status
 4. Library triggers application hooks
 5. Idempotency prevents duplicate processing
 
+## 🤝 Contributing Providers
+
+When building providers:
+1. Use [`@classytic/revenue-manual`](../revenue-manual/) as reference
+2. Follow patterns in [PROVIDER_GUIDE.md](./guides/PROVIDER_GUIDE.md)
+3. Publish as separate npm package: `@yourorg/revenue-{provider}`
+4. Keep providers standalone and well-tested
+
 ## 🆘 Support
 
 - **Issues**: [GitHub Issues](https://github.com/classytic/revenue/issues)
-- **Core Repository**: https://github.com/classytic/revenue
-- **Provider Template**: Use `@classytic/revenue-manual` as reference
+- **Repository**: https://github.com/classytic/revenue
+- **NPM**: [@classytic/revenue](https://www.npmjs.com/package/@classytic/revenue)
 
 ## 📄 License
 

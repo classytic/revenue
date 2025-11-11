@@ -16,6 +16,8 @@ export * from './monetization.enums.js';
 
 // Default export for convenience
 import {
+  TRANSACTION_TYPE,
+  TRANSACTION_TYPE_VALUES,
   TRANSACTION_STATUS,
   TRANSACTION_STATUS_VALUES,
   LIBRARY_CATEGORIES,
@@ -45,6 +47,8 @@ import {
 
 export default {
   // Transaction enums
+  TRANSACTION_TYPE,
+  TRANSACTION_TYPE_VALUES,
   TRANSACTION_STATUS,
   TRANSACTION_STATUS_VALUES,
   LIBRARY_CATEGORIES,

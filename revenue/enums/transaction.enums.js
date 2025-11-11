@@ -6,6 +6,22 @@
  * Users should define their own categories and merge with these.
  */
 
+// ============ TRANSACTION TYPE ============
+/**
+ * Transaction Type - Income vs Expense
+ * 
+ * INCOME: Money coming in (payments, subscriptions, purchases)
+ * EXPENSE: Money going out (refunds, payouts)
+ * 
+ * Users can map these in their config via transactionTypeMapping
+ */
+export const TRANSACTION_TYPE = {
+  INCOME: 'income',
+  EXPENSE: 'expense',
+};
+
+export const TRANSACTION_TYPE_VALUES = Object.values(TRANSACTION_TYPE);
+
 // ============ TRANSACTION STATUS ============
 /**
  * Transaction Status - Library-managed states

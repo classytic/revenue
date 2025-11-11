@@ -15,10 +15,12 @@ import {
   ModelNotRegisteredError,
   SubscriptionNotActiveError,
   PaymentIntentCreationError,
+  InvalidStateTransitionError,
 } from '../core/errors.js';
 import { triggerHook } from '../utils/hooks.js';
 import { resolveCategory } from '../utils/category-resolver.js';
 import { MONETIZATION_TYPES } from '../enums/monetization.enums.js';
+import { TRANSACTION_TYPE } from '../enums/transaction.enums.js';
 
 /**
  * Subscription Service
@@ -109,6 +111,11 @@ export class SubscriptionService {
       // Resolve category based on entity and monetizationType
       const category = resolveCategory(entity, monetizationType, this.config.categoryMappings);
 
+      // Resolve transaction type using config mapping or default to 'income'
+      const transactionType = this.config.transactionTypeMapping?.subscription 
+        || this.config.transactionTypeMapping?.[monetizationType]
+        || TRANSACTION_TYPE.INCOME;
+
       // Create transaction record
       const TransactionModel = this.models.Transaction;
       transaction = await TransactionModel.create({
@@ -117,7 +124,8 @@ export class SubscriptionService {
         amount,
         currency,
         category,
-        type: 'credit',
+        type: transactionType,
+        method: paymentData?.method || 'manual',
         status: paymentIntent.status === 'succeeded' ? 'verified' : 'pending',
         gateway: {
           type: gateway,
@@ -285,6 +293,12 @@ export class SubscriptionService {
     const effectiveMonetizationType = subscription.metadata?.monetizationType || MONETIZATION_TYPES.SUBSCRIPTION;
     const category = resolveCategory(effectiveEntity, effectiveMonetizationType, this.config.categoryMappings);
 
+    // Resolve transaction type using config mapping or default to 'income'
+    const transactionType = this.config.transactionTypeMapping?.subscription_renewal
+      || this.config.transactionTypeMapping?.subscription
+      || this.config.transactionTypeMapping?.[effectiveMonetizationType]
+      || TRANSACTION_TYPE.INCOME;
+
     // Create transaction
     const TransactionModel = this.models.Transaction;
     const transaction = await TransactionModel.create({
@@ -293,7 +307,8 @@ export class SubscriptionService {
       amount: subscription.amount,
       currency: subscription.currency || 'BDT',
       category,
-      type: 'credit',
+      type: transactionType,
+      method: paymentData?.method || 'manual',
       status: paymentIntent.status === 'succeeded' ? 'verified' : 'pending',
       gateway: {
         type: gateway,

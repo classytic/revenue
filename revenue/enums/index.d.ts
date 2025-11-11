@@ -5,6 +5,13 @@
 
 // ============ TRANSACTION ENUMS ============
 
+export const TRANSACTION_TYPE: {
+  readonly INCOME: 'income';
+  readonly EXPENSE: 'expense';
+};
+
+export const TRANSACTION_TYPE_VALUES: string[];
+
 export const TRANSACTION_STATUS: {
   readonly PENDING: 'pending';
   readonly PAYMENT_INITIATED: 'payment_initiated';
@@ -86,6 +93,8 @@ export const MONETIZATION_TYPE_VALUES: string[];
 // ============ DEFAULT EXPORT ============
 
 declare const _default: {
+  TRANSACTION_TYPE: typeof TRANSACTION_TYPE;
+  TRANSACTION_TYPE_VALUES: typeof TRANSACTION_TYPE_VALUES;
   TRANSACTION_STATUS: typeof TRANSACTION_STATUS;
   TRANSACTION_STATUS_VALUES: typeof TRANSACTION_STATUS_VALUES;
   LIBRARY_CATEGORIES: typeof LIBRARY_CATEGORIES;

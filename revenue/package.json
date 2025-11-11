@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "0.0.2",
+  "version": "0.0.22",
   "description": "Enterprise revenue management system with subscriptions, purchases, proration, and payment processing",
   "main": "index.js",
   "types": "revenue.d.ts",

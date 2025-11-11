@@ -132,7 +132,7 @@ export class PaymentService {
 
   verify(paymentIntentId: string, options?: { verifiedBy?: string }): Promise<{ transaction: any; paymentResult: PaymentResult; status: string }>;
   getStatus(paymentIntentId: string): Promise<{ transaction: any; paymentResult: PaymentResult; status: string; provider: string }>;
-  refund(paymentId: string, amount?: number, options?: { reason?: string }): Promise<{ transaction: any; refundResult: RefundResult; status: string }>;
+  refund(paymentId: string, amount?: number, options?: { reason?: string }): Promise<{ transaction: any; refundTransaction: any; refundResult: RefundResult; status: string }>;
   handleWebhook(providerName: string, payload: any, headers?: any): Promise<{ event: WebhookEvent; transaction: any; status: string }>;
   list(filters?: any, options?: any): Promise<any[]>;
   get(transactionId: string): Promise<any>;
@@ -219,6 +219,25 @@ export interface RevenueOptions {
      * If not specified, falls back to library defaults: 'subscription' or 'purchase'
      */
     categoryMappings?: Record<string, string>;
+    
+    /**
+     * Maps transaction types to income/expense for your accounting system
+     * 
+     * Allows you to control how different transaction types are recorded:
+     * - 'income': Money coming in (payments, subscriptions)
+     * - 'expense': Money going out (refunds)
+     * 
+     * @example
+     * transactionTypeMapping: {
+     *   subscription: 'income',
+     *   subscription_renewal: 'income',
+     *   purchase: 'income',
+     *   refund: 'expense',
+     * }
+     * 
+     * If not specified, library defaults to 'income' for all payment transactions
+     */
+    transactionTypeMapping?: Record<string, 'income' | 'expense'>;
     [key: string]: any;
   };
   logger?: Console | any;
@@ -227,6 +246,11 @@ export interface RevenueOptions {
 export function createRevenue(options: RevenueOptions): Revenue;
 
 // ============ ENUMS ============
+
+export const TRANSACTION_TYPE: {
+  INCOME: 'income';
+  EXPENSE: 'expense';
+};
 
 export const TRANSACTION_STATUS: {
   PENDING: 'pending';

@@ -6,637 +6,375 @@ Thin, focused, production-ready library with smart defaults. Built for SaaS, mar
 
 ## Features
 
-- **Subscriptions**: Create, renew, upgrade, downgrade with smart proration
-- **Payment Processing**: Multi-gateway support (Stripe, SSLCommerz, bKash, manual)
-- **Transaction Management**: Complete lifecycle with verification and refunds
-- **Provider Pattern**: Pluggable payment providers (like AI SDK)
-- **Framework Agnostic**: Works with Fastify, Express, Nest, or standalone
-- **Model Flexible**: Plain Mongoose OR @classytic/mongokit Repository
+- **Subscriptions**: Create, renew, pause, cancel with lifecycle management
+- **Payment Processing**: Multi-gateway support (Stripe, SSLCommerz, manual, etc.)
+- **Transaction Management**: Income/expense tracking with verification and refunds
+- **Provider Pattern**: Pluggable payment providers (like LangChain/Vercel AI SDK)
+- **Framework Agnostic**: Works with Express, Fastify, Next.js, or standalone
 - **TypeScript Ready**: Full type definitions included
-- **Zero Dependencies**: Only requires `mongoose` as peer dependency
 
 ## Installation
 
 ```bash
 npm install @classytic/revenue
+npm install @classytic/revenue-manual  # For manual payments
 ```
 
-## Core Concepts
+## Quick Start (30 seconds)
 
-### Monetization Types (Strict)
-The library supports **3 monetization types** (strict):
-- **FREE**: No payment required
-- **SUBSCRIPTION**: Recurring payments
-- **PURCHASE**: One-time payments
-
-### Transaction Categories (Flexible)
-You can use **custom category names** for your business logic while using the strict monetization types:
-- `'order_subscription'` for subscription orders
-- `'gym_membership'` for gym memberships
-- `'course_enrollment'` for course enrollments
-- Or any custom names you need
-
-### How It Works
 ```javascript
+import { createRevenue } from '@classytic/revenue';
+import { ManualProvider } from '@classytic/revenue-manual';
+import Transaction from './models/Transaction.js';
+
+// 1. Configure
 const revenue = createRevenue({
   models: { Transaction },
-  config: {
-    categoryMappings: {
-      Order: 'order_subscription',              // Customer orders
-      PlatformSubscription: 'platform_subscription',  // Tenant/org subscriptions
-      Membership: 'gym_membership',              // User memberships
-      Enrollment: 'course_enrollment',           // Course enrollments
-    }
-  }
+  providers: { manual: new ManualProvider() },
 });
 
-// All these use SUBSCRIPTION monetization type but different categories
-await revenue.subscriptions.create({
-  entity: 'Order',                // Logical identifier → maps to 'order_subscription'
-  monetizationType: 'subscription',
-  // ...
+// 2. Create subscription
+const { subscription, transaction } = await revenue.subscriptions.create({
+  data: { organizationId, customerId },
+  planKey: 'monthly',
+  amount: 1500,
+  gateway: 'manual',
+  paymentData: { method: 'bkash', walletNumber: '01712345678' },
 });
 
-await revenue.subscriptions.create({
-  entity: 'PlatformSubscription',  // Logical identifier → maps to 'platform_subscription'
-  monetizationType: 'subscription',
-  // ...
-});
+// 3. Verify payment
+await revenue.payments.verify(transaction.gateway.paymentIntentId);
+
+// 4. Refund if needed
+await revenue.payments.refund(transaction._id, 500, { reason: 'Partial refund' });
 ```
 
-**Note:** `entity` is NOT a database model name - it's just a logical identifier you choose to organize your business logic.
+**That's it!** Working revenue system in 3 steps.
 
 ## Transaction Model Setup
 
-Spread library enums/schemas into your Transaction model:
+The library requires a Transaction model with specific fields and provides reusable schemas:
 
 ```javascript
 import mongoose from 'mongoose';
 import {
+  TRANSACTION_TYPE_VALUES,
   TRANSACTION_STATUS_VALUES,
-  LIBRARY_CATEGORIES,
 } from '@classytic/revenue/enums';
 import {
   gatewaySchema,
-  currentPaymentSchema,
   paymentDetailsSchema,
 } from '@classytic/revenue/schemas';
 
-// Merge library categories with your custom ones
-const MY_CATEGORIES = {
-  ...LIBRARY_CATEGORIES,           // subscription, purchase (library defaults)
-  ORDER_SUBSCRIPTION: 'order_subscription',
-  ORDER_PURCHASE: 'order_purchase',
-  GYM_MEMBERSHIP: 'gym_membership',
-  COURSE_ENROLLMENT: 'course_enrollment',
-  SALARY: 'salary',
-  RENT: 'rent',
-  EQUIPMENT: 'equipment',
-  // Add as many as you need
-};
-
 const transactionSchema = new mongoose.Schema({
-  // Required by library
+  // ============ REQUIRED BY LIBRARY ============
   organizationId: { type: String, required: true, index: true },
   amount: { type: Number, required: true, min: 0 },
+  type: { type: String, enum: TRANSACTION_TYPE_VALUES, required: true },  // 'income' | 'expense'
+  method: { type: String, required: true },  // 'manual' | 'bkash' | 'card' | etc.
   status: { type: String, enum: TRANSACTION_STATUS_VALUES, required: true },
-  category: { type: String, enum: Object.values(MY_CATEGORIES), required: true },
+  category: { type: String, required: true },  // Your custom categories
 
-  // Spread library schemas
-  gateway: gatewaySchema,
-  currentPayment: currentPaymentSchema,
-  paymentDetails: paymentDetailsSchema,
+  // ============ LIBRARY SCHEMAS (nested) ============
+  gateway: gatewaySchema,              // Payment gateway details
+  paymentDetails: paymentDetailsSchema, // Payment info (wallet, bank, etc.)
 
-  // Add your fields
-  notes: String,
-  invoiceNumber: String,
+  // ============ YOUR CUSTOM FIELDS ============
+  customerId: String,
+  currency: { type: String, default: 'BDT' },
+  verifiedAt: Date,
+  verifiedBy: mongoose.Schema.Types.ObjectId,
+  refundedAmount: Number,
+  idempotencyKey: { type: String, unique: true, sparse: true },
+  metadata: mongoose.Schema.Types.Mixed,
 }, { timestamps: true });
 
 export default mongoose.model('Transaction', transactionSchema);
 ```
 
-**See [`examples/transaction.model.js`](examples/transaction.model.js) for complete example with indexes.**
+## Available Schemas
 
-## Quick Start
+| Schema | Purpose | Key Fields |
+|--------|---------|------------|
+| `gatewaySchema` | Payment gateway integration | `type`, `paymentIntentId`, `sessionId` |
+| `paymentDetailsSchema` | Payment method info | `walletNumber`, `trxId`, `bankName` |
+| `commissionSchema` | Commission tracking | `rate`, `grossAmount`, `netAmount` |
+| `currentPaymentSchema` | Latest payment (for Order/Subscription models) | `transactionId`, `status`, `verifiedAt` |
+| `subscriptionInfoSchema` | Subscription details (for Order models) | `planKey`, `startDate`, `endDate` |
 
-### Minimal Setup (3 lines)
-
-```javascript
-import { createRevenue } from '@classytic/revenue';
-import Transaction from './models/Transaction.js';
-
-// Works out-of-box with built-in manual provider
-const revenue = createRevenue({
-  models: { Transaction },
-});
-
-// Create a subscription
-const { subscription, transaction } = await revenue.subscriptions.create({
-  data: { organizationId, customerId },
-  planKey: 'monthly',
-  amount: 99.99,
-});
-```
-
-That's it! The package works immediately with sensible defaults.
-
-## Real-World Use Cases
-
-### E-commerce Platform with Multiple Order Types
+**Usage:** Import and use as nested objects (NOT spread):
 
 ```javascript
-// Setup
-const revenue = createRevenue({
-  models: { Transaction },
-  config: {
-    categoryMappings: {
-      Order: 'order_subscription',      // Recurring orders (meal kits, subscriptions)
-      Purchase: 'order_purchase',        // One-time orders
-    }
-  }
-});
+import { gatewaySchema } from '@classytic/revenue/schemas';
 
-// Subscription order (meal kit subscription)
-const { subscription, transaction } = await revenue.subscriptions.create({
-  data: { organizationId, customerId },
-  entity: 'Order',                    // Logical identifier
-  monetizationType: 'subscription',    // STRICT: Must be subscription/purchase/free
-  planKey: 'monthly',
-  amount: 49.99,
-  metadata: { productType: 'meal_kit' }
-});
-// Transaction created with category: 'order_subscription'
-
-// One-time purchase order
-const { transaction } = await revenue.subscriptions.create({
-  data: { organizationId, customerId },
-  entity: 'Purchase',                 // Logical identifier
-  monetizationType: 'purchase',
-  amount: 99.99,
-  metadata: { productType: 'electronics' }
-});
-// Transaction created with category: 'order_purchase'
-```
-
-### Gym Management System
-
-```javascript
-// Setup
-const revenue = createRevenue({
-  models: { Transaction },
-  config: {
-    categoryMappings: {
-      Membership: 'gym_membership',
-      PersonalTraining: 'personal_training',
-      DayPass: 'day_pass',
-    }
-  }
-});
-
-// Monthly gym membership
-await revenue.subscriptions.create({
-  entity: 'Membership',
-  monetizationType: 'subscription',
-  planKey: 'monthly',
-  amount: 59.99,
-});
-// Transaction: 'gym_membership'
-
-// Personal training package (one-time purchase)
-await revenue.subscriptions.create({
-  entity: 'PersonalTraining',
-  monetizationType: 'purchase',
-  amount: 299.99,
-});
-// Transaction: 'personal_training'
-
-// Day pass (free trial)
-await revenue.subscriptions.create({
-  entity: 'DayPass',
-  monetizationType: 'free',
-  amount: 0,
-});
-// No transaction created for free
-```
-
-### Online Learning Platform
-
-```javascript
-// Setup
-const revenue = createRevenue({
-  models: { Transaction },
-  config: {
-    categoryMappings: {
-      CourseEnrollment: 'course_enrollment',
-      MembershipPlan: 'membership_plan',
-    }
-  }
-});
-
-// One-time course purchase
-await revenue.subscriptions.create({
-  entity: 'CourseEnrollment',
-  monetizationType: 'purchase',
-  amount: 99.00,
-  metadata: { courseId: 'react-advanced' }
-});
-// Transaction: 'course_enrollment'
-
-// Monthly all-access membership
-await revenue.subscriptions.create({
-  entity: 'MembershipPlan',
-  monetizationType: 'subscription',
-  planKey: 'monthly',
-  amount: 29.99,
-});
-// Transaction: 'membership_plan'
-```
-
-### Without Category Mappings (Defaults)
-
-```javascript
-// No mappings defined - uses library defaults
-const revenue = createRevenue({
-  models: { Transaction },
-  config: {
-    categoryMappings: {}  // Empty or omit this
-  }
-});
-
-// All subscriptions use default 'subscription' category
-await revenue.subscriptions.create({
-  monetizationType: 'subscription',
-  planKey: 'monthly',
-  amount: 49.99,
-});
-// Transaction created with category: 'subscription' (library default)
-
-// All purchases use default 'purchase' category
-await revenue.subscriptions.create({
-  monetizationType: 'purchase',
-  amount: 99.99,
-});
-// Transaction created with category: 'purchase' (library default)
-```
-
-## Usage Examples
-
-### With Payment Provider
-
-```javascript
-import { createRevenue } from '@classytic/revenue';
-// Future: import { stripe } from '@classytic/revenue-stripe';
-
-const revenue = createRevenue({
-  models: { Transaction },
-  providers: {
-    // Built-in manual provider is auto-included
-    // stripe: stripe({ apiKey: process.env.STRIPE_KEY }),
-  },
-});
-
-// Create subscription with payment gateway
-await revenue.subscriptions.create({
-  data: { organizationId, customerId },
-  planKey: 'monthly',
-  amount: 99.99,
-  gateway: 'stripe', // or 'manual'
-});
-```
-
-### With Hooks
-
-```javascript
-const revenue = createRevenue({
-  models: { Transaction },
-  hooks: {
-    'payment.verified': async ({ transaction }) => {
-      console.log('Payment verified:', transaction._id);
-      // Send email, update analytics, etc.
-    },
-    'subscription.created': async ({ subscription, transaction }) => {
-      console.log('New subscription:', subscription._id);
-    },
-  },
-});
-```
-
-### Custom Logger
-
-```javascript
-import winston from 'winston';
-
-const revenue = createRevenue({
-  models: { Transaction },
-  logger: winston.createLogger({ /* config */ }),
+const schema = new mongoose.Schema({
+  gateway: gatewaySchema,  // ✅ Correct - nested
+  // ...gatewaySchema,     // ❌ Wrong - don't spread
 });
 ```
 
 ## Core API
 
-### Services
-
-The `revenue` instance provides three focused services:
-
-#### Subscriptions
+### Subscriptions
 
 ```javascript
 // Create subscription
-const { subscription, transaction, paymentIntent } = await revenue.subscriptions.create({
-  data: { organizationId, customerId, ... },
-  planKey: 'monthly',
-  amount: 99.99,
-  currency: 'USD',
-  gateway: 'manual', // optional
-  metadata: { /* ... */ }, // optional
-});
+const { subscription, transaction, paymentIntent } = 
+  await revenue.subscriptions.create({
+    data: { organizationId, customerId },
+    planKey: 'monthly',
+    amount: 1500,
+    currency: 'BDT',
+    gateway: 'manual',
+    paymentData: { method: 'bkash', walletNumber: '01712345678' },
+  });
+
+// Verify and activate
+await revenue.payments.verify(transaction.gateway.paymentIntentId);
+await revenue.subscriptions.activate(subscription._id);
 
 // Renew subscription
-await revenue.subscriptions.renew(subscriptionId, { amount: 99.99 });
-
-// Activate subscription
-await revenue.subscriptions.activate(subscriptionId);
-
-// Cancel subscription
-await revenue.subscriptions.cancel(subscriptionId, { immediate: true });
+await revenue.subscriptions.renew(subscription._id, {
+  gateway: 'manual',
+  paymentData: { method: 'nagad' },
+});
 
 // Pause/Resume
-await revenue.subscriptions.pause(subscriptionId);
-await revenue.subscriptions.resume(subscriptionId);
+await revenue.subscriptions.pause(subscription._id, { reason: 'Customer request' });
+await revenue.subscriptions.resume(subscription._id, { extendPeriod: true });
 
-// Get/List
-await revenue.subscriptions.get(subscriptionId);
-await revenue.subscriptions.list(filters, options);
+// Cancel
+await revenue.subscriptions.cancel(subscription._id, { immediate: true });
 ```
 
-#### Payments
+### Payments
 
 ```javascript
-// Verify payment
-const { transaction, paymentResult, status } = await revenue.payments.verify(
-  paymentIntentId,
-  { verifiedBy: userId }
-);
+// Verify payment (admin approval for manual)
+const { transaction } = await revenue.payments.verify(paymentIntentId, {
+  verifiedBy: adminUserId,
+});
 
 // Get payment status
-const { transaction, status, provider } = await revenue.payments.getStatus(paymentIntentId);
+const { status } = await revenue.payments.getStatus(paymentIntentId);
 
-// Refund payment
-const { transaction, refundResult } = await revenue.payments.refund(
-  paymentId,
-  amount, // optional, defaults to full refund
-  { reason: 'Customer request' }
+// Refund (creates separate EXPENSE transaction)
+const { transaction, refundTransaction } = await revenue.payments.refund(
+  transactionId,
+  500,  // Amount or null for full refund
+  { reason: 'Customer requested' }
 );
 
-// Handle webhook
-const { event, transaction, status } = await revenue.payments.handleWebhook(
+// Handle webhook (for automated providers like Stripe)
+const { event, transaction } = await revenue.payments.handleWebhook(
   'stripe',
-  payload,
+  webhookPayload,
   headers
 );
 ```
 
-#### Transactions
+### Transactions
 
 ```javascript
-// Get transaction
+// Get transaction by ID
 const transaction = await revenue.transactions.get(transactionId);
 
-// List transactions
-const { transactions, total, page, limit, pages } = await revenue.transactions.list(
-  { organizationId, status: 'verified' },
-  { limit: 50, skip: 0, sort: { createdAt: -1 } }
+// List with filters
+const { transactions, total } = await revenue.transactions.list(
+  { type: 'income', status: 'verified' },
+  { limit: 50, sort: { createdAt: -1 } }
 );
 
-// Update transaction
-await revenue.transactions.update(transactionId, { notes: 'Updated' });
+// Calculate net revenue
+const income = await revenue.transactions.list({ type: 'income' });
+const expense = await revenue.transactions.list({ type: 'expense' });
+const netRevenue = income.total - expense.total;
 ```
 
-**Note**: For analytics, exports, or complex queries, use Mongoose aggregations directly on your Transaction model. This keeps the service thin and focused.
+## Transaction Types (Income vs Expense)
 
-### Providers
+The library uses **double-entry accounting**:
+
+- **INCOME** (`'income'`): Money coming in - payments, subscriptions
+- **EXPENSE** (`'expense'`): Money going out - refunds, payouts
 
 ```javascript
-// Get specific provider
-const stripeProvider = revenue.getProvider('stripe');
-
-// Check capabilities
-const capabilities = stripeProvider.getCapabilities();
-// {
-//   supportsWebhooks: true,
-//   supportsRefunds: true,
-//   supportsPartialRefunds: true,
-//   requiresManualVerification: false
-// }
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    transactionTypeMapping: {
+      subscription: 'income',
+      purchase: 'income',
+      refund: 'expense',  // Refunds create separate expense transactions
+    },
+  },
+});
 ```
 
-## Error Handling
+**Refund Pattern:**
+- Refund creates NEW transaction with `type: 'expense'`
+- Original transaction status becomes `'refunded'` or `'partially_refunded'`
+- Both linked via metadata for audit trail
+- Calculate net: `SUM(income) - SUM(expense)`
 
-All errors are typed with codes for easy handling:
+## Custom Categories
+
+Map logical entities to transaction categories:
 
 ```javascript
-import {
-  TransactionNotFoundError,
-  ProviderNotFoundError,
-  RefundNotSupportedError
-} from '@classytic/revenue';
+const revenue = createRevenue({
+  models: { Transaction },
+  config: {
+    categoryMappings: {
+      Order: 'order_subscription',
+      PlatformSubscription: 'platform_subscription',
+      Membership: 'gym_membership',
+      Enrollment: 'course_enrollment',
+    },
+  },
+});
 
-try {
-  await revenue.payments.verify(intentId);
-} catch (error) {
-  if (error instanceof TransactionNotFoundError) {
-    console.log('Transaction not found:', error.metadata.transactionId);
+// Usage
+await revenue.subscriptions.create({
+  entity: 'Order',  // Maps to 'order_subscription' category
+  monetizationType: 'subscription',
+  // ...
+});
+```
+
+**Note:** `entity` is a logical identifier (not a database model name) for organizing your business logic.
+
+## Hooks
+
+```javascript
+const revenue = createRevenue({
+  models: { Transaction },
+  hooks: {
+    'subscription.created': async ({ subscription, transaction }) => {
+      console.log('New subscription:', subscription._id);
+    },
+    'payment.verified': async ({ transaction }) => {
+      // Send confirmation email
+    },
+    'payment.refunded': async ({ refundTransaction }) => {
+      // Process refund notification
+    },
+  },
+});
+```
+
+**Available hooks:**
+- `subscription.created`, `subscription.activated`, `subscription.renewed`
+- `subscription.paused`, `subscription.resumed`, `subscription.cancelled`
+- `payment.verified`, `payment.refunded`
+- `payment.webhook.{type}` (for webhook events)
+
+## Building Payment Providers
+
+Create custom providers for Stripe, PayPal, etc.:
+
+```javascript
+import { PaymentProvider, PaymentIntent, PaymentResult } from '@classytic/revenue';
+
+export class StripeProvider extends PaymentProvider {
+  constructor(config) {
+    super(config);
+    this.name = 'stripe';
+    this.stripe = new Stripe(config.apiKey);
   }
 
-  if (error.code === 'TRANSACTION_NOT_FOUND') {
-    // Handle specific error
+  async createIntent(params) {
+    const intent = await this.stripe.paymentIntents.create({
+      amount: params.amount,
+      currency: params.currency,
+    });
+
+    return new PaymentIntent({
+      id: intent.id,
+      provider: 'stripe',
+      status: intent.status,
+      amount: intent.amount,
+      currency: intent.currency,
+      clientSecret: intent.client_secret,
+      raw: intent,
+    });
   }
 
-  if (error.retryable) {
-    // Retry the operation
+  async verifyPayment(intentId) {
+    const intent = await this.stripe.paymentIntents.retrieve(intentId);
+    return new PaymentResult({
+      id: intent.id,
+      provider: 'stripe',
+      status: intent.status === 'succeeded' ? 'succeeded' : 'failed',
+      paidAt: new Date(),
+      raw: intent,
+    });
   }
+
+  // Implement: getStatus(), refund(), handleWebhook()
 }
 ```
 
-### Error Classes
-
-- `RevenueError` - Base error class
-- `ConfigurationError` - Configuration issues
-- `ModelNotRegisteredError` - Model not provided
-- `ProviderError` - Provider-related errors
-- `ProviderNotFoundError` - Provider doesn't exist
-- `PaymentIntentCreationError` - Failed to create payment intent
-- `PaymentVerificationError` - Verification failed
-- `NotFoundError` - Resource not found
-- `TransactionNotFoundError` - Transaction not found
-- `SubscriptionNotFoundError` - Subscription not found
-- `ValidationError` - Validation failed
-- `InvalidAmountError` - Invalid amount
-- `MissingRequiredFieldError` - Required field missing
-- `StateError` - Invalid state
-- `AlreadyVerifiedError` - Already verified
-- `InvalidStateTransitionError` - Invalid state change
-- `RefundNotSupportedError` - Provider doesn't support refunds
-- `RefundError` - Refund failed
-
-## Enums & Schemas
-
-```javascript
-import {
-  TRANSACTION_STATUS,
-  PAYMENT_GATEWAY_TYPE,
-  SUBSCRIPTION_STATUS,
-  PLAN_KEYS,
-  currentPaymentSchema,
-  subscriptionInfoSchema,
-} from '@classytic/revenue';
-
-// Use in your models
-const organizationSchema = new Schema({
-  currentPayment: currentPaymentSchema,
-  subscription: subscriptionInfoSchema,
-});
-```
+**See:** [`docs/guides/PROVIDER_GUIDE.md`](../docs/guides/PROVIDER_GUIDE.md) for complete guide.
 
 ## TypeScript
 
 Full TypeScript support included:
 
 ```typescript
-import { createRevenue, Revenue, RevenueOptions } from '@classytic/revenue';
+import { createRevenue, Revenue, PaymentService } from '@classytic/revenue';
+import { TRANSACTION_TYPE, TRANSACTION_STATUS } from '@classytic/revenue/enums';
 
-const options: RevenueOptions = {
-  models: { Transaction: TransactionModel },
-};
+const revenue: Revenue = createRevenue({
+  models: { Transaction },
+});
 
-const revenue: Revenue = createRevenue(options);
+// All services are fully typed
+const payment = await revenue.payments.verify(id);
+const subscription = await revenue.subscriptions.create({ ... });
 ```
 
-## Advanced Usage
+## Examples
 
-### Custom Providers
+- [`examples/basic-usage.js`](examples/basic-usage.js) - Quick start guide
+- [`examples/transaction.model.js`](examples/transaction.model.js) - Complete model setup
+- [`examples/transaction-type-mapping.js`](examples/transaction-type-mapping.js) - Income/expense configuration
+- [`examples/complete-flow.js`](examples/complete-flow.js) - Full lifecycle with state management
+- [`examples/multivendor-platform.js`](examples/multivendor-platform.js) - Multi-tenant setup
+
+## Error Handling
 
 ```javascript
-import { PaymentProvider } from '@classytic/revenue';
+import { 
+  TransactionNotFoundError,
+  ProviderNotFoundError,
+  AlreadyVerifiedError,
+  RefundError,
+} from '@classytic/revenue';
 
-class MyCustomProvider extends PaymentProvider {
-  name = 'my-gateway';
-
-  async createIntent(params) {
-    // Implementation
-  }
-
-  async verifyPayment(intentId) {
-    // Implementation
-  }
-
-  getCapabilities() {
-    return {
-      supportsWebhooks: true,
-      supportsRefunds: true,
-      supportsPartialRefunds: false,
-      requiresManualVerification: false,
-    };
+try {
+  await revenue.payments.verify(id);
+} catch (error) {
+  if (error instanceof AlreadyVerifiedError) {
+    console.log('Already verified');
+  } else if (error instanceof TransactionNotFoundError) {
+    console.log('Transaction not found');
   }
 }
-
-const revenue = createRevenue({
-  models: { Transaction },
-  providers: {
-    'my-gateway': new MyCustomProvider(),
-  },
-});
-```
-
-### DI Container Access
-
-```javascript
-const revenue = createRevenue({ models: { Transaction } });
-
-// Access container
-const models = revenue.container.get('models');
-const providers = revenue.container.get('providers');
-```
-
-## Hook Events
-
-Available hook events:
-
-- `payment.verified` - Payment verified
-- `payment.failed` - Payment failed
-- `subscription.created` - Subscription created
-- `subscription.renewed` - Subscription renewed
-- `subscription.activated` - Subscription activated
-- `subscription.cancelled` - Subscription cancelled
-- `subscription.paused` - Subscription paused
-- `subscription.resumed` - Subscription resumed
-- `transaction.created` - Transaction created
-- `transaction.updated` - Transaction updated
-
-Hooks are fire-and-forget - they never break the main flow. Errors are logged but don't throw.
-
-## Architecture
-
-```
-@classytic/revenue (core package)
-├── Builder (createRevenue)
-├── DI Container
-├── Services (focused on lifecycle)
-│   ├── SubscriptionService
-│   ├── PaymentService
-│   └── TransactionService
-├── Providers
-│   ├── base.js (interface)
-│   └── manual.js (built-in)
-├── Error classes
-└── Schemas & Enums
-
-@classytic/revenue-stripe (future)
-@classytic/revenue-sslcommerz (future)
-@classytic/revenue-fastify (framework adapter, future)
-```
-
-## Design Principles
-
-- **KISS**: Keep It Simple, Stupid
-- **DRY**: Don't Repeat Yourself
-- **SOLID**: Single responsibility, focused services
-- **Immutable**: Revenue instance is deeply frozen
-- **Thin Core**: Core operations only, users extend as needed
-- **Smart Defaults**: Works out-of-box with minimal config
-
-## Migration from Legacy API
-
-If you're using the old `initializeRevenue()` API:
-
-```javascript
-// ❌ Old (legacy API - removed)
-import { initializeRevenue, monetization, payment } from '@classytic/revenue';
-initializeRevenue({ TransactionModel, transactionService });
-await monetization.createSubscription(params);
-
-// ✅ New (DI-based API)
-import { createRevenue } from '@classytic/revenue';
-const revenue = createRevenue({ models: { Transaction } });
-await revenue.subscriptions.create(params);
 ```
 
 ## Documentation
 
-- **[Building Payment Providers](../docs/guides/PROVIDER_GUIDE.md)** - Create custom payment integrations
-- **[Examples](../docs/examples/)** - Complete usage examples
-- **[Full Documentation](../docs/README.md)** - Comprehensive guides
+- **[Provider Guide](../docs/guides/PROVIDER_GUIDE.md)** - Build custom payment providers
+- **[Architecture](../docs/README.md#architecture)** - System design and patterns
+- **[API Reference](../docs/README.md)** - Complete API documentation
 
 ## Support
 
-- **GitHub**: https://github.com/classytic/revenue
-- **Issues**: https://github.com/classytic/revenue/issues
-- **npm**: https://npmjs.com/package/@classytic/revenue
+- **GitHub**: [classytic/revenue](https://github.com/classytic/revenue)
+- **Issues**: [Report bugs](https://github.com/classytic/revenue/issues)
+- **NPM**: [@classytic/revenue](https://www.npmjs.com/package/@classytic/revenue)
 
 ## License
 
-MIT © Classytic (Classytic)
-
----
-
-**Built with ❤️ following SOLID principles and industry best practices**
+MIT © [Classytic](https://github.com/classytic)

@@ -7,6 +7,7 @@
 
 import mongoose from 'mongoose';
 import {
+  TRANSACTION_TYPE_VALUES,
   TRANSACTION_STATUS_VALUES,
   LIBRARY_CATEGORY_VALUES,
 } from '@classytic/revenue/enums';
@@ -48,6 +49,8 @@ const transactionSchema = new mongoose.Schema({
   // Required by library
   organizationId: { type: String, required: true, index: true },
   amount: { type: Number, required: true, min: 0 },
+  type: { type: String, enum: TRANSACTION_TYPE_VALUES, required: true, index: true },  // 'income' | 'expense'
+  method: { type: String, enum: MY_PAYMENT_METHOD_VALUES, required: true },  // Payment method
   status: { type: String, enum: TRANSACTION_STATUS_VALUES, default: 'pending', required: true, index: true },
   category: { type: String, enum: MY_CATEGORY_VALUES, required: true, index: true },
 
@@ -59,7 +62,6 @@ const transactionSchema = new mongoose.Schema({
   // Optional but recommended
   customerId: String,
   currency: { type: String, default: 'BDT' },
-  method: { type: String, enum: MY_PAYMENT_METHOD_VALUES },  // Your payment methods
   verifiedAt: Date,
   verifiedBy: mongoose.Schema.Types.ObjectId,
 
@@ -77,6 +79,7 @@ const transactionSchema = new mongoose.Schema({
 
 // Indexes
 transactionSchema.index({ organizationId: 1, status: 1 });
+transactionSchema.index({ organizationId: 1, type: 1 });  // For income/expense queries
 transactionSchema.index({ customerId: 1 });
 transactionSchema.index({ referenceModel: 1, referenceId: 1 });
 transactionSchema.index({ 'gateway.paymentIntentId': 1 });
