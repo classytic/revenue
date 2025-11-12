@@ -49,6 +49,16 @@ export {
   setLogger,
   calculateCommission,
   reverseCommission,
+  // Subscription utilities
+  addDuration,
+  calculatePeriodRange,
+  calculateProratedAmount,
+  resolveIntervalToDuration,
+  isSubscriptionActive,
+  canRenewSubscription,
+  canCancelSubscription,
+  canPauseSubscription,
+  canResumeSubscription,
 } from './utils/index.js';
 
 // ============ DEFAULT EXPORT ============

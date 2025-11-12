@@ -100,6 +100,37 @@ export function reverseCommission(
   refundAmount: number
 ): CommissionObject | null;
 
+// ============ SUBSCRIPTION UTILITIES ============
+
+export function addDuration(startDate: Date, duration: number, unit?: string): Date;
+
+export function calculatePeriodRange(params: {
+  currentEndDate?: Date | null;
+  startDate?: Date | null;
+  duration: number;
+  unit?: string;
+  now?: Date;
+}): { startDate: Date; endDate: Date };
+
+export function calculateProratedAmount(params: {
+  amountPaid: number;
+  startDate: Date;
+  endDate: Date;
+  asOfDate?: Date;
+  precision?: number;
+}): number;
+
+export function resolveIntervalToDuration(
+  interval?: string,
+  intervalCount?: number
+): { duration: number; unit: string };
+
+export function isSubscriptionActive(subscription: any): boolean;
+export function canRenewSubscription(entity: any): boolean;
+export function canCancelSubscription(entity: any): boolean;
+export function canPauseSubscription(entity: any): boolean;
+export function canResumeSubscription(entity: any): boolean;
+
 // ============ DEFAULT EXPORT ============
 
 declare const _default: {
@@ -119,6 +150,15 @@ declare const _default: {
   triggerHook: typeof triggerHook;
   calculateCommission: typeof calculateCommission;
   reverseCommission: typeof reverseCommission;
+  addDuration: typeof addDuration;
+  calculatePeriodRange: typeof calculatePeriodRange;
+  calculateProratedAmount: typeof calculateProratedAmount;
+  resolveIntervalToDuration: typeof resolveIntervalToDuration;
+  isSubscriptionActive: typeof isSubscriptionActive;
+  canRenewSubscription: typeof canRenewSubscription;
+  canCancelSubscription: typeof canCancelSubscription;
+  canPauseSubscription: typeof canPauseSubscription;
+  canResumeSubscription: typeof canResumeSubscription;
 };
 
 export default _default;

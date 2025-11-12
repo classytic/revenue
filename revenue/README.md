@@ -309,6 +309,43 @@ const pending = await Transaction.find({ 'commission.status': 'pending' });
 
 **See:** [`examples/commission-tracking.js`](examples/commission-tracking.js) for complete guide.
 
+## Subscription Utilities
+
+Universal helpers for period calculation, proration, and action eligibility:
+
+```javascript
+import {
+  // Period calculation
+  calculatePeriodRange,
+  calculateProratedAmount,
+  addDuration,
+  
+  // Action eligibility
+  canRenewSubscription,
+  canPauseSubscription,
+  isSubscriptionActive,
+} from '@classytic/revenue/utils';
+
+// Calculate period
+const { startDate, endDate } = calculatePeriodRange({
+  duration: 30,
+  unit: 'days',
+});
+
+// Calculate prorated refund
+const refund = calculateProratedAmount({
+  amountPaid: 1500,
+  startDate: sub.startDate,
+  endDate: sub.endDate,
+  asOfDate: new Date(),
+});
+
+// Check eligibility
+if (canRenewSubscription(membership)) {
+  await revenue.subscriptions.renew(membership.subscriptionId);
+}
+```
+
 ## Polymorphic References
 
 Link transactions to any entity (Order, Subscription, Enrollment):
@@ -448,11 +485,8 @@ const subscription = await revenue.subscriptions.create({ ... });
 
 - [`examples/basic-usage.js`](examples/basic-usage.js) - Quick start guide
 - [`examples/transaction.model.js`](examples/transaction.model.js) - Complete model setup
-- [`examples/transaction-type-mapping.js`](examples/transaction-type-mapping.js) - Income/expense configuration
-- [`examples/complete-flow.js`](examples/complete-flow.js) - Full lifecycle with state management
-- [`examples/commission-tracking.js`](examples/commission-tracking.js) - Platform commission calculation
-- [`examples/polymorphic-references.js`](examples/polymorphic-references.js) - Link transactions to entities
-- [`examples/multivendor-platform.js`](examples/multivendor-platform.js) - Multi-tenant setup
+- [`examples/complete-flow.js`](examples/complete-flow.js) - Full lifecycle (types, refs, state)
+- [`examples/commission-tracking.js`](examples/commission-tracking.js) - Commission calculation
 
 ## Error Handling
 
