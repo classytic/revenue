@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "0.0.25",
+  "version": "0.1.0",
   "description": "Enterprise revenue management system with subscriptions, purchases, proration, payment processing, escrow, and multi-party splits",
   "main": "index.js",
   "type": "module",
@@ -32,7 +32,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/classytic/revenue"
+    "url": "git+https://github.com/classytic/revenue.git"
   },
   "bugs": {
     "url": "https://github.com/classytic/revenue/issues"

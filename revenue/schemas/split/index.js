@@ -3,8 +3,13 @@
  * @classytic/revenue
  */
 
-export { splitItemSchema, splitsSchema } from './split.schema.js';
+// Import first
+import { splitItemSchema, splitsSchema } from './split.schema.js';
 
+// Then re-export
+export { splitItemSchema, splitsSchema };
+
+// Now they're in scope for default export
 export default {
   splitItemSchema,
   splitsSchema,
