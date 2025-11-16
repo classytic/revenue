@@ -46,13 +46,15 @@ const MY_PAYMENT_METHOD_VALUES = Object.values(MY_PAYMENT_METHODS);
 
 // ============ TRANSACTION SCHEMA ============
 const transactionSchema = new mongoose.Schema({
-  // Required by library
-  organizationId: { type: String, required: true, index: true },
+  // ============ REQUIRED BY LIBRARY ============
   amount: { type: Number, required: true, min: 0 },
   type: { type: String, enum: TRANSACTION_TYPE_VALUES, required: true, index: true },  // 'income' | 'expense'
   method: { type: String, enum: MY_PAYMENT_METHOD_VALUES, required: true },  // Payment method
   status: { type: String, enum: TRANSACTION_STATUS_VALUES, default: 'pending', required: true, index: true },
   category: { type: String, enum: MY_CATEGORY_VALUES, required: true, index: true },
+  
+  // ============ MULTI-TENANT (optional) ============
+  organizationId: { type: String, index: true },  // Only for multi-tenant platforms
 
   // Spread library schemas
   gateway: gatewaySchema,

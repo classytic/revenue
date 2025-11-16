@@ -10,6 +10,8 @@ import { Container } from './container.js';
 import { SubscriptionService } from '../services/subscription.service.js';
 import { PaymentService } from '../services/payment.service.js';
 import { TransactionService } from '../services/transaction.service.js';
+import { EscrowService } from '../services/escrow.service.js';
+import { ConfigurationError } from './errors.js';
 
 /**
  * Create revenue instance with dependency injection
@@ -62,6 +64,14 @@ export function createRevenue(options = {}) {
 
   // Register providers
   const providers = options.providers || {};
+
+  // Validate provider interface in non-production
+  if (process.env.NODE_ENV !== 'production') {
+    for (const [name, provider] of Object.entries(providers)) {
+      validateProvider(name, provider);
+    }
+  }
+
   container.singleton('providers', providers);
 
   // Register hooks
@@ -83,6 +93,7 @@ export function createRevenue(options = {}) {
     subscriptions: null,
     payments: null,
     transactions: null,
+    escrow: null,
   };
 
   // Create revenue instance
@@ -136,6 +147,17 @@ export function createRevenue(options = {}) {
     },
 
     /**
+     * Escrow service
+     * Lazy-loaded on first access
+     */
+    get escrow() {
+      if (!services.escrow) {
+        services.escrow = new EscrowService(container);
+      }
+      return services.escrow;
+    },
+
+    /**
      * Get a specific provider
      */
     getProvider(name) {
@@ -156,6 +178,22 @@ export function createRevenue(options = {}) {
 }
 
 /**
+ * Validate provider implements required interface
+ * @private
+ */
+function validateProvider(name, provider) {
+  const required = ['createIntent', 'verifyPayment', 'getStatus', 'getCapabilities'];
+  const missing = required.filter(method => typeof provider[method] !== 'function');
+
+  if (missing.length > 0) {
+    throw new ConfigurationError(
+      `Provider "${name}" is missing required methods: ${missing.join(', ')}`,
+      { provider: name, missing }
+    );
+  }
+}
+
+/**
  * Revenue instance type (for documentation)
  * @typedef {Object} Revenue
  * @property {Container} container - DI container (readonly)
@@ -164,6 +202,7 @@ export function createRevenue(options = {}) {
  * @property {SubscriptionService} subscriptions - Subscription service
  * @property {PaymentService} payments - Payment service
  * @property {TransactionService} transactions - Transaction service
+ * @property {EscrowService} escrow - Escrow service
  * @property {Function} getProvider - Get payment provider
  */
 

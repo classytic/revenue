@@ -38,6 +38,7 @@ import { PaymentProvider as _PaymentProvider } from './providers/base.js';
 export { SubscriptionService } from './services/subscription.service.js';
 export { PaymentService } from './services/payment.service.js';
 export { TransactionService } from './services/transaction.service.js';
+export { EscrowService } from './services/escrow.service.js';
 
 // ============ ENUMS & SCHEMAS (FOR INJECTION) ============
 export * from './enums/index.js';
@@ -49,6 +50,11 @@ export {
   setLogger,
   calculateCommission,
   reverseCommission,
+  // Split/Escrow utilities
+  calculateSplits,
+  calculateOrganizationPayout,
+  reverseSplits,
+  calculateCommissionWithSplits,
   // Subscription utilities
   addDuration,
   calculatePeriodRange,

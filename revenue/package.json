@@ -1,9 +1,8 @@
 {
   "name": "@classytic/revenue",
-  "version": "0.0.24",
-  "description": "Enterprise revenue management system with subscriptions, purchases, proration, and payment processing",
+  "version": "0.1.0",
+  "description": "Enterprise revenue management system with subscriptions, purchases, proration, payment processing, escrow, and multi-party splits",
   "main": "index.js",
-  "types": "revenue.d.ts",
   "type": "module",
   "keywords": [
     "revenue",
@@ -20,7 +19,14 @@
     "sslcommerz",
     "bkash",
     "transaction",
-    "invoice"
+    "invoice",
+    "escrow",
+    "hold",
+    "release",
+    "split",
+    "affiliate",
+    "commission",
+    "marketplace"
   ],
   "author": "Sadman Chowdhury",
   "license": "MIT",
@@ -32,6 +38,14 @@
     "url": "https://github.com/classytic/revenue/issues"
   },
   "homepage": "https://github.com/classytic/revenue#readme",
+  "scripts": {
+    "types": "tsc -p tsconfig.types.json",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean",
+    "build": "npm run types",
+    "prepublishOnly": "npm run build",
+    "test": "node ../tests/run-all.js"
+  },
   "peerDependencies": {
     "mongoose": "^8.0.0"
   },
@@ -40,25 +54,25 @@
   },
   "exports": {
     ".": {
-      "types": "./revenue.d.ts",
+      "types": "./dist/types/index.d.ts",
       "default": "./index.js"
     },
     "./enums": {
-      "types": "./enums/index.d.ts",
+      "types": "./dist/types/enums/index.d.ts",
       "default": "./enums/index.js"
     },
     "./schemas": {
-      "types": "./schemas/index.d.ts",
+      "types": "./dist/types/schemas/index.d.ts",
       "default": "./schemas/index.js"
     },
     "./utils": {
-      "types": "./utils/index.d.ts",
+      "types": "./dist/types/utils/index.d.ts",
       "default": "./utils/index.js"
     }
   },
+  "types": "./dist/types/index.d.ts",
   "files": [
     "index.js",
-    "revenue.d.ts",
     "LICENSE",
     "README.md",
     "core/",
@@ -66,8 +80,13 @@
     "services/",
     "enums/",
     "schemas/",
-    "utils/"
+    "utils/",
+    "dist/types/"
   ],
+  "devDependencies": {
+    "@types/node": "^22.8.7",
+    "typescript": "^5.6.3"
+  },
   "dependencies": {
     "nanoid": "^5.1.6"
   }

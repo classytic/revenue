@@ -127,7 +127,7 @@ Before publishing:
 
 ## 📚 Package Versions
 
-- `@classytic/revenue` - v0.0.1
+- `@classytic/revenue` - v0.1.0 (NEW: Escrow, hold/release, multi-party splits, affiliate support)
 - `@classytic/revenue-manual` - v0.0.1
 
 ---

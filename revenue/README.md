@@ -9,6 +9,9 @@ Thin, focused, production-ready library with smart defaults. Built for SaaS, mar
 - **Subscriptions**: Create, renew, pause, cancel with lifecycle management
 - **Payment Processing**: Multi-gateway support (Stripe, SSLCommerz, manual, etc.)
 - **Transaction Management**: Income/expense tracking with verification and refunds
+- **Escrow & Hold/Release**: Platform-as-intermediary payment flow (NEW in v0.1.0)
+- **Multi-Party Splits**: Distribute revenue to platform, affiliates, partners (NEW)
+- **Affiliate Commissions**: Built-in support for referral/affiliate programs (NEW)
 - **Commission Tracking**: Automatic platform commission calculation with gateway fee deduction
 - **Provider Pattern**: Pluggable payment providers (like LangChain/Vercel AI SDK)
 - **Framework Agnostic**: Works with Express, Fastify, Next.js, or standalone
@@ -21,41 +24,51 @@ npm install @classytic/revenue
 npm install @classytic/revenue-manual  # For manual payments
 ```
 
-## Quick Start (30 seconds)
+## Quick Start
+
+### Single-Tenant (Simple SaaS)
 
 ```javascript
 import { createRevenue } from '@classytic/revenue';
 import { ManualProvider } from '@classytic/revenue-manual';
-import Transaction from './models/Transaction.js';
 
-// 1. Configure
 const revenue = createRevenue({
   models: { Transaction },
   providers: { manual: new ManualProvider() },
 });
 
-// 2. Create subscription
-const { subscription, transaction } = await revenue.subscriptions.create({
+// Create subscription (no organizationId needed)
+const { transaction } = await revenue.subscriptions.create({
+  data: { customerId: user._id },
+  planKey: 'monthly',
+  amount: 2999,  // $29.99
+  gateway: 'manual',
+  paymentData: { method: 'card' },
+});
+
+// Verify → Refund
+await revenue.payments.verify(transaction.gateway.paymentIntentId);
+```
+
+### Multi-Tenant (Marketplace/Platform)
+
+```javascript
+// Same API, just pass organizationId
+const { transaction } = await revenue.subscriptions.create({
   data: {
-    organizationId,
-    customerId,
-    referenceId: orderId,        // Optional: Link to Order, Subscription, etc.
-    referenceModel: 'Order',     // Optional: Model name for polymorphic ref
+    organizationId: vendor._id,  // ← Multi-tenant
+    customerId: customer._id,
+    referenceId: order._id,
+    referenceModel: 'Order',
   },
   planKey: 'monthly',
   amount: 1500,
   gateway: 'manual',
-  paymentData: { method: 'bkash', walletNumber: '01712345678' },
+  paymentData: { method: 'bkash' },
 });
-
-// 3. Verify payment
-await revenue.payments.verify(transaction.gateway.paymentIntentId);
-
-// 4. Refund if needed
-await revenue.payments.refund(transaction._id, 500, { reason: 'Partial refund' });
 ```
 
-**That's it!** Working revenue system in 3 steps.
+**Works for both!** Same API, different use cases.
 
 ## Transaction Model Setup
 
@@ -74,12 +87,14 @@ import {
 
 const transactionSchema = new mongoose.Schema({
   // ============ REQUIRED BY LIBRARY ============
-  organizationId: { type: String, required: true, index: true },
   amount: { type: Number, required: true, min: 0 },
   type: { type: String, enum: TRANSACTION_TYPE_VALUES, required: true },  // 'income' | 'expense'
   method: { type: String, required: true },  // 'manual' | 'bkash' | 'card' | etc.
   status: { type: String, enum: TRANSACTION_STATUS_VALUES, required: true },
   category: { type: String, required: true },  // Your custom categories
+  
+  // ============ MULTI-TENANT (optional) ============
+  organizationId: { type: String, index: true },  // For multi-tenant platforms
 
   // ============ LIBRARY SCHEMAS (nested) ============
   gateway: gatewaySchema,              // Payment gateway details
@@ -346,6 +361,103 @@ if (canRenewSubscription(membership)) {
 }
 ```
 
+## Escrow & Multi-Party Splits (v0.1.0+)
+
+**NEW:** Platform-as-intermediary payment flow for marketplaces, group buy, and affiliate systems.
+
+### Basic Escrow Flow
+
+```javascript
+// 1. Customer makes purchase
+const { transaction } = await revenue.subscriptions.create({
+  amount: 1000,
+  gateway: 'stripe',
+  // ...
+});
+
+// 2. Verify payment
+await revenue.payments.verify(transaction._id);
+
+// 3. Hold in escrow
+await revenue.escrow.hold(transaction._id);
+
+// 4. Split to multiple recipients
+await revenue.escrow.split(transaction._id, [
+  { type: 'platform_commission', recipientId: 'platform', rate: 0.10 },
+  { type: 'affiliate_commission', recipientId: 'affiliate-123', rate: 0.05 },
+]);
+// Auto-releases remainder to organization (85%)
+
+// Or manually release
+await revenue.escrow.release(transaction._id, {
+  recipientId: 'org-123',
+  recipientType: 'organization',
+});
+```
+
+### Affiliate Commission (Simplified API)
+
+```javascript
+import { calculateCommissionWithSplits } from '@classytic/revenue';
+
+const commission = calculateCommissionWithSplits(
+  5000,    // amount
+  0.10,    // platform rate
+  0.029,   // gateway fee
+  {
+    affiliateRate: 0.05,
+    affiliateId: 'affiliate-123',
+  }
+);
+
+// Returns:
+// {
+//   grossAmount: 500,  // Platform: 10%
+//   netAmount: 355,    // After gateway fee (2.9%)
+//   affiliate: {
+//     grossAmount: 250,  // Affiliate: 5%
+//     netAmount: 250,
+//   },
+//   splits: [...]
+// }
+```
+
+### Multi-Party Splits
+
+```javascript
+import { calculateSplits } from '@classytic/revenue';
+
+const splits = calculateSplits(10000, [
+  { type: 'platform_commission', recipientId: 'platform', rate: 0.10 },
+  { type: 'affiliate_commission', recipientId: 'level1', rate: 0.05 },
+  { type: 'affiliate_commission', recipientId: 'level2', rate: 0.02 },
+  { type: 'partner_commission', recipientId: 'partner', rate: 0.03 },
+], 0.029);  // Gateway fee
+
+// Returns splits array with calculated amounts
+// Organization receives: 8000 (80%)
+```
+
+### Schemas for Escrow
+
+Add to your transaction model when using escrow:
+
+```javascript
+import { holdSchema, splitsSchema } from '@classytic/revenue';
+
+TransactionSchema.add(holdSchema);    // Adds hold/release tracking
+TransactionSchema.add(splitsSchema);  // Adds multi-party splits
+```
+
+**Use Cases:**
+- E-commerce marketplaces (hold until delivery confirmed)
+- Course platforms with affiliates
+- Group buy / crowdfunding
+- Multi-level marketing
+- SaaS reseller programs
+
+**See:** [`ESCROW_FEATURES.md`](../../ESCROW_FEATURES.md) and [`examples/escrow-flow.js`](examples/escrow-flow.js)
+
 ## Polymorphic References
 
 Link transactions to any entity (Order, Subscription, Enrollment):
@@ -483,7 +595,7 @@ const subscription = await revenue.subscriptions.create({ ... });
 
 ## Examples
 
-- [`examples/basic-usage.js`](examples/basic-usage.js) - Quick start guide
+- [`examples/single-tenant.js`](examples/single-tenant.js) - Simple SaaS (no organizations)
 - [`examples/transaction.model.js`](examples/transaction.model.js) - Complete model setup
 - [`examples/complete-flow.js`](examples/complete-flow.js) - Full lifecycle (types, refs, state)
 - [`examples/commission-tracking.js`](examples/commission-tracking.js) - Commission calculation

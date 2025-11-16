@@ -309,15 +309,21 @@ export class SubscriptionService {
     }
 
     // Create payment intent
-    const paymentIntent = await provider.createIntent({
-      amount: subscription.amount,
-      currency: subscription.currency || 'BDT',
-      metadata: {
-        ...metadata,
-        type: 'subscription_renewal',
-        subscriptionId: subscription._id.toString(),
-      },
-    });
+    let paymentIntent = null;
+    try {
+      paymentIntent = await provider.createIntent({
+        amount: subscription.amount,
+        currency: subscription.currency || 'BDT',
+        metadata: {
+          ...metadata,
+          type: 'subscription_renewal',
+          subscriptionId: subscription._id.toString(),
+        },
+      });
+    } catch (error) {
+      this.logger.error('Failed to create payment intent for renewal:', error);
+      throw new PaymentIntentCreationError(gateway, error);
+    }
 
     // Resolve category - use provided entity or inherit from subscription metadata
     const effectiveEntity = entity || subscription.metadata?.entity;

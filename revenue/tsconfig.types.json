@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist/types",
+    "rootDir": ".",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2021",
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "./index.js",
+    "./core/**/*.js",
+    "./services/**/*.js",
+    "./providers/**/*.js",
+    "./enums/**/*.js",
+    "./schemas/**/*.js",
+    "./utils/**/*.js"
+  ],
+  "exclude": [
+    "./node_modules",
+    "./dist",
+    "./tests"
+  ]
+}

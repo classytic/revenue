@@ -9,11 +9,13 @@
 import {
   TransactionNotFoundError,
   ProviderNotFoundError,
+  ProviderError,
   AlreadyVerifiedError,
   PaymentVerificationError,
   RefundNotSupportedError,
   RefundError,
   ProviderCapabilityError,
+  ValidationError,
 } from '../core/errors.js';
 import { triggerHook } from '../utils/hooks.js';
 import { reverseCommission } from '../utils/commission.js';
@@ -90,6 +92,21 @@ export class PaymentService {
       throw new PaymentVerificationError(paymentIntentId, error.message);
     }
 
+    // Validate amount and currency match
+    if (paymentResult.amount && paymentResult.amount !== transaction.amount) {
+      throw new ValidationError(
+        `Amount mismatch: expected ${transaction.amount}, got ${paymentResult.amount}`,
+        { expected: transaction.amount, actual: paymentResult.amount }
+      );
+    }
+
+    if (paymentResult.currency && paymentResult.currency.toUpperCase() !== transaction.currency.toUpperCase()) {
+      throw new ValidationError(
+        `Currency mismatch: expected ${transaction.currency}, got ${paymentResult.currency}`,
+        { expected: transaction.currency, actual: paymentResult.currency }
+      );
+    }
+
     // Update transaction based on verification result
     transaction.status = paymentResult.status === 'succeeded' ? 'verified' : paymentResult.status;
     transaction.verifiedAt = paymentResult.paidAt || new Date();
@@ -111,7 +128,7 @@ export class PaymentService {
     return {
       transaction,
       paymentResult,
-      status: 'verified',
+      status: transaction.status,
     };
   }
 
@@ -212,8 +229,24 @@ export class PaymentService {
       throw new RefundNotSupportedError(gatewayType);
     }
 
+    // Calculate refundable amount
+    const refundedSoFar = transaction.refundedAmount || 0;
+    const refundableAmount = transaction.amount - refundedSoFar;
+    const refundAmount = amount || refundableAmount;
+
+    // Validate refund amount
+    if (refundAmount <= 0) {
+      throw new ValidationError(`Refund amount must be positive, got ${refundAmount}`);
+    }
+
+    if (refundAmount > refundableAmount) {
+      throw new ValidationError(
+        `Refund amount (${refundAmount}) exceeds refundable balance (${refundableAmount})`,
+        { refundAmount, refundableAmount, alreadyRefunded: refundedSoFar }
+      );
+    }
+
     // Refund via provider
-    const refundAmount = amount || transaction.amount;
     let refundResult = null;
 
     try {
@@ -306,13 +339,31 @@ export class PaymentService {
       throw new ProviderNotFoundError(providerName, Object.keys(this.providers));
     }
 
+    // Check if provider supports webhooks
+    const capabilities = provider.getCapabilities();
+    if (!capabilities.supportsWebhooks) {
+      throw new ProviderCapabilityError(providerName, 'webhooks');
+    }
+
     // Process webhook via provider
     let webhookEvent = null;
     try {
       webhookEvent = await provider.handleWebhook(payload, headers);
     } catch (error) {
       this.logger.error('Webhook processing failed:', error);
-      throw new ProviderError(providerName, `Webhook processing failed: ${error.message}`);
+      throw new ProviderError(
+        `Webhook processing failed for ${providerName}: ${error.message}`,
+        'WEBHOOK_PROCESSING_FAILED',
+        { retryable: false }
+      );
+    }
+
+    // Validate webhook event structure
+    if (!webhookEvent?.data?.paymentIntentId) {
+      throw new ValidationError(
+        `Invalid webhook event structure from ${providerName}: missing paymentIntentId`,
+        { provider: providerName, eventType: webhookEvent?.type }
+      );
     }
 
     // Find transaction by payment intent ID from webhook
