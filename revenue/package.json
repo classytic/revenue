@@ -40,8 +40,6 @@
   "homepage": "https://github.com/classytic/revenue#readme",
   "scripts": {
     "types": "tsc -p tsconfig.types.json",
-    "clean": "rm -rf dist",
-    "prebuild": "npm run clean",
     "build": "npm run types",
     "prepublishOnly": "npm run build",
     "test": "node ../tests/run-all.js"
