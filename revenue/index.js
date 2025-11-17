@@ -1,6 +1,6 @@
 /**
  * @classytic/revenue
- * Enterprise Revenue Management System
+ * Revenue Management System
  *
  * A unified, enterprise-grade revenue management system combining
  * monetization (subscriptions, purchases, proration) and payment processing
@@ -8,7 +8,7 @@
  *
  * Thin, focused, production-ready library with smart defaults.
  *
- * @version 1.0.0
+ * @version 0.2.0
  * @author Classytic (Classytic)
  * @license MIT
  */

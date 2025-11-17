@@ -83,11 +83,21 @@ export class PaymentService {
 
       // Update transaction as failed
       transaction.status = 'failed';
+      transaction.failureReason = error.message;
       transaction.metadata = {
         ...transaction.metadata,
         verificationError: error.message,
+        failedAt: new Date().toISOString(),
       };
       await transaction.save();
+
+      // Trigger payment.failed hook
+      this._triggerHook('payment.failed', {
+        transaction,
+        error: error.message,
+        provider: gatewayType,
+        paymentIntentId,
+      });
 
       throw new PaymentVerificationError(paymentIntentId, error.message);
     }

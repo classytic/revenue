@@ -494,24 +494,71 @@ const transactions = await Transaction.find({ ... })
 const revenue = createRevenue({
   models: { Transaction },
   hooks: {
-    'subscription.created': async ({ subscription, transaction }) => {
-      console.log('New subscription:', subscription._id);
+    // Monetization lifecycle (specific)
+    'purchase.created': async ({ transaction, isFree }) => {
+      console.log('One-time purchase:', transaction._id);
     },
+    'subscription.created': async ({ transaction, isFree }) => {
+      console.log('Recurring subscription:', transaction._id);
+    },
+    'free.created': async ({ transaction }) => {
+      console.log('Free access granted:', transaction._id);
+    },
+    
+    // Generic event (fires for all types)
+    'monetization.created': async ({ transaction, monetizationType }) => {
+      console.log(`${monetizationType} created:`, transaction._id);
+    },
+
+    // Payment lifecycle
     'payment.verified': async ({ transaction }) => {
       // Send confirmation email
     },
+    'payment.failed': async ({ transaction, error, provider }) => {
+      // Alert admin or send customer notification
+      console.error('Payment failed:', error);
+    },
     'payment.refunded': async ({ refundTransaction }) => {
       // Process refund notification
+    },
+    
+    // Subscription management (requires Subscription model)
+    'subscription.activated': async ({ subscription }) => {
+      // Subscription activated after payment
+    },
+    'subscription.renewed': async ({ subscription, renewalCount }) => {
+      // Subscription renewed
+    },
+    'subscription.paused': async ({ subscription }) => {
+      // Subscription paused
+    },
+    'subscription.resumed': async ({ subscription }) => {
+      // Subscription resumed
+    },
+    'subscription.cancelled': async ({ subscription }) => {
+      // Subscription cancelled
     },
   },
 });
 ```
 
 **Available hooks:**
-- `subscription.created`, `subscription.activated`, `subscription.renewed`
+
+**Monetization Events (specific):**
+- `purchase.created` - One-time purchase
+- `subscription.created` - Recurring subscription
+- `free.created` - Free access granted
+- `monetization.created` - Generic event (fires for all types)
+
+**Payment Events:**
+- `payment.verified` - Payment confirmed
+- `payment.failed` - Payment verification failed
+- `payment.refunded` - Refund processed
+- `payment.webhook.{type}` - Webhook events from providers
+
+**Subscription Management Events (requires Subscription model):**
+- `subscription.activated`, `subscription.renewed`
 - `subscription.paused`, `subscription.resumed`, `subscription.cancelled`
-- `payment.verified`, `payment.refunded`
-- `payment.webhook.{type}` (for webhook events)
 
 ## Provider Patterns
 
@@ -599,6 +646,7 @@ const subscription = await revenue.subscriptions.create({ ... });
 - [`examples/transaction.model.js`](examples/transaction.model.js) - Complete model setup
 - [`examples/complete-flow.js`](examples/complete-flow.js) - Full lifecycle (types, refs, state)
 - [`examples/commission-tracking.js`](examples/commission-tracking.js) - Commission calculation
+- [`examples/hooks-v0.2.0.js`](examples/hooks-v0.2.0.js) - v0.2.0 semantic hooks (NEW)
 
 ## Error Handling
 

@@ -71,6 +71,10 @@ class MockSubscription {
     if (id === 'sub_notfound') return null;
     return new MockSubscription({ _id: id });
   }
+
+  static async create(data) {
+    return new MockSubscription(data);
+  }
 }
 
 class MockTransaction {
@@ -121,6 +125,111 @@ function createContainer(provider) {
 // ============================================================
 
 console.log('\n🧪 Testing Subscription Service\n');
+
+// Test: create() - emits purchase.created for purchases
+await test('create() emits purchase.created for monetizationType=purchase', async () => {
+  let hookTriggered = false;
+  let hookData = null;
+
+  const provider = createMockProvider();
+  const container = createContainer(provider);
+  
+  container.singleton('hooks', {
+    'purchase.created': [
+      async (data) => {
+        hookTriggered = true;
+        hookData = data;
+      },
+    ],
+  });
+
+  const service = new SubscriptionService(container);
+
+  await service.create({
+    data: { organizationId: 'org_123', customerId: 'cust_123' },
+    planKey: 'one-time',
+    amount: 1500,
+    gateway: 'test',
+    monetizationType: 'purchase',
+  });
+
+  if (!hookTriggered) {
+    throw new Error('purchase.created hook was not triggered');
+  }
+  if (hookData.monetizationType !== 'purchase') {
+    throw new Error('Hook data missing monetizationType');
+  }
+})();
+
+// Test: create() - emits subscription.created for subscriptions
+await test('create() emits subscription.created for monetizationType=subscription', async () => {
+  let hookTriggered = false;
+
+  const provider = createMockProvider();
+  const container = createContainer(provider);
+  
+  container.singleton('hooks', {
+    'subscription.created': [
+      async (data) => {
+        hookTriggered = true;
+      },
+    ],
+  });
+
+  const service = new SubscriptionService(container);
+
+  await service.create({
+    data: { organizationId: 'org_123', customerId: 'cust_123' },
+    planKey: 'monthly',
+    amount: 1500,
+    gateway: 'test',
+    monetizationType: 'subscription',
+  });
+
+  if (!hookTriggered) {
+    throw new Error('subscription.created hook was not triggered');
+  }
+})();
+
+// Test: create() - emits monetization.created for all types
+await test('create() emits monetization.created for all monetization types', async () => {
+  let hookCount = 0;
+
+  const provider = createMockProvider();
+  const container = createContainer(provider);
+  
+  container.singleton('hooks', {
+    'monetization.created': [
+      async (data) => {
+        hookCount++;
+      },
+    ],
+  });
+
+  const service = new SubscriptionService(container);
+
+  // Test purchase
+  await service.create({
+    data: { organizationId: 'org_123', customerId: 'cust_123' },
+    planKey: 'one-time',
+    amount: 1500,
+    gateway: 'test',
+    monetizationType: 'purchase',
+  });
+
+  // Test subscription
+  await service.create({
+    data: { organizationId: 'org_123', customerId: 'cust_123' },
+    planKey: 'monthly',
+    amount: 1500,
+    gateway: 'test',
+    monetizationType: 'subscription',
+  });
+
+  if (hookCount !== 2) {
+    throw new Error(`Expected 2 monetization.created hooks, got ${hookCount}`);
+  }
+})();
 
 // Test: renew() - provider failure wrapped in PaymentIntentCreationError
 await test('renew() wraps provider failures in PaymentIntentCreationError', async () => {

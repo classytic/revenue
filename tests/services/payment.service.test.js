@@ -132,6 +132,49 @@ function createContainer(provider) {
 
 console.log('\n🧪 Testing Payment Service\n');
 
+// Test: verify() - triggers payment.failed hook on error
+await test('verify() triggers payment.failed hook on provider error', async () => {
+  let hookTriggered = false;
+  let hookData = null;
+
+  const provider = createMockProvider({
+    verifyPayment: async () => {
+      throw new Error('Provider verification failed');
+    },
+  });
+
+  const container = createContainer(provider);
+  
+  // Override hooks to capture event
+  container.singleton('hooks', {
+    'payment.failed': [
+      async (data) => {
+        hookTriggered = true;
+        hookData = data;
+      },
+    ],
+  });
+
+  const service = new PaymentService(container);
+  const transaction = new MockTransaction({ amount: 1000 });
+
+  try {
+    await service.verify(transaction._id);
+  } catch (error) {
+    // Expected to throw
+  }
+
+  if (!hookTriggered) {
+    throw new Error('payment.failed hook was not triggered');
+  }
+
+  if (!hookData.transaction || !hookData.error) {
+    throw new Error('payment.failed hook missing required data');
+  }
+
+  assertEquals(hookData.provider, 'test', 'Hook should include provider name');
+})();
+
 // Test: verify() - amount mismatch
 await test('verify() rejects amount mismatch', async () => {
   const provider = createMockProvider({

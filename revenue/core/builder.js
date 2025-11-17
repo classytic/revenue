@@ -18,7 +18,7 @@ import { ConfigurationError } from './errors.js';
  *
  * @param {Object} options - Configuration options
  * @param {Object} options.models - Mongoose models { Transaction, Subscription, etc. }
- * @param {Object} options.providers - Payment providers { manual, stripe, etc. }
+ * @param {Record<string, import('../providers/base.js').PaymentProvider>} options.providers - Payment providers - Register ANY custom gateway by name
  * @param {Object} options.hooks - Event hooks
  * @param {Object} options.config - Additional configuration
  * @param {Object} options.logger - Logger instance
@@ -26,7 +26,8 @@ import { ConfigurationError } from './errors.js';
  *
  * @example
  * ```javascript
- * import { createRevenue, ManualProvider } from '@classytic/revenue';
+ * import { createRevenue } from '@classytic/revenue';
+ * import { ManualProvider } from '@classytic/revenue-manual';
  *
  * const revenue = createRevenue({
  *   models: {
@@ -35,6 +36,10 @@ import { ConfigurationError } from './errors.js';
  *   },
  *   providers: {
  *     manual: new ManualProvider(),
+ *     bkash: new BkashProvider(),      // Custom gateway
+ *     nagad: new NagadProvider(),      // Custom gateway
+ *     stripe: new StripeProvider(),    // Custom gateway
+ *     // ... register any gateway you want
  *   },
  *   config: {
  *     targetModels: ['Subscription', 'Membership'],
@@ -45,8 +50,11 @@ import { ConfigurationError } from './errors.js';
  *   },
  * });
  *
- * // Use anywhere
- * const subscription = await revenue.subscriptions.create({ ... });
+ * // Use any registered gateway by name
+ * const subscription = await revenue.subscriptions.create({
+ *   gateway: 'bkash',  // Use your custom gateway
+ *   // ...
+ * });
  * await revenue.payments.verify(txnId);
  * ```
  */

@@ -45,14 +45,14 @@ export class SubscriptionService {
    * @param {String} params.planKey - Plan key ('monthly', 'quarterly', 'yearly')
    * @param {Number} params.amount - Subscription amount
    * @param {String} params.currency - Currency code (default: 'BDT')
-   * @param {String} params.gateway - Payment gateway to use (default: 'manual')
+   * @param {String} params.gateway - Payment gateway name (default: 'manual') - Use ANY registered provider name: 'manual', 'bkash', 'nagad', 'stripe', etc.
    * @param {String} params.entity - Logical entity identifier (e.g., 'Order', 'PlatformSubscription', 'Membership')
    *                                 NOTE: This is NOT a database model name - it's just a logical identifier for categoryMappings
    * @param {String} params.monetizationType - Monetization type ('free', 'subscription', 'purchase')
    * @param {Object} params.paymentData - Payment method details
    * @param {Object} params.metadata - Additional metadata
    * @param {String} params.idempotencyKey - Idempotency key for duplicate prevention
-   * 
+   *
    * @example
    * // With polymorphic reference (recommended)
    * await revenue.subscriptions.create({
@@ -62,10 +62,11 @@ export class SubscriptionService {
    *     referenceId: subscription._id,      // Links to entity
    *     referenceModel: 'Subscription',     // Model name
    *   },
+   *   gateway: 'bkash',  // Any registered provider
    *   amount: 1500,
    *   // ...
    * });
-   * 
+   *
    * @returns {Promise<Object>} { subscription, transaction, paymentIntent }
    */
   async create(params) {
@@ -204,13 +205,26 @@ export class SubscriptionService {
       subscription = await SubscriptionModel.create(subscriptionData);
     }
 
-    // Trigger hook
-    this._triggerHook('subscription.created', {
+    // Trigger hooks - emit specific event based on monetization type
+    const eventData = {
       subscription,
       transaction,
       paymentIntent,
       isFree,
-    });
+      monetizationType,
+    };
+
+    // Emit specific monetization event
+    if (monetizationType === MONETIZATION_TYPES.PURCHASE) {
+      this._triggerHook('purchase.created', eventData);
+    } else if (monetizationType === MONETIZATION_TYPES.SUBSCRIPTION) {
+      this._triggerHook('subscription.created', eventData);
+    } else if (monetizationType === MONETIZATION_TYPES.FREE) {
+      this._triggerHook('free.created', eventData);
+    }
+
+    // Also emit generic event for backward compatibility
+    this._triggerHook('monetization.created', eventData);
 
     return {
       subscription,
@@ -271,7 +285,7 @@ export class SubscriptionService {
    *
    * @param {String} subscriptionId - Subscription ID
    * @param {Object} params - Renewal parameters
-   * @param {String} params.gateway - Payment gateway to use (default: 'manual')
+   * @param {String} params.gateway - Payment gateway name (default: 'manual') - Use ANY registered provider name: 'manual', 'bkash', 'nagad', 'stripe', etc.
    * @param {String} params.entity - Logical entity identifier (optional, inherits from subscription)
    * @param {Object} params.paymentData - Payment method details
    * @param {Object} params.metadata - Additional metadata

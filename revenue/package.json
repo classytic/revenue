@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Enterprise revenue management system with subscriptions, purchases, proration, payment processing, escrow, and multi-party splits",
   "main": "index.js",
   "type": "module",

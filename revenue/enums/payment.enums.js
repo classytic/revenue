@@ -22,13 +22,34 @@ export const PAYMENT_STATUS_VALUES = Object.values(PAYMENT_STATUS);
 
 // ============ PAYMENT GATEWAY TYPES ============
 /**
- * Gateway types that providers can be built for
+ * Common gateway type constants for convenience
  *
- * MANUAL: Built-in manual provider
- * STRIPE: Stripe provider (build with @classytic/revenue-stripe)
- * SSLCOMMERZ: SSLCommerz provider (build with @classytic/revenue-sslcommerz)
+ * ⚠️ IMPORTANT: These are NOT restrictions - just common reference values
  *
- * Users can register custom providers for any gateway type
+ * You can register ANY custom gateway provider by passing it to createRevenue():
+ *
+ * @example
+ * ```javascript
+ * const revenue = createRevenue({
+ *   providers: {
+ *     manual: new ManualProvider(),
+ *     bkash: new BkashProvider(),      // ✅ Custom gateway
+ *     nagad: new NagadProvider(),      // ✅ Custom gateway
+ *     stripe: new StripeProvider(),    // ✅ Custom gateway
+ *     paypal: new PaypalProvider(),    // ✅ Any gateway you want
+ *   }
+ * });
+ *
+ * // Use by name
+ * await revenue.subscriptions.create({ gateway: 'bkash', ... });
+ * ```
+ *
+ * Reference values:
+ * - MANUAL: Built-in manual provider (@classytic/revenue-manual)
+ * - STRIPE: Stripe provider (build with @classytic/revenue-stripe)
+ * - SSLCOMMERZ: SSLCommerz provider (build with @classytic/revenue-sslcommerz)
+ *
+ * Add your own: bkash, nagad, rocket, paypal, razorpay, flutterwave, etc.
  */
 export const PAYMENT_GATEWAY_TYPE = {
   MANUAL: 'manual',
