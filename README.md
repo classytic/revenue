@@ -53,7 +53,7 @@ const revenue = createRevenue({
   },
 });
 
-await revenue.subscriptions.create({ ... });
+await revenue.monetization.create({ monetizationType: 'purchase', ... });
 ```
 
 ### Install with Stripe Provider (Future)

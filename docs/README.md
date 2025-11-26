@@ -26,7 +26,7 @@ const revenue = createRevenue({
 });
 
 // Create subscription
-const { subscription, transaction } = await revenue.subscriptions.create({
+const { subscription, transaction } = await revenue.monetization.create({
   data: { organizationId, customerId },
   planKey: 'monthly',
   amount: 1500,

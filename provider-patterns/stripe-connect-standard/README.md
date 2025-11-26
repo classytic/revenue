@@ -126,7 +126,7 @@ app.get('/connect/callback', async (req, res) => {
 
 ```javascript
 // Customer buys from vendor
-const { transaction, paymentIntent } = await revenue.subscriptions.create({
+const { transaction, paymentIntent } = await revenue.monetization.create({
   data: {
     organizationId: vendor._id,
     customerId: customer._id,

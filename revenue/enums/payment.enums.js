@@ -41,7 +41,7 @@ export const PAYMENT_STATUS_VALUES = Object.values(PAYMENT_STATUS);
  * });
  *
  * // Use by name
- * await revenue.subscriptions.create({ gateway: 'bkash', ... });
+ * await revenue.monetization.create({ gateway: 'bkash', ... });
  * ```
  *
  * Reference values:

@@ -7,7 +7,7 @@
  */
 
 import { Container } from './container.js';
-import { SubscriptionService } from '../services/subscription.service.js';
+import { MonetizationService } from '../services/monetization.service.js';
 import { PaymentService } from '../services/payment.service.js';
 import { TransactionService } from '../services/transaction.service.js';
 import { EscrowService } from '../services/escrow.service.js';
@@ -51,11 +51,13 @@ import { ConfigurationError } from './errors.js';
  * });
  *
  * // Use any registered gateway by name
- * const subscription = await revenue.subscriptions.create({
+ * const { transaction } = await revenue.monetization.create({
  *   gateway: 'bkash',  // Use your custom gateway
+ *   monetizationType: 'purchase',
+ *   amount: 1500,
  *   // ...
  * });
- * await revenue.payments.verify(txnId);
+ * await revenue.payments.verify(transaction._id);
  * ```
  */
 export function createRevenue(options = {}) {
@@ -98,7 +100,7 @@ export function createRevenue(options = {}) {
 
   // Create service instances (lazy-loaded)
   const services = {
-    subscriptions: null,
+    monetization: null,
     payments: null,
     transactions: null,
     escrow: null,
@@ -122,14 +124,14 @@ export function createRevenue(options = {}) {
     config,
 
     /**
-     * Subscription service
+     * Monetization service (handles purchases, subscriptions, free items)
      * Lazy-loaded on first access
      */
-    get subscriptions() {
-      if (!services.subscriptions) {
-        services.subscriptions = new SubscriptionService(container);
+    get monetization() {
+      if (!services.monetization) {
+        services.monetization = new MonetizationService(container);
       }
-      return services.subscriptions;
+      return services.monetization;
     },
 
     /**
@@ -207,7 +209,7 @@ function validateProvider(name, provider) {
  * @property {Container} container - DI container (readonly)
  * @property {Object} providers - Payment providers (readonly, frozen)
  * @property {Object} config - Configuration (readonly, frozen)
- * @property {SubscriptionService} subscriptions - Subscription service
+ * @property {MonetizationService} monetization - Monetization service (purchases, subscriptions, free items)
  * @property {PaymentService} payments - Payment service
  * @property {TransactionService} transactions - Transaction service
  * @property {EscrowService} escrow - Escrow service

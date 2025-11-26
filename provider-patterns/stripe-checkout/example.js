@@ -36,7 +36,7 @@ app.post('/api/payments/create', express.json(), async (req, res) => {
     const customer = await Customer.findById(customerId);
     
     // Create payment
-    const { transaction, paymentIntent } = await revenue.subscriptions.create({
+    const { transaction, paymentIntent } = await revenue.monetization.create({
       data: {
         organizationId: customer.organizationId,
         customerId: customer._id,

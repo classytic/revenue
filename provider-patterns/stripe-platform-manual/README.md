@@ -68,7 +68,7 @@ const revenue = createRevenue({
 ### 1. Customer Payment (Income)
 
 ```javascript
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   data: { organizationId: vendor._id, customerId },
   amount: 10000, // $100.00
   gateway: 'stripe',

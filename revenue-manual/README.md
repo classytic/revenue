@@ -17,7 +17,7 @@ npm install @classytic/revenue-manual
 ### Option 1: Custom Instructions (Simplest)
 
 ```javascript
-const { subscription, transaction, paymentIntent } = await revenue.subscriptions.create({
+const { subscription, transaction, paymentIntent } = await revenue.monetization.create({
   data: { organizationId, customerId },
   planKey: 'monthly',
   amount: 99.99,
@@ -34,7 +34,7 @@ console.log(paymentIntent.instructions);
 ### Option 2: Payment Info (Auto-formatted)
 
 ```javascript
-const { paymentIntent } = await revenue.subscriptions.create({
+const { paymentIntent } = await revenue.monetization.create({
   data: { organizationId, customerId },
   planKey: 'monthly',
   amount: 99.99,
@@ -149,7 +149,7 @@ Manual payments require admin verification:
 
 ```javascript
 // 1. Customer creates subscription with manual payment
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   data: { ... },
   gateway: 'manual',
 });

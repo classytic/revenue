@@ -1,9 +1,34 @@
 /**
- * Subscription Service
+ * Monetization Service
  * @classytic/revenue
  *
- * Framework-agnostic subscription management service with DI
- * Handles complete subscription lifecycle using provider system
+ * Framework-agnostic monetization management service with DI
+ * Handles purchases, subscriptions, and free items using provider system
+ */
+
+/**
+ * @typedef {Object} MonetizationCreateParams
+ * @property {Object} data - Monetization data
+ * @property {string} [data.organizationId] - Organization ID (for multi-tenant)
+ * @property {string} [data.customerId] - Customer ID
+ * @property {string} [data.referenceId] - Reference to entity (Order, Subscription, etc.)
+ * @property {string} [data.referenceModel] - Model name for reference
+ * @property {string} planKey - Plan key ('monthly', 'quarterly', 'yearly', 'one_time', etc.)
+ * @property {number} amount - Amount (0 for free)
+ * @property {string} [currency='BDT'] - Currency code
+ * @property {string} [gateway='manual'] - Payment gateway name
+ * @property {string} [entity] - Logical entity identifier
+ * @property {'free'|'subscription'|'purchase'} [monetizationType='subscription'] - Monetization type
+ * @property {Object} [paymentData] - Payment method details
+ * @property {Object} [metadata] - Additional metadata
+ * @property {string} [idempotencyKey] - Idempotency key
+ */
+
+/**
+ * @typedef {Object} MonetizationCreateResult
+ * @property {Object|null} subscription - Subscription record (if Subscription model exists)
+ * @property {Object|null} transaction - Transaction record
+ * @property {Object|null} paymentIntent - Payment intent from provider
  */
 
 import { nanoid } from 'nanoid';
@@ -24,10 +49,10 @@ import { MONETIZATION_TYPES } from '../enums/monetization.enums.js';
 import { TRANSACTION_TYPE } from '../enums/transaction.enums.js';
 
 /**
- * Subscription Service
+ * Monetization Service
  * Uses DI container for all dependencies
  */
-export class SubscriptionService {
+export class MonetizationService {
   constructor(container) {
     this.container = container;
     this.models = container.get('models');
@@ -38,36 +63,40 @@ export class SubscriptionService {
   }
 
   /**
-   * Create a new subscription
+   * Create a new monetization (purchase, subscription, or free item)
    *
-   * @param {Object} params - Subscription parameters
-   * @param {Object} params.data - Subscription data (organizationId, customerId, referenceId, referenceModel, etc.)
-   * @param {String} params.planKey - Plan key ('monthly', 'quarterly', 'yearly')
-   * @param {Number} params.amount - Subscription amount
-   * @param {String} params.currency - Currency code (default: 'BDT')
-   * @param {String} params.gateway - Payment gateway name (default: 'manual') - Use ANY registered provider name: 'manual', 'bkash', 'nagad', 'stripe', etc.
-   * @param {String} params.entity - Logical entity identifier (e.g., 'Order', 'PlatformSubscription', 'Membership')
-   *                                 NOTE: This is NOT a database model name - it's just a logical identifier for categoryMappings
-   * @param {String} params.monetizationType - Monetization type ('free', 'subscription', 'purchase')
-   * @param {Object} params.paymentData - Payment method details
-   * @param {Object} params.metadata - Additional metadata
-   * @param {String} params.idempotencyKey - Idempotency key for duplicate prevention
+   * @param {MonetizationCreateParams} params - Monetization parameters
    *
    * @example
-   * // With polymorphic reference (recommended)
-   * await revenue.subscriptions.create({
+   * // One-time purchase
+   * await revenue.monetization.create({
    *   data: {
    *     organizationId: '...',
    *     customerId: '...',
-   *     referenceId: subscription._id,      // Links to entity
-   *     referenceModel: 'Subscription',     // Model name
+   *     referenceId: order._id,
+   *     referenceModel: 'Order',
    *   },
-   *   gateway: 'bkash',  // Any registered provider
+   *   planKey: 'one_time',
+   *   monetizationType: 'purchase',
+   *   gateway: 'bkash',
    *   amount: 1500,
-   *   // ...
    * });
    *
-   * @returns {Promise<Object>} { subscription, transaction, paymentIntent }
+   * // Recurring subscription
+   * await revenue.monetization.create({
+   *   data: {
+   *     organizationId: '...',
+   *     customerId: '...',
+   *     referenceId: subscription._id,
+   *     referenceModel: 'Subscription',
+   *   },
+   *   planKey: 'monthly',
+   *   monetizationType: 'subscription',
+   *   gateway: 'stripe',
+   *   amount: 2000,
+   * });
+   *
+   * @returns {Promise<MonetizationCreateResult>} Result with subscription, transaction, and paymentIntent
    */
   async create(params) {
     const {
@@ -641,4 +670,4 @@ export class SubscriptionService {
   }
 }
 
-export default SubscriptionService;
+export default MonetizationService;

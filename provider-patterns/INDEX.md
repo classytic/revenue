@@ -136,7 +136,7 @@ const revenue = createRevenue({
 
 Commission automatically calculated:
 ```javascript
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   amount: 10000,  // $100
   entity: 'ProductOrder',  // → 10% commission
   gateway: 'stripe',       // → 2.9% fee

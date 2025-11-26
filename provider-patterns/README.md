@@ -129,7 +129,7 @@ app.post('/webhooks/stripe', async (req, res) => {
 ### Multi-Currency
 ```javascript
 // Pass currency in createIntent
-const { paymentIntent } = await revenue.subscriptions.create({
+const { paymentIntent } = await revenue.monetization.create({
   amount: 1000,
   currency: 'USD',  // or 'EUR', 'GBP', etc.
   gateway: 'stripe',

@@ -39,7 +39,7 @@ async function example() {
   // ============================================================
   // Create subscription (NO organizationId)
   // ============================================================
-  const { subscription, transaction } = await revenue.subscriptions.create({
+  const { subscription, transaction } = await revenue.monetization.create({
     data: {
       customerId: userId,  // ✅ Just customerId, no organizationId
     },

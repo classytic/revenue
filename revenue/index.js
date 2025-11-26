@@ -35,7 +35,7 @@ import { PaymentProvider as _PaymentProvider } from './providers/base.js';
 // Note: ManualProvider moved to @classytic/revenue-manual (separate package)
 
 // ============ SERVICES (ADVANCED USAGE) ============
-export { SubscriptionService } from './services/subscription.service.js';
+export { MonetizationService } from './services/monetization.service.js';
 export { PaymentService } from './services/payment.service.js';
 export { TransactionService } from './services/transaction.service.js';
 export { EscrowService } from './services/escrow.service.js';

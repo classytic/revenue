@@ -6,6 +6,21 @@
  * Handles payment verification, refunds, and status updates
  */
 
+/**
+ * @typedef {Object} PaymentVerifyResult
+ * @property {Object} transaction - Updated transaction
+ * @property {Object} paymentResult - Payment result from provider
+ * @property {string} status - Payment status
+ */
+
+/**
+ * @typedef {Object} PaymentRefundResult
+ * @property {Object} transaction - Original transaction (updated)
+ * @property {Object} refundTransaction - New refund transaction record
+ * @property {Object} refundResult - Refund result from provider
+ * @property {string} status - Transaction status after refund
+ */
+
 import {
   TransactionNotFoundError,
   ProviderNotFoundError,

@@ -175,7 +175,7 @@ async function demonstrateHooks() {
   console.log('📦 EXAMPLE 1: Creating One-Time Purchase\n');
   console.log('Expected hooks: purchase.created + monetization.created\n');
 
-  const { transaction: purchaseTxn } = await revenue.subscriptions.create({
+  const { transaction: purchaseTxn } = await revenue.monetization.create({
     data: {
       organizationId: orgId,
       customerId: customerId,
@@ -198,7 +198,7 @@ async function demonstrateHooks() {
   console.log('🔄 EXAMPLE 2: Creating Recurring Subscription\n');
   console.log('Expected hooks: subscription.created + monetization.created\n');
 
-  const { transaction: subscriptionTxn } = await revenue.subscriptions.create({
+  const { transaction: subscriptionTxn } = await revenue.monetization.create({
     data: {
       organizationId: orgId,
       customerId: customerId,
@@ -221,7 +221,7 @@ async function demonstrateHooks() {
   console.log('🎁 EXAMPLE 3: Granting Free Access\n');
   console.log('Expected hooks: free.created + monetization.created\n');
 
-  const { transaction: freeTxn } = await revenue.subscriptions.create({
+  const { transaction: freeTxn } = await revenue.monetization.create({
     data: {
       organizationId: orgId,
       customerId: customerId,
@@ -244,7 +244,7 @@ async function demonstrateHooks() {
   console.log('❌ EXAMPLE 4: Simulating Payment Failure\n');
   console.log('Expected hooks: payment.failed\n');
 
-  const { transaction: failedTxn } = await revenue.subscriptions.create({
+  const { transaction: failedTxn } = await revenue.monetization.create({
     data: {
       organizationId: orgId,
       customerId: customerId,

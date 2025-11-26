@@ -73,7 +73,7 @@ async function demonstrateCompleteFlow() {
   // Example: Link transaction to an Order or Subscription
   const demoSubscriptionId = new mongoose.Types.ObjectId();
 
-  const { subscription, transaction } = await revenue.subscriptions.create({
+  const { subscription, transaction } = await revenue.monetization.create({
     data: {
       organizationId: orgId,
       customerId: customerId,

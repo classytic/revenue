@@ -11,7 +11,8 @@
     "target": "ES2021",
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "types": ["node"],
+    "noImplicitAny": false
   },
   "include": [
     "./index.js",

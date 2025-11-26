@@ -137,7 +137,7 @@ const revenue = createRevenue({
 });
 
 // Create subscription with Stripe
-const { transaction, paymentIntent } = await revenue.subscriptions.create({
+const { transaction, paymentIntent } = await revenue.monetization.create({
   data: { organizationId, customerId },
   planKey: 'monthly',
   amount: 99.99,

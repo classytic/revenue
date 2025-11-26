@@ -1,11 +1,11 @@
 /**
- * Subscription Service Integration Tests
+ * Monetization Service Integration Tests
  * @classytic/revenue
  *
  * Tests critical flows: renewal error handling
  */
 
-import { SubscriptionService } from '../../revenue/services/subscription.service.js';
+import { MonetizationService } from '../../revenue/services/monetization.service.js';
 import { Container } from '../../revenue/core/container.js';
 import {
   PaymentIntentCreationError,
@@ -143,7 +143,7 @@ await test('create() emits purchase.created for monetizationType=purchase', asyn
     ],
   });
 
-  const service = new SubscriptionService(container);
+  const service = new MonetizationService(container);
 
   await service.create({
     data: { organizationId: 'org_123', customerId: 'cust_123' },
@@ -176,7 +176,7 @@ await test('create() emits subscription.created for monetizationType=subscriptio
     ],
   });
 
-  const service = new SubscriptionService(container);
+  const service = new MonetizationService(container);
 
   await service.create({
     data: { organizationId: 'org_123', customerId: 'cust_123' },
@@ -206,7 +206,7 @@ await test('create() emits monetization.created for all monetization types', asy
     ],
   });
 
-  const service = new SubscriptionService(container);
+  const service = new MonetizationService(container);
 
   // Test purchase
   await service.create({
@@ -240,7 +240,7 @@ await test('renew() wraps provider failures in PaymentIntentCreationError', asyn
   });
 
   const container = createContainer(provider);
-  const service = new SubscriptionService(container);
+  const service = new MonetizationService(container);
 
   await assertThrows(
     () => service.renew('sub_123', { gateway: 'test' }),
@@ -260,7 +260,7 @@ await test('renew() handles provider timeout', async () => {
   });
 
   const container = createContainer(provider);
-  const service = new SubscriptionService(container);
+  const service = new MonetizationService(container);
 
   await assertThrows(
     () => service.renew('sub_123', { gateway: 'test' }),
@@ -273,7 +273,7 @@ await test('renew() handles provider timeout', async () => {
 await test('renew() throws when subscription not found', async () => {
   const provider = createMockProvider();
   const container = createContainer(provider);
-  const service = new SubscriptionService(container);
+  const service = new MonetizationService(container);
 
   await assertThrows(
     () => service.renew('sub_notfound', { gateway: 'test' }),
@@ -286,7 +286,7 @@ await test('renew() throws when subscription not found', async () => {
 await test('renew() creates transaction on success', async () => {
   const provider = createMockProvider();
   const container = createContainer(provider);
-  const service = new SubscriptionService(container);
+  const service = new MonetizationService(container);
 
   const result = await service.renew('sub_123', { gateway: 'test' });
 

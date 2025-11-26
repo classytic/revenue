@@ -85,7 +85,7 @@ async function demonstrateCommissionTracking() {
   // ============================================================
   console.log('📚 EXAMPLE 1: Course Enrollment\n');
 
-  const { transaction: courseTxn } = await revenue.subscriptions.create({
+  const { transaction: courseTxn } = await revenue.monetization.create({
     data: {
       organizationId: new mongoose.Types.ObjectId(),
       customerId: new mongoose.Types.ObjectId(),
@@ -114,7 +114,7 @@ async function demonstrateCommissionTracking() {
   // ============================================================
   console.log('📦 EXAMPLE 2: Product Order\n');
 
-  const { transaction: productTxn } = await revenue.subscriptions.create({
+  const { transaction: productTxn } = await revenue.monetization.create({
     data: {
       organizationId: new mongoose.Types.ObjectId(),
       customerId: new mongoose.Types.ObjectId(),
@@ -138,7 +138,7 @@ async function demonstrateCommissionTracking() {
   // ============================================================
   console.log('🏋️  EXAMPLE 3: Gym Membership (No Commission)\n');
 
-  const { transaction: gymTxn } = await revenue.subscriptions.create({
+  const { transaction: gymTxn } = await revenue.monetization.create({
     data: {
       organizationId: new mongoose.Types.ObjectId(),
       customerId: new mongoose.Types.ObjectId(),

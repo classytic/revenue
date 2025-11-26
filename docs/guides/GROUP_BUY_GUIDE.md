@@ -148,7 +148,7 @@ async function createPledge(campaignId, customerId) {
 
   // Create transaction via revenue library
   const revenue = getRevenue();
-  const { transaction } = await revenue.subscriptions.create({
+  const { transaction } = await revenue.monetization.create({
     data: {
       organizationId: campaign.merchantId,
       customerId,

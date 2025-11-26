@@ -62,7 +62,7 @@ APP_URL=https://yoursite.com
 ### Create Payment
 
 ```javascript
-const { transaction, paymentIntent } = await revenue.subscriptions.create({
+const { transaction, paymentIntent } = await revenue.monetization.create({
   data: {
     organizationId,
     customerId,

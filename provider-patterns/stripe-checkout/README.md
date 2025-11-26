@@ -73,7 +73,7 @@ const customerSchema = new mongoose.Schema({
 
 ```javascript
 const { subscription, transaction, paymentIntent } = 
-  await revenue.subscriptions.create({
+  await revenue.monetization.create({
     data: { organizationId, customerId },
     planKey: 'monthly',
     amount: 2999, // $29.99 in cents

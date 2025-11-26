@@ -38,9 +38,10 @@ const revenue = createRevenue({
 });
 
 // Create subscription (no organizationId needed)
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   data: { customerId: user._id },
   planKey: 'monthly',
+  monetizationType: 'subscription',
   amount: 2999,  // $29.99
   gateway: 'manual',
   paymentData: { method: 'card' },
@@ -54,14 +55,15 @@ await revenue.payments.verify(transaction.gateway.paymentIntentId);
 
 ```javascript
 // Same API, just pass organizationId
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   data: {
     organizationId: vendor._id,  // ← Multi-tenant
     customerId: customer._id,
     referenceId: order._id,
     referenceModel: 'Order',
   },
-  planKey: 'monthly',
+  planKey: 'one_time',
+  monetizationType: 'purchase',  // One-time purchase
   amount: 1500,
   gateway: 'manual',
   paymentData: { method: 'bkash' },
@@ -152,7 +154,7 @@ const schema = new mongoose.Schema({
 ```javascript
 // Create subscription
 const { subscription, transaction, paymentIntent } = 
-  await revenue.subscriptions.create({
+  await revenue.monetization.create({
     data: { organizationId, customerId },
     planKey: 'monthly',
     amount: 1500,
@@ -163,20 +165,20 @@ const { subscription, transaction, paymentIntent } =
 
 // Verify and activate
 await revenue.payments.verify(transaction.gateway.paymentIntentId);
-await revenue.subscriptions.activate(subscription._id);
+await revenue.monetization.activate(subscription._id);
 
 // Renew subscription
-await revenue.subscriptions.renew(subscription._id, {
+await revenue.monetization.renew(subscription._id, {
   gateway: 'manual',
   paymentData: { method: 'nagad' },
 });
 
 // Pause/Resume
-await revenue.subscriptions.pause(subscription._id, { reason: 'Customer request' });
-await revenue.subscriptions.resume(subscription._id, { extendPeriod: true });
+await revenue.monetization.pause(subscription._id, { reason: 'Customer request' });
+await revenue.monetization.resume(subscription._id, { extendPeriod: true });
 
 // Cancel
-await revenue.subscriptions.cancel(subscription._id, { immediate: true });
+await revenue.monetization.cancel(subscription._id, { immediate: true });
 ```
 
 ### Payments
@@ -267,7 +269,7 @@ const revenue = createRevenue({
 });
 
 // Usage
-await revenue.subscriptions.create({
+await revenue.monetization.create({
   entity: 'Order',  // Maps to 'order_subscription' category
   monetizationType: 'subscription',
   // ...
@@ -301,7 +303,7 @@ const revenue = createRevenue({
 });
 
 // Commission calculated automatically
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   amount: 10000, // $100
   entity: 'ProductOrder',  // → 10% commission
   gateway: 'stripe',       // → 2.9% fee
@@ -357,7 +359,7 @@ const refund = calculateProratedAmount({
 
 // Check eligibility
 if (canRenewSubscription(membership)) {
-  await revenue.subscriptions.renew(membership.subscriptionId);
+  await revenue.monetization.renew(membership.subscriptionId);
 }
 ```
 
@@ -369,7 +371,7 @@ if (canRenewSubscription(membership)) {
 
 ```javascript
 // 1. Customer makes purchase
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   amount: 1000,
   gateway: 'stripe',
   // ...
@@ -464,7 +466,7 @@ Link transactions to any entity (Order, Subscription, Enrollment):
 
 ```javascript
 // Create transaction linked to Order
-const { transaction } = await revenue.subscriptions.create({
+const { transaction } = await revenue.monetization.create({
   data: {
     organizationId,
     customerId,
@@ -637,7 +639,7 @@ const revenue: Revenue = createRevenue({
 
 // All services are fully typed
 const payment = await revenue.payments.verify(id);
-const subscription = await revenue.subscriptions.create({ ... });
+const subscription = await revenue.monetization.create({ ... });
 ```
 
 ## Examples

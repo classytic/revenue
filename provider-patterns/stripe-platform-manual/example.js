@@ -36,7 +36,7 @@ const revenue = createRevenue({
 // ============================================================
 
 async function createVendorSalePayment(vendorId, customerId, amount) {
-  const { transaction, paymentIntent } = await revenue.subscriptions.create({
+  const { transaction, paymentIntent } = await revenue.monetization.create({
     data: {
       organizationId: vendorId,
       customerId,
