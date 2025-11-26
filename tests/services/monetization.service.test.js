@@ -301,4 +301,72 @@ await test('renew() creates transaction on success', async () => {
   }
 })();
 
+// Test: Single-tenant - create() works WITHOUT organizationId
+await test('create() works for single-tenant (no organizationId)', async () => {
+  const provider = createMockProvider();
+  const container = createContainer(provider);
+  const service = new MonetizationService(container);
+
+  const result = await service.create({
+    data: {
+      customerId: 'user_456',  // ✅ Only customerId, no organizationId
+    },
+    planKey: 'monthly',
+    amount: 2999,
+    gateway: 'test',
+    monetizationType: 'subscription',
+  });
+
+  if (!result.transaction) {
+    throw new Error('Should create transaction for single-tenant');
+  }
+  if (result.transaction.customerId !== 'user_456') {
+    throw new Error('Should preserve customerId');
+  }
+})();
+
+// Test: Multi-tenant - create() works WITH organizationId
+await test('create() works for multi-tenant (with organizationId)', async () => {
+  const provider = createMockProvider();
+  const container = createContainer(provider);
+  const service = new MonetizationService(container);
+
+  const result = await service.create({
+    data: {
+      organizationId: 'org_789',  // ✅ Multi-tenant with orgId
+      customerId: 'user_456',
+    },
+    planKey: 'monthly',
+    amount: 1500,
+    gateway: 'test',
+    monetizationType: 'purchase',
+  });
+
+  if (!result.transaction) {
+    throw new Error('Should create transaction for multi-tenant');
+  }
+  if (result.transaction.organizationId !== 'org_789') {
+    throw new Error('Should preserve organizationId');
+  }
+})();
+
+// Test: Single-tenant - create() with minimal data
+await test('create() works with minimal single-tenant data', async () => {
+  const provider = createMockProvider();
+  const container = createContainer(provider);
+  const service = new MonetizationService(container);
+
+  const result = await service.create({
+    data: {},  // ✅ Empty data object - should work
+    planKey: 'one_time',
+    amount: 500,
+    gateway: 'test',
+    monetizationType: 'purchase',
+  });
+
+  if (!result.transaction) {
+    throw new Error('Should create transaction with minimal data');
+  }
+})();
+
 console.log('\n✅ All subscription service tests passed!\n');

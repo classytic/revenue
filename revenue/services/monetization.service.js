@@ -113,9 +113,7 @@ export class MonetizationService {
     } = params;
 
     // Validate required fields
-    if (!data.organizationId) {
-      throw new MissingRequiredFieldError('organizationId');
-    }
+    // Note: organizationId is OPTIONAL (only needed for multi-tenant)
 
     if (!planKey) {
       throw new MissingRequiredFieldError('planKey');
