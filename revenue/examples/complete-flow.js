@@ -120,7 +120,7 @@ async function demonstrateCompleteFlow() {
   console.log('✅ PHASE 3: Admin Verifies Payment\n');
 
   const { transaction: verifiedTxn } = await revenue.payments.verify(
-    transaction.gateway.paymentIntentId,
+    transaction._id,
     { verifiedBy: adminId }
   );
 

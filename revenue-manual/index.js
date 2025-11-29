@@ -30,6 +30,8 @@ export class ManualProvider extends PaymentProvider {
 
     return new PaymentIntent({
       id: intentId,
+      sessionId: null,
+      paymentIntentId: null,
       provider: 'manual',
       status: 'pending',
       amount: params.amount,

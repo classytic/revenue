@@ -12,17 +12,17 @@
 export class PaymentIntent {
   constructor(data) {
     this.id = data.id;
+    this.sessionId = data.sessionId || null;
+    this.paymentIntentId = data.paymentIntentId || null;
     this.provider = data.provider;
-    this.status = data.status; // 'pending', 'processing', 'requires_action', 'succeeded', 'failed'
+    this.status = data.status;
     this.amount = data.amount;
     this.currency = data.currency || 'BDT';
     this.metadata = data.metadata || {};
-
-    // Provider-specific data
-    this.clientSecret = data.clientSecret; // For frontend (Stripe)
-    this.paymentUrl = data.paymentUrl; // For redirect (SSLCommerz)
-    this.instructions = data.instructions; // For manual
-    this.raw = data.raw; // Raw provider response
+    this.clientSecret = data.clientSecret;
+    this.paymentUrl = data.paymentUrl;
+    this.instructions = data.instructions;
+    this.raw = data.raw;
   }
 }
 

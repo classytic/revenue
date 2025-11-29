@@ -55,9 +55,9 @@ async function example() {
   console.log('✅ Single-tenant subscription created:', transaction._id);
 
   // ============================================================
-  // Verify payment
+  // Verify payment (use transaction._id - works for all providers)
   // ============================================================
-  await revenue.payments.verify(transaction.gateway.paymentIntentId);
+  await revenue.payments.verify(transaction._id);
 
   console.log('✅ Payment verified');
 

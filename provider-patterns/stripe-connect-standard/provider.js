@@ -105,6 +105,8 @@ export class StripeConnectStandardProvider extends PaymentProvider {
 
     return new PaymentIntent({
       id: session.id,
+      sessionId: session.id,
+      paymentIntentId: null,
       provider: 'stripe-connect',
       status: 'pending',
       amount,
@@ -114,7 +116,6 @@ export class StripeConnectStandardProvider extends PaymentProvider {
       metadata: {
         ...metadata,
         connectedAccountId,
-        sessionId: session.id,
       },
       raw: session,
     });
@@ -299,13 +300,16 @@ export class StripeConnectStandardProvider extends PaymentProvider {
    */
   _extractEventData(event) {
     const data = event.data.object;
+    const isCheckoutSession = event.type.startsWith('checkout.session');
     
     return {
-      paymentIntentId: data.id || data.payment_intent,
+      sessionId: isCheckoutSession ? data.id : null,
+      paymentIntentId: isCheckoutSession ? data.payment_intent : data.id,
       amount: data.amount || data.amount_total,
       currency: data.currency,
       status: data.status || data.payment_status,
       customerId: data.customer,
+      customerEmail: data.customer_details?.email || data.customer_email,
       metadata: data.metadata || {},
     };
   }

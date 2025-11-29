@@ -53,7 +53,7 @@ export class PaymentService {
   /**
    * Verify a payment
    *
-   * @param {String} paymentIntentId - Payment intent ID or transaction ID
+   * @param {String} paymentIntentId - Payment intent ID, session ID, or transaction ID
    * @param {Object} options - Verification options
    * @param {String} options.verifiedBy - User ID who verified (for manual verification)
    * @returns {Promise<Object>} { transaction, status }
@@ -62,16 +62,7 @@ export class PaymentService {
     const { verifiedBy = null } = options;
 
     const TransactionModel = this.models.Transaction;
-
-    // Find transaction by payment intent ID or transaction ID
-    let transaction = await TransactionModel.findOne({
-      'gateway.paymentIntentId': paymentIntentId,
-    });
-
-    if (!transaction) {
-      // Try finding by transaction ID directly
-      transaction = await TransactionModel.findById(paymentIntentId);
-    }
+    let transaction = await this._findTransaction(TransactionModel, paymentIntentId);
 
     if (!transaction) {
       throw new TransactionNotFoundError(paymentIntentId);
@@ -160,20 +151,12 @@ export class PaymentService {
   /**
    * Get payment status
    *
-   * @param {String} paymentIntentId - Payment intent ID or transaction ID
+   * @param {String} paymentIntentId - Payment intent ID, session ID, or transaction ID
    * @returns {Promise<Object>} { transaction, status }
    */
   async getStatus(paymentIntentId) {
     const TransactionModel = this.models.Transaction;
-
-    // Find transaction
-    let transaction = await TransactionModel.findOne({
-      'gateway.paymentIntentId': paymentIntentId,
-    });
-
-    if (!transaction) {
-      transaction = await TransactionModel.findById(paymentIntentId);
-    }
+    let transaction = await this._findTransaction(TransactionModel, paymentIntentId);
 
     if (!transaction) {
       throw new TransactionNotFoundError(paymentIntentId);
@@ -212,7 +195,7 @@ export class PaymentService {
   /**
    * Refund a payment
    *
-   * @param {String} paymentId - Payment intent ID or transaction ID
+   * @param {String} paymentId - Payment intent ID, session ID, or transaction ID
    * @param {Number} amount - Amount to refund (optional, full refund if not provided)
    * @param {Object} options - Refund options
    * @param {String} options.reason - Refund reason
@@ -222,15 +205,7 @@ export class PaymentService {
     const { reason = null } = options;
 
     const TransactionModel = this.models.Transaction;
-
-    // Find transaction
-    let transaction = await TransactionModel.findOne({
-      'gateway.paymentIntentId': paymentId,
-    });
-
-    if (!transaction) {
-      transaction = await TransactionModel.findById(paymentId);
-    }
+    let transaction = await this._findTransaction(TransactionModel, paymentId);
 
     if (!transaction) {
       throw new TransactionNotFoundError(paymentId);
@@ -384,26 +359,47 @@ export class PaymentService {
     }
 
     // Validate webhook event structure
-    if (!webhookEvent?.data?.paymentIntentId) {
+    if (!webhookEvent?.data?.sessionId && !webhookEvent?.data?.paymentIntentId) {
       throw new ValidationError(
-        `Invalid webhook event structure from ${providerName}: missing paymentIntentId`,
+        `Invalid webhook event structure from ${providerName}: missing sessionId or paymentIntentId`,
         { provider: providerName, eventType: webhookEvent?.type }
       );
     }
 
-    // Find transaction by payment intent ID from webhook
+    // Find transaction by sessionId first (for checkout flows), then paymentIntentId
     const TransactionModel = this.models.Transaction;
-    const transaction = await TransactionModel.findOne({
-      'gateway.paymentIntentId': webhookEvent.data.paymentIntentId,
-    });
+    let transaction = null;
+
+    if (webhookEvent.data.sessionId) {
+      transaction = await TransactionModel.findOne({
+        'gateway.sessionId': webhookEvent.data.sessionId,
+      });
+    }
+
+    if (!transaction && webhookEvent.data.paymentIntentId) {
+      transaction = await TransactionModel.findOne({
+        'gateway.paymentIntentId': webhookEvent.data.paymentIntentId,
+      });
+    }
 
     if (!transaction) {
       this.logger.warn('Transaction not found for webhook event', {
         provider: providerName,
         eventId: webhookEvent.id,
+        sessionId: webhookEvent.data.sessionId,
         paymentIntentId: webhookEvent.data.paymentIntentId,
       });
-      throw new TransactionNotFoundError(webhookEvent.data.paymentIntentId);
+      throw new TransactionNotFoundError(
+        webhookEvent.data.sessionId || webhookEvent.data.paymentIntentId
+      );
+    }
+
+    // Update gateway with complete information from webhook
+    if (webhookEvent.data.sessionId && !transaction.gateway.sessionId) {
+      transaction.gateway.sessionId = webhookEvent.data.sessionId;
+    }
+    if (webhookEvent.data.paymentIntentId && !transaction.gateway.paymentIntentId) {
+      transaction.gateway.paymentIntentId = webhookEvent.data.paymentIntentId;
     }
 
     // Check for duplicate webhook processing (idempotency)
@@ -511,6 +507,28 @@ export class PaymentService {
    */
   _triggerHook(event, data) {
     triggerHook(this.hooks, event, data, this.logger);
+  }
+
+  /**
+   * Find transaction by sessionId, paymentIntentId, or transaction ID
+   * @private
+   */
+  async _findTransaction(TransactionModel, identifier) {
+    let transaction = await TransactionModel.findOne({
+      'gateway.sessionId': identifier,
+    });
+
+    if (!transaction) {
+      transaction = await TransactionModel.findOne({
+        'gateway.paymentIntentId': identifier,
+      });
+    }
+
+    if (!transaction) {
+      transaction = await TransactionModel.findById(identifier);
+    }
+
+    return transaction;
   }
 }
 

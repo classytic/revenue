@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue-manual",
-  "version": "0.0.27",
+  "version": "0.0.28",
   "description": "Manual payment provider for @classytic/revenue - Reference implementation",
   "main": "index.js",
   "types": "revenue-manual.d.ts",

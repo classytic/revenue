@@ -162,7 +162,7 @@ async function demonstrateCommissionTracking() {
   console.log('💸 EXAMPLE 4: Refund with Commission Reversal\n');
 
   // Verify the course transaction first
-  await revenue.payments.verify(courseTxn.gateway.paymentIntentId);
+  await revenue.payments.verify(courseTxn._id);
 
   // Process partial refund
   const { refundTransaction } = await revenue.payments.refund(

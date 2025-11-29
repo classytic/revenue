@@ -82,14 +82,15 @@ export class SSLCommerzProvider extends PaymentProvider {
 
     return new PaymentIntent({
       id: tranId,
+      sessionId: response.sessionkey,
+      paymentIntentId: tranId,
       provider: 'sslcommerz',
       status: 'pending',
       amount,
       currency,
-      paymentUrl: response.GatewayPageURL, // Redirect here
+      paymentUrl: response.GatewayPageURL,
       metadata: {
         ...metadata,
-        sslcommerzSessionKey: response.sessionkey,
       },
       raw: response,
     });
@@ -200,6 +201,7 @@ export class SSLCommerzProvider extends PaymentProvider {
       provider: 'sslcommerz',
       type: eventType,
       data: {
+        sessionId: val_id,
         paymentIntentId: tran_id,
         amount: parseFloat(amount),
         currency: validation.currency_type || 'BDT',

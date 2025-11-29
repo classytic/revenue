@@ -17,6 +17,7 @@ await import('./utils/subscription-actions.test.js');
 // Run service integration tests
 await import('./services/payment.service.test.js');
 await import('./services/monetization.service.test.js');
+await import('./services/gateway-id.test.js');
 
 console.log('=====================================');
 console.log('  ✅ ALL TESTS PASSED');

@@ -84,16 +84,17 @@ export class StripeCheckoutProvider extends PaymentProvider {
 
     return new PaymentIntent({
       id: session.id,
+      sessionId: session.id,
+      paymentIntentId: null,
       provider: 'stripe',
       status: 'pending',
       amount,
       currency,
-      paymentUrl: session.url, // Frontend redirects here
+      paymentUrl: session.url,
       clientSecret: session.client_secret,
       metadata: {
         ...metadata,
         stripeCustomerId: customerId,
-        sessionId: session.id,
       },
       raw: session,
     });
@@ -254,13 +255,16 @@ export class StripeCheckoutProvider extends PaymentProvider {
    */
   _extractEventData(event) {
     const data = event.data.object;
+    const isCheckoutSession = event.type.startsWith('checkout.session');
     
     return {
-      paymentIntentId: data.id || data.payment_intent,
+      sessionId: isCheckoutSession ? data.id : null,
+      paymentIntentId: isCheckoutSession ? data.payment_intent : data.id,
       amount: data.amount || data.amount_total,
       currency: data.currency,
       status: data.status || data.payment_status,
       customerId: data.customer,
+      customerEmail: data.customer_details?.email || data.customer_email,
       metadata: data.metadata || {},
     };
   }

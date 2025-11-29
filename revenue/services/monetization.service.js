@@ -177,8 +177,10 @@ export class MonetizationService {
         status: paymentIntent.status === 'succeeded' ? 'verified' : 'pending',
         gateway: {
           type: gateway,
-          paymentIntentId: paymentIntent.id,
+          sessionId: paymentIntent.sessionId,
+          paymentIntentId: paymentIntent.paymentIntentId,
           provider: paymentIntent.provider,
+          metadata: paymentIntent.metadata,
         },
         paymentDetails: {
           provider: gateway,
@@ -395,8 +397,10 @@ export class MonetizationService {
       status: paymentIntent.status === 'succeeded' ? 'verified' : 'pending',
       gateway: {
         type: gateway,
-        paymentIntentId: paymentIntent.id,
+        sessionId: paymentIntent.sessionId,
+        paymentIntentId: paymentIntent.paymentIntentId,
         provider: paymentIntent.provider,
+        metadata: paymentIntent.metadata,
       },
       paymentDetails: {
         provider: gateway,

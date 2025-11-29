@@ -47,8 +47,8 @@ const { transaction } = await revenue.monetization.create({
   paymentData: { method: 'card' },
 });
 
-// Verify → Refund
-await revenue.payments.verify(transaction.gateway.paymentIntentId);
+// Verify → Refund (use transaction._id - works for all providers)
+await revenue.payments.verify(transaction._id);
 ```
 
 ### Multi-Tenant (Marketplace/Platform)
@@ -130,7 +130,7 @@ export default mongoose.model('Transaction', transactionSchema);
 
 | Schema | Purpose | Key Fields |
 |--------|---------|------------|
-| `gatewaySchema` | Payment gateway integration | `type`, `paymentIntentId`, `sessionId` |
+| `gatewaySchema` | Payment gateway integration | `type`, `sessionId`, `paymentIntentId` |
 | `paymentDetailsSchema` | Payment method info | `walletNumber`, `trxId`, `bankName` |
 | `commissionSchema` | Commission tracking (marketplace) | `rate`, `grossAmount`, `gatewayFeeAmount`, `netAmount` |
 | `currentPaymentSchema` | Latest payment (for Order/Subscription models) | `transactionId`, `status`, `verifiedAt` |
@@ -164,7 +164,7 @@ const { subscription, transaction, paymentIntent } =
   });
 
 // Verify and activate
-await revenue.payments.verify(transaction.gateway.paymentIntentId);
+await revenue.payments.verify(transaction._id);
 await revenue.monetization.activate(subscription._id);
 
 // Renew subscription
@@ -599,6 +599,8 @@ export class StripeProvider extends PaymentProvider {
 
     return new PaymentIntent({
       id: intent.id,
+      sessionId: null,              // No session for direct intents
+      paymentIntentId: intent.id,   // Available immediately
       provider: 'stripe',
       status: intent.status,
       amount: intent.amount,
