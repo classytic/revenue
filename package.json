@@ -10,8 +10,11 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "clean": "npm run clean --workspaces --if-present",
+    "typecheck": "tsc --noEmit",
     "version:patch": "npm version patch --workspaces",
     "version:minor": "npm version minor --workspaces",
     "version:major": "npm version major --workspaces",
@@ -22,6 +25,10 @@
     "publish:revenue-manual": "npm publish --workspace=@classytic/revenue-manual --access public",
     "publish:all": "npm run publish:revenue && npm run publish:revenue-manual",
     "prepublish:check": "echo '⚠️  Remember to: 1) Unlink packages 2) Test with npm pack 3) Git commit version changes'"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "keywords": [
     "revenue",
@@ -34,5 +41,11 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/classytic/revenue.git"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.9",
+    "mongoose": "^9.0.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.0"
   }
 }

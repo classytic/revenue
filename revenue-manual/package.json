@@ -1,10 +1,11 @@
 {
   "name": "@classytic/revenue-manual",
-  "version": "0.0.28",
+  "version": "0.1.0",
   "description": "Manual payment provider for @classytic/revenue - Reference implementation",
-  "main": "index.js",
-  "types": "revenue-manual.d.ts",
   "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "keywords": [
     "revenue",
     "payment",
@@ -15,7 +16,8 @@
     "mobile-money",
     "bkash",
     "nagad",
-    "rocket"
+    "rocket",
+    "typescript"
   ],
   "author": "Sadman Chowdhury",
   "license": "MIT",
@@ -23,20 +25,31 @@
     "type": "git",
     "url": "git+https://github.com/classytic/revenue.git"
   },
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "files": [
-    "index.js",
-    "revenue-manual.d.ts",
+    "dist",
     "LICENSE",
     "README.md"
   ],
-  "exports": {
-    ".": {
-      "types": "./revenue-manual.d.ts",
-      "default": "./index.js"
-    }
-  },
   "peerDependencies": {
-    "@classytic/revenue": ">=0.0.1 <1.0.0"
+    "@classytic/revenue": ">=1.0.0"
+  },
+  "devDependencies": {
+    "rimraf": "^6.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.3"
   },
   "dependencies": {
     "nanoid": "^5.1.6"

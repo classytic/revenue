@@ -1,99 +1,62 @@
 # Escrow & Multi-Party Split Features
 
-**@classytic/revenue v0.1.0**
-
 Platform-as-intermediary payment flow with affiliate commission support.
 
 ---
 
-## What's New
+## Overview
 
-### 1. Escrow Service
-Hold funds, verify, split, and release to multiple parties.
+The escrow system enables:
+- **Hold funds** - Collect payment, hold until conditions met
+- **Multi-party splits** - Distribute to platform, affiliates, partners
+- **Conditional release** - Release on delivery confirmation, milestone, etc.
+- **Automatic refunds** - Return funds if conditions not met
 
-```javascript
-import { createRevenue } from '@classytic/revenue';
+---
 
-const revenue = createRevenue({ ... });
+## Quick Start
 
-// Hold funds
-await revenue.escrow.hold(transactionId);
+```typescript
+import { Revenue } from '@classytic/revenue';
+import { ManualProvider } from '@classytic/revenue-manual';
 
-// Split to multiple recipients
-await revenue.escrow.split(transactionId, [
-  { type: 'platform_commission', recipientId: 'platform', rate: 0.10 },
-  { type: 'affiliate_commission', recipientId: 'affiliate-123', rate: 0.05 },
+const revenue = Revenue
+  .create({ defaultCurrency: 'USD' })
+  .withModels({ Transaction })
+  .withProvider('manual', new ManualProvider())
+  .withCommission(10, 2.9)
+  .build();
+
+// 1. Create payment
+const { transaction } = await revenue.monetization.create({
+  data: { customerId, organizationId },
+  planKey: 'order',
+  monetizationType: 'purchase',
+  amount: 10000, // $100
+  gateway: 'manual',
+});
+
+// 2. Verify payment
+await revenue.payments.verify(transaction._id.toString());
+
+// 3. Hold in escrow
+await revenue.escrow.hold(transaction._id.toString(), {
+  reason: 'Awaiting delivery confirmation',
+  holdUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+});
+
+// 4. Split to multiple recipients
+await revenue.escrow.split(transaction._id.toString(), [
+  { type: 'platform_commission', recipientId: 'platform', recipientType: 'platform', rate: 0.10 },
+  { type: 'affiliate_commission', recipientId: 'aff_123', recipientType: 'user', rate: 0.05 },
 ]);
 
-// Release to organization
-await revenue.escrow.release(transactionId, {
-  recipientId: 'org-123',
+// 5. Release to vendor (after delivery confirmed)
+await revenue.escrow.release(transaction._id.toString(), {
+  recipientId: 'vendor_456',
   recipientType: 'organization',
+  notes: 'Delivery confirmed',
 });
-```
-
-### 2. Multi-Party Commission Splits
-Distribute revenue across platform, affiliates, partners.
-
-```javascript
-import { calculateSplits } from '@classytic/revenue';
-
-const splits = calculateSplits(1000, [
-  { type: 'platform_commission', recipientId: 'platform', rate: 0.10 },
-  { type: 'affiliate_commission', recipientId: 'affiliate-1', rate: 0.05 },
-  { type: 'affiliate_commission', recipientId: 'affiliate-2', rate: 0.02 },
-]);
-
-// Result:
-// [
-//   { type: 'platform_commission', grossAmount: 100, netAmount: 100, ... },
-//   { type: 'affiliate_commission', grossAmount: 50, netAmount: 50, ... },
-//   { type: 'affiliate_commission', grossAmount: 20, netAmount: 20, ... },
-// ]
-```
-
-### 3. Affiliate Commission Helper
-Simplified API for common affiliate scenarios.
-
-```javascript
-import { calculateCommissionWithSplits } from '@classytic/revenue';
-
-const commission = calculateCommissionWithSplits(
-  1000,          // amount
-  0.10,          // platform rate
-  0.029,         // gateway fee rate
-  {
-    affiliateRate: 0.05,
-    affiliateId: 'affiliate-123',
-  }
-);
-
-// Returns commission with affiliate split
-```
-
-### 4. New Schemas (Spreadable)
-Use in your transaction models.
-
-```javascript
-import { holdSchema, splitsSchema } from '@classytic/revenue';
-
-const TransactionSchema = new Schema({
-  // ... existing fields
-  ...holdSchema,        // Adds: hold.status, hold.heldAmount, etc.
-  ...splitsSchema,      // Adds: splits array
-});
-```
-
-### 5. New Enums
-
-```javascript
-import {
-  HOLD_STATUS,
-  RELEASE_REASON,
-  SPLIT_TYPE,
-  SPLIT_STATUS,
-  PAYOUT_METHOD,
-} from '@classytic/revenue';
 ```
 
 ---
@@ -101,170 +64,202 @@ import {
 ## Use Cases
 
 ### E-commerce Marketplace
-Platform holds payment → Verifies delivery → Deducts commission → Pays seller
+```
+Customer pays $100
+    ↓
+Platform holds in escrow
+    ↓
+Delivery confirmed
+    ↓
+Split: Platform 10% ($10), Vendor 90% ($90)
+```
 
 ### Course Platform with Affiliates
-Student pays → Platform holds → Deducts platform fee + affiliate commission → Pays instructor
-
-### SaaS Reseller Program
-Customer subscribes → Platform receives → Splits to: platform, reseller, partner
-
-### Multi-Level Marketing
-Sale made → Platform holds → Distributes to: platform, level-1 affiliate, level-2 affiliate
-
----
-
-## Payment Flow
-
-### Traditional Direct Payment
 ```
-Customer → Gateway → Organization
-                    ↓
-                 Platform tracks commission owed
+Student pays $50
+    ↓
+Platform holds
+    ↓
+Split: Platform 15% ($7.50), Affiliate 5% ($2.50), Instructor 80% ($40)
 ```
 
-### New Escrow Flow
+### Group Buy / Crowdfunding
 ```
-Customer → Gateway → Platform (holds in escrow)
-                    ↓
-                 Verify payment
-                    ↓
-                 Split to: Platform, Affiliate, Partner
-                    ↓
-                 Release remainder to Organization
+Multiple customers pledge
+    ↓
+Funds held until target reached
+    ↓
+Target reached → Release to merchant
+Target missed → Refund all customers
 ```
 
 ---
 
 ## API Reference
 
-### EscrowService
+### Hold Funds
 
-```javascript
-// Hold funds
-await revenue.escrow.hold(transactionId, options);
-
-// Release funds
-await revenue.escrow.release(transactionId, {
-  amount: 500,              // Optional: partial release
-  recipientId: 'org-123',
-  recipientType: 'organization',
-  reason: 'payment_verified',
+```typescript
+await revenue.escrow.hold(transactionId, {
+  reason: 'payment_verification', // or custom string
+  holdUntil: new Date('2024-12-31'),
+  metadata: { orderId: '123' },
 });
-
-// Split payment
-await revenue.escrow.split(transactionId, [
-  { type: 'platform_commission', recipientId: 'platform', rate: 0.10 },
-  { type: 'affiliate_commission', recipientId: 'aff-123', rate: 0.05 },
-]);
-
-// Cancel hold
-await revenue.escrow.cancel(transactionId, { reason: 'fraud_detected' });
-
-// Get status
-await revenue.escrow.getStatus(transactionId);
 ```
 
-### Utilities
+### Split Payment
 
-```javascript
+```typescript
+await revenue.escrow.split(transactionId, [
+  { type: 'platform_commission', recipientId: 'platform', recipientType: 'platform', rate: 0.10 },
+  { type: 'affiliate_commission', recipientId: 'aff_123', recipientType: 'user', rate: 0.05 },
+  { type: 'partner_commission', recipientId: 'partner_456', recipientType: 'organization', rate: 0.03 },
+]);
+// Remainder automatically goes to organization
+```
+
+### Release Funds
+
+```typescript
+// Full release
+await revenue.escrow.release(transactionId, {
+  recipientId: 'vendor_123',
+  recipientType: 'organization',
+});
+
+// Partial release
+await revenue.escrow.release(transactionId, {
+  amount: 5000, // $50 of $100
+  recipientId: 'vendor_123',
+  recipientType: 'organization',
+});
+```
+
+### Cancel Hold
+
+```typescript
+await revenue.escrow.cancelHold(transactionId, {
+  reason: 'Order cancelled by customer',
+});
+```
+
+### Get Status
+
+```typescript
+const status = await revenue.escrow.getStatus(transactionId);
+// {
+//   transaction: {...},
+//   status: 'held',
+//   heldAmount: 10000,
+//   releasedAmount: 0,
+// }
+```
+
+---
+
+## Commission Utilities
+
+### Calculate Splits
+
+```typescript
+import { calculateSplits } from '@classytic/revenue';
+
+const splits = calculateSplits(
+  10000, // $100
+  [
+    { type: 'platform_commission', recipientId: 'platform', recipientType: 'platform', rate: 0.10 },
+    { type: 'affiliate_commission', recipientId: 'level1', recipientType: 'user', rate: 0.05 },
+    { type: 'affiliate_commission', recipientId: 'level2', recipientType: 'user', rate: 0.02 },
+  ],
+  0.029 // Gateway fee
+);
+
+// Result:
+// Platform: $10 gross, $7.10 net (after 2.9% fee)
+// Level 1: $5 gross, $5 net
+// Level 2: $2 gross, $2 net
+// Organization receives: $83
+```
+
+### Calculate Commission with Affiliate
+
+```typescript
+import { calculateCommissionWithSplits } from '@classytic/revenue';
+
+const commission = calculateCommissionWithSplits(
+  10000,  // $100
+  0.10,   // 10% platform
+  0.029,  // 2.9% gateway
+  {
+    affiliateRate: 0.05,
+    affiliateId: 'affiliate_123',
+  }
+);
+
+// {
+//   grossAmount: 1000,
+//   gatewayFeeAmount: 290,
+//   netAmount: 710,
+//   affiliate: { grossAmount: 500, netAmount: 500 },
+// }
+```
+
+---
+
+## Transaction Model Setup
+
+Add escrow fields to your Transaction model:
+
+```typescript
 import {
-  calculateSplits,
-  calculateOrganizationPayout,
-  reverseSplits,
-  calculateCommissionWithSplits,
+  gatewaySchema,
+  commissionSchema,
+  holdSchema,
+  splitSchema,
 } from '@classytic/revenue';
 
-// Calculate splits
-const splits = calculateSplits(amount, splitRules, gatewayFeeRate);
-
-// Calculate organization payout
-const payout = calculateOrganizationPayout(amount, splits);
-
-// Reverse splits on refund
-const reversed = reverseSplits(originalSplits, originalAmount, refundAmount);
-
-// Calculate with affiliate
-const commission = calculateCommissionWithSplits(amount, platformRate, gatewayFeeRate, {
-  affiliateRate: 0.05,
-  affiliateId: 'affiliate-123',
+const TransactionSchema = new Schema({
+  // ... core fields ...
+  
+  // Library schemas
+  gateway: gatewaySchema,
+  commission: commissionSchema,
+  hold: holdSchema,
+  splits: [splitSchema],
 });
 ```
 
 ---
 
-## Migration Guide
+## Events
 
-### For Existing Apps
+```typescript
+revenue.on('escrow.held', (event) => {
+  console.log('Funds held:', event.transactionId, event.amount);
+});
 
-**No breaking changes.** All existing functionality works as before.
+revenue.on('escrow.released', (event) => {
+  console.log('Funds released:', event.transactionId, event.releasedAmount);
+});
 
-Escrow features are **opt-in**:
-- Don't use `revenue.escrow.*` → Works exactly as before
-- Commission calculation unchanged (backward compatible)
-- Schemas are spreadable (not forced)
-
-### Enabling Escrow
-
-```javascript
-// 1. Update transaction model (optional)
-import { holdSchema, splitsSchema } from '@classytic/revenue';
-
-TransactionSchema.add(holdSchema);
-TransactionSchema.add(splitsSchema);
-
-// 2. Use escrow service
-await revenue.escrow.hold(transactionId);
-await revenue.escrow.split(transactionId, splitRules);
-await revenue.escrow.release(transactionId, options);
+revenue.on('escrow.split', (event) => {
+  console.log('Payment split:', event.splits);
+});
 ```
 
 ---
 
-## Examples
+## Best Practices
 
-See [examples/](./revenue/examples/) folder:
-- `escrow-flow.js` - Complete escrow workflow
-- `affiliate-commission.js` - Multi-party splits
-- `commission-tracking.js` - Commission management
-- `complete-flow.js` - End-to-end flows
-
----
-
-## Event Hooks
-
-New hooks for escrow operations:
-
-```javascript
-hooks: {
-  'escrow.held': [async ({ transaction, heldAmount }) => { ... }],
-  'escrow.released': [async ({ transaction, releaseAmount, recipientId }) => { ... }],
-  'escrow.split': [async ({ transaction, splits, organizationPayout }) => { ... }],
-  'escrow.cancelled': [async ({ transaction, reason }) => { ... }],
-}
-```
+1. **Always verify payment before holding** - Only hold verified funds
+2. **Set holdUntil dates** - Prevent indefinite holds
+3. **Log all releases** - Audit trail for disputes
+4. **Handle partial releases** - For milestone-based payments
+5. **Test refund flows** - Ensure customers can get money back
 
 ---
 
-## Design Principles
+## Related
 
-✅ **No breaking changes** - Existing apps unaffected
-✅ **Opt-in** - Use escrow only when needed
-✅ **Spreadable schemas** - Users control their models
-✅ **Clean separation** - Escrow logic isolated
-✅ **Database agnostic** - Patterns work across databases
-✅ **Production ready** - Battle-tested patterns
-
----
-
-## Version
-
-- **Previous**: v0.0.24 - Basic commission tracking
-- **Current**: v0.1.0 - Escrow + multi-party splits
-- **Next**: v0.2.0 - Scheduled payouts, batch processing
-
----
-
-## License
-
-MIT - Use freely in your projects
+- [Group Buy Guide](./GROUP_BUY_GUIDE.md) - Crowdfunding implementation
+- [Examples](../../revenue/examples/03-escrow-splits.ts) - Working code

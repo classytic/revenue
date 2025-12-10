@@ -1,43 +1,57 @@
 # @classytic/revenue-manual
 
-Manual payment provider for [@classytic/revenue](../revenue).
+> Manual Payment Provider for @classytic/revenue
 
-**Perfect for**: Any payment method without API integration (cash, bank transfer, mobile money, etc.)
-
-**Generic & Flexible**: Works with ANY payment method from ANY country.
+Perfect for any payment method without API integration: cash, bank transfer, mobile money (bKash, M-Pesa, UPI), wire transfer, etc.
 
 ## Installation
 
 ```bash
-npm install @classytic/revenue-manual
+npm install @classytic/revenue @classytic/revenue-manual
 ```
 
 ## Usage
 
-### Option 1: Custom Instructions (Simplest)
+```typescript
+import { Revenue } from '@classytic/revenue';
+import { ManualProvider } from '@classytic/revenue-manual';
 
-```javascript
-const { subscription, transaction, paymentIntent } = await revenue.monetization.create({
-  data: { organizationId, customerId },
+const revenue = Revenue
+  .create({ defaultCurrency: 'USD' })
+  .withModels({ Transaction, Subscription })
+  .withProvider('manual', new ManualProvider())
+  .build();
+
+// Create payment with custom instructions
+const { transaction, paymentIntent } = await revenue.monetization.create({
+  data: { customerId: user._id },
   planKey: 'monthly',
-  amount: 99.99,
+  amount: 2999,
   gateway: 'manual',
   metadata: {
-    paymentInstructions: 'Send money to bKash: 01712345678\nReference: Your name',
+    paymentInstructions: `
+      Send payment to:
+      bKash: 01712345678
+      Reference: ${user.name}
+    `,
   },
 });
 
 console.log(paymentIntent.instructions);
-// Exactly what you passed
+// Your custom instructions
+
+// Admin verifies payment
+await revenue.payments.verify(transaction._id, {
+  verifiedBy: adminId,
+});
 ```
 
-### Option 2: Payment Info (Auto-formatted)
+## Payment Info (Auto-formatted)
 
-```javascript
+```typescript
 const { paymentIntent } = await revenue.monetization.create({
-  data: { organizationId, customerId },
-  planKey: 'monthly',
-  amount: 99.99,
+  data: { customerId: user._id },
+  amount: 9999,
   gateway: 'manual',
   metadata: {
     paymentInfo: {
@@ -50,7 +64,7 @@ const { paymentIntent } = await revenue.monetization.create({
 });
 
 console.log(paymentIntent.instructions);
-// Payment Amount: 99.99 BDT
+// Payment Amount: 99.99 USD
 //
 // method: bKash
 // number: 01712345678
@@ -58,33 +72,11 @@ console.log(paymentIntent.instructions);
 // note: Use your name as reference
 ```
 
-## Features
-
-- ✅ Works with ANY payment method (no hardcoded methods)
-- ✅ Custom payment instructions
-- ✅ Auto-formatted payment info
-- ✅ Full & partial refunds
-- ❌ No webhooks (manual verification only)
-
-## Provider Capabilities
-
-```javascript
-const manual = new ManualProvider();
-const capabilities = manual.getCapabilities();
-
-// {
-//   supportsWebhooks: false,
-//   supportsRefunds: true,
-//   supportsPartialRefunds: true,
-//   requiresManualVerification: true,
-// }
-```
-
 ## Examples
 
 ### bKash (Bangladesh)
 
-```javascript
+```typescript
 metadata: {
   paymentInfo: {
     method: 'bKash',
@@ -92,33 +84,22 @@ metadata: {
     type: 'Personal',
   },
 }
-// Auto-formatted:
-// Payment Amount: 99.99 BDT
-//
-// method: bKash
-// number: 01712345678
-// type: Personal
 ```
 
 ### UPI (India)
 
-```javascript
+```typescript
 metadata: {
   paymentInfo: {
     method: 'UPI',
     upiId: 'merchant@paytm',
   },
 }
-// Auto-formatted:
-// Payment Amount: 99.99 INR
-//
-// method: UPI
-// upiId: merchant@paytm
 ```
 
 ### M-Pesa (Kenya)
 
-```javascript
+```typescript
 metadata: {
   paymentInfo: {
     method: 'M-Pesa',
@@ -128,157 +109,135 @@ metadata: {
 }
 ```
 
-### Any Payment Method
+### Bank Transfer
 
-```javascript
+```typescript
 metadata: {
   paymentInstructions: `
-    Send payment to:
     Bank: XYZ Bank
     Account: 123-456-789
     SWIFT: XYZBUS33
-    Reference: ${orderId}
+    Reference: ORDER-${orderId}
   `,
 }
-// Uses exactly what you provide
+```
+
+## Capabilities
+
+```typescript
+const manual = new ManualProvider();
+manual.getCapabilities();
+// {
+//   supportsWebhooks: false,
+//   supportsRefunds: true,
+//   supportsPartialRefunds: true,
+//   requiresManualVerification: true,
+// }
 ```
 
 ## Verification Flow
 
-Manual payments require admin verification:
-
-```javascript
-// 1. Customer creates subscription with manual payment
+```typescript
+// 1. Customer creates payment
 const { transaction } = await revenue.monetization.create({
-  data: { ... },
+  data: { customerId },
+  amount: 1500,
   gateway: 'manual',
 });
-
 // transaction.status === 'pending'
 
-// 2. Admin verifies payment
-await revenue.payments.verify(transaction.paymentIntentId, {
+// 2. Customer pays outside the system (cash, bank, etc.)
+
+// 3. Admin verifies payment received
+await revenue.payments.verify(transaction._id, {
   verifiedBy: adminUserId,
 });
-
 // transaction.status === 'verified'
 ```
 
-## Reference Implementation
+## Refunds
 
-This provider serves as a **reference implementation** for building custom providers.
+```typescript
+// Full refund
+await revenue.payments.refund(transaction._id);
 
-### Building Your Own Provider
+// Partial refund
+await revenue.payments.refund(transaction._id, 500, {
+  reason: 'Partial return',
+});
+```
 
-Use this structure to build providers for Stripe, SSLCommerz, bKash API, or any custom gateway:
+## TypeScript
 
-```javascript
-import { PaymentProvider, PaymentIntent, PaymentResult, RefundResult } from '@classytic/revenue';
+Full TypeScript support:
 
-export class StripeProvider extends PaymentProvider {
-  constructor(config) {
+```typescript
+import { ManualProvider } from '@classytic/revenue-manual';
+import type { ManualProviderConfig, ManualRefundOptions } from '@classytic/revenue-manual';
+
+const provider = new ManualProvider({
+  // Custom config if needed
+});
+```
+
+## Building Custom Providers
+
+Use ManualProvider as a reference for building your own:
+
+```typescript
+import {
+  PaymentProvider,
+  PaymentIntent,
+  PaymentResult,
+  RefundResult,
+  WebhookEvent,
+} from '@classytic/revenue';
+import type { CreateIntentParams, ProviderCapabilities } from '@classytic/revenue';
+
+export class MyProvider extends PaymentProvider {
+  public override readonly name = 'my-provider';
+
+  constructor(config: MyConfig) {
     super(config);
-    this.name = 'stripe';
-    this.stripe = new Stripe(config.apiKey);
   }
 
-  async createIntent(params) {
-    const intent = await this.stripe.paymentIntents.create({
-      amount: params.amount,
-      currency: params.currency,
-      metadata: params.metadata,
-    });
-
-    return new PaymentIntent({
-      id: intent.id,
-      provider: 'stripe',
-      status: intent.status,
-      amount: intent.amount,
-      currency: intent.currency,
-      clientSecret: intent.client_secret,
-      metadata: intent.metadata,
-      raw: intent,
-    });
+  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+    // Your implementation
   }
 
-  async verifyPayment(intentId) {
-    const intent = await this.stripe.paymentIntents.retrieve(intentId);
-
-    return new PaymentResult({
-      id: intent.id,
-      provider: 'stripe',
-      status: intent.status === 'succeeded' ? 'succeeded' : 'failed',
-      amount: intent.amount,
-      currency: intent.currency,
-      paidAt: intent.status === 'succeeded' ? new Date() : null,
-      metadata: intent.metadata,
-      raw: intent,
-    });
+  async verifyPayment(intentId: string): Promise<PaymentResult> {
+    // Your implementation
   }
 
-  async refund(paymentId, amount, options = {}) {
-    const refund = await this.stripe.refunds.create({
-      payment_intent: paymentId,
-      amount,
-      reason: options.reason,
-    });
-
-    return new RefundResult({
-      id: refund.id,
-      provider: 'stripe',
-      status: refund.status,
-      amount: refund.amount,
-      currency: refund.currency,
-      refundedAt: new Date(),
-      reason: refund.reason,
-      metadata: refund.metadata,
-      raw: refund,
-    });
+  async getStatus(intentId: string): Promise<PaymentResult> {
+    // Your implementation
   }
 
-  async handleWebhook(payload, headers) {
-    const signature = headers['stripe-signature'];
-    const event = this.stripe.webhooks.constructEvent(
-      payload,
-      signature,
-      this.config.webhookSecret
-    );
-
-    return new WebhookEvent({
-      id: event.id,
-      provider: 'stripe',
-      type: event.type,
-      data: event.data.object,
-      createdAt: new Date(event.created * 1000),
-      raw: event,
-    });
+  async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
+    // Your implementation
   }
 
-  getCapabilities() {
+  async handleWebhook(payload: unknown, headers?: Record<string, string>): Promise<WebhookEvent> {
+    // Your implementation
+  }
+
+  override getCapabilities(): ProviderCapabilities {
     return {
-      supportsWebhooks: true,
+      supportsWebhooks: false,
       supportsRefunds: true,
       supportsPartialRefunds: true,
-      requiresManualVerification: false,
+      requiresManualVerification: true,
     };
   }
 }
 ```
 
-## Documentation
+## Links
 
-- **[Building Payment Providers](../docs/guides/PROVIDER_GUIDE.md)** - Guide to creating custom payment providers
-- **[Full Documentation](../docs/README.md)** - Complete documentation
-
-## Support
-
+- **Core Package**: [@classytic/revenue](../revenue/README.md)
+- **Provider Guide**: [Building Payment Providers](../docs/guides/PROVIDER_GUIDE.md)
 - **GitHub**: https://github.com/classytic/revenue
-- **Issues**: https://github.com/classytic/revenue/issues
 
 ## License
 
-MIT © Classytic (Classytic)
-
----
-
-**Built with ❤️ as a reference for the community**
+MIT © [Classytic](https://github.com/classytic)

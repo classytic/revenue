@@ -1,6 +1,6 @@
 # @classytic/revenue Documentation
 
-Enterprise-grade revenue management system for subscriptions and payments.
+Modern, type-safe revenue management system for subscriptions and payments.
 
 ## 📦 Packages
 
@@ -16,25 +16,39 @@ Manual payment provider for cash, bank transfers, mobile money without API.
 
 ## 🚀 Quick Start
 
-```javascript
-import { createRevenue } from '@classytic/revenue';
+```typescript
+import { Revenue } from '@classytic/revenue';
 import { ManualProvider } from '@classytic/revenue-manual';
 
-const revenue = createRevenue({
-  models: { Transaction },
-  providers: { manual: new ManualProvider() },
-});
+// ONE Transaction model = Universal Financial Ledger
+const revenue = Revenue
+  .create({ defaultCurrency: 'USD' })
+  .withModels({ Transaction })
+  .withProvider('manual', new ManualProvider())
+  .withCommission(10, 2.9)
+  .build();
 
-// Create subscription
-const { subscription, transaction } = await revenue.monetization.create({
-  data: { organizationId, customerId },
+// Create subscription payment
+const { transaction, paymentIntent } = await revenue.monetization.create({
+  data: {
+    customerId,
+    organizationId,
+    referenceId: subscriptionId,
+    referenceModel: 'Subscription',
+  },
   planKey: 'monthly',
-  amount: 1500,
+  monetizationType: 'subscription',
+  amount: 2999,
   gateway: 'manual',
 });
 
 // Verify payment
-await revenue.payments.verify(transaction.gateway.paymentIntentId);
+await revenue.payments.verify(paymentIntent.paymentIntentId);
+
+// Listen to events
+revenue.on('payment.succeeded', (event) => {
+  console.log('Verified:', event.transactionId);
+});
 ```
 
 ## 📚 Guides
@@ -50,7 +64,13 @@ Complete guide for building custom payment provider packages (Stripe, PayPal, SS
 - Complete working examples
 - Publishing to npm
 
-**Perfect for:** Community developers building payment integrations or teams implementing custom gateways.
+### [Escrow Features](./guides/ESCROW_FEATURES.md)
+Platform-as-intermediary payment flow for marketplaces.
+
+**Topics:**
+- Hold/release patterns
+- Multi-party splits
+- Affiliate commissions
 
 ## 📖 Examples
 
@@ -58,20 +78,33 @@ Located in [`revenue/examples/`](../revenue/examples/):
 
 | Example | Description |
 |---------|-------------|
-| [`basic-usage.js`](../revenue/examples/basic-usage.js) | Simple setup with subscriptions |
-| [`transaction.model.js`](../revenue/examples/transaction.model.js) | Complete model setup with schemas |
-| [`transaction-type-mapping.js`](../revenue/examples/transaction-type-mapping.js) | Income/expense configuration |
-| [`complete-flow.js`](../revenue/examples/complete-flow.js) | Full lifecycle with state guards |
-| [`multivendor-platform.js`](../revenue/examples/multivendor-platform.js) | Multi-tenant SaaS setup |
+| [`01-quick-start.ts`](../revenue/examples/01-quick-start.ts) | Basic setup with fluent API |
+| [`02-subscriptions.ts`](../revenue/examples/02-subscriptions.ts) | Subscription lifecycle patterns |
+| [`03-escrow-splits.ts`](../revenue/examples/03-escrow-splits.ts) | Escrow & multi-party splits |
+| [`04-events-plugins.ts`](../revenue/examples/04-events-plugins.ts) | Events & plugin system |
+| [`05-transaction-model.ts`](../revenue/examples/05-transaction-model.ts) | Complete model setup |
+| [`06-resilience.ts`](../revenue/examples/06-resilience.ts) | Retry, circuit breaker, idempotency |
 
 ## 🏗️ Architecture
 
 ### Core Package (`@classytic/revenue`)
-- Subscription management (create, renew, cancel, pause)
-- Payment processing (verify, refund, webhooks)
-- Transaction tracking (income/expense)
-- Hook system for extensibility
-- Provider abstraction layer
+- **Fluent Builder API** - Chain configuration with IntelliSense
+- **Type-safe Events** - Strongly typed pub/sub system
+- **Result Type** - Rust-inspired error handling
+- **Money Utility** - Integer-safe currency calculations
+- **Plugin System** - Composable middleware
+- **Resilience** - Retry, circuit breaker, idempotency
+
+### Single Transaction Model
+ONE Transaction model handles everything:
+
+| Use Case | Category | Type |
+|----------|----------|------|
+| Subscriptions | `platform_subscription` | `income` |
+| One-time purchases | `product_order` | `income` |
+| Course enrollments | `course_enrollment` | `income` |
+| Refunds | `refund` | `expense` |
+| Operational expenses | `rent`, `salary` | `expense` |
 
 ### Provider Packages
 Payment gateway implementations as separate packages:
@@ -83,27 +116,47 @@ Payment gateway implementations as separate packages:
 - **Database flexible** - Uses your existing Mongoose models
 - **Region neutral** - Define your own payment methods/categories
 - **Provider pluggable** - Mix multiple payment providers
-- **DI-based** - Fully testable with dependency injection
+- **Type-safe** - Full TypeScript support
 
 ## 📋 Package Structure
 
 ```
 @classytic/revenue (monorepo)
 ├── docs/                         # Documentation (this folder)
+├── provider-patterns/            # Reference implementations
 ├── revenue/                      # Core package (@classytic/revenue)
-│   ├── core/                     # DI container, builder, errors
-│   ├── services/                 # Subscription, payment, transaction
-│   ├── providers/                # Provider base classes
-│   ├── enums/                    # Enums for types/statuses
-│   ├── schemas/                  # Reusable Mongoose schemas
+│   ├── src/
+│   │   ├── core/                 # Revenue builder, events, plugins
+│   │   ├── services/             # Monetization, payment, escrow
+│   │   ├── providers/            # Provider base classes
+│   │   ├── enums/                # Enums for types/statuses
+│   │   ├── schemas/              # Reusable Mongoose schemas
+│   │   └── utils/                # Money, retry, idempotency
 │   ├── examples/                 # Usage examples
 │   └── package.json
-└── revenue-manual/               # Manual provider package
-    ├── index.js
-    └── package.json
+├── revenue-manual/               # Manual provider package
+│   ├── src/
+│   │   └── index.ts
+│   └── package.json
+└── tests/                        # Integration & unit tests
 ```
 
 ## 🔑 Key Concepts
+
+### Fluent Builder API
+```typescript
+const revenue = Revenue
+  .create({ defaultCurrency: 'USD' })
+  .withModels({ Transaction })
+  .withProvider('stripe', new StripeProvider())
+  .withProvider('manual', new ManualProvider())
+  .withPlugin(loggingPlugin())
+  .withCommission(10, 2.9)
+  .withCategoryMappings({ ProductOrder: 'product_order' })
+  .withRetry({ maxAttempts: 3 })
+  .withCircuitBreaker()
+  .build();
+```
 
 ### Transaction Types (Double-Entry Accounting)
 - **Income**: Money coming in (payments, subscriptions)
@@ -127,7 +180,7 @@ Providers are pluggable packages implementing payment gateway integrations:
 1. Provider validates signature and parses event
 2. Provider returns standardized `WebhookEvent`
 3. Library automatically updates transaction status
-4. Library triggers application hooks
+4. Library triggers application events
 5. Idempotency prevents duplicate processing
 
 ## 🤝 Contributing Providers

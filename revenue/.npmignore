@@ -1,4 +1,5 @@
 # Test files
+/.claude
 *.test.js
 *.spec.js
 test/

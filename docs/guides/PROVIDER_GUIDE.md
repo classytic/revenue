@@ -12,103 +12,117 @@ npm init -y
 
 # 2. Install peer dependency
 npm install @classytic/revenue --save-peer
+npm install typescript tsup --save-dev
 ```
 
 ## Minimal Provider (5 methods)
 
-```javascript
-// index.js
-import { PaymentProvider, PaymentIntent, PaymentResult } from '@classytic/revenue';
+```typescript
+// src/index.ts
+import {
+  PaymentProvider,
+  PaymentIntent,
+  PaymentResult,
+  RefundResult,
+  WebhookEvent,
+  type CreateIntentParams,
+  type ProviderCapabilities,
+} from '@classytic/revenue';
+import Stripe from 'stripe';
+
+export interface StripeProviderConfig {
+  apiKey: string;
+  webhookSecret: string;
+}
 
 export class StripeProvider extends PaymentProvider {
-  constructor(config) {
+  public override readonly name = 'stripe';
+  private stripe: Stripe;
+
+  constructor(config: StripeProviderConfig) {
     super(config);
-    this.name = 'stripe';
     this.stripe = new Stripe(config.apiKey);
   }
 
   // 1. Create payment intent
-  async createIntent(params) {
+  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
     const intent = await this.stripe.paymentIntents.create({
       amount: params.amount,
-      currency: params.currency,
-      metadata: params.metadata,
+      currency: params.currency ?? 'usd',
+      metadata: params.metadata as Record<string, string>,
     });
 
     return new PaymentIntent({
       id: intent.id,
-      provider: 'stripe',
+      paymentIntentId: intent.id,
+      sessionId: null,
+      provider: this.name,
       status: intent.status,
       amount: intent.amount,
       currency: intent.currency,
-      clientSecret: intent.client_secret,  // For frontend
-      metadata: intent.metadata,
-      raw: intent,  // Always include raw response
+      clientSecret: intent.client_secret!,  // For frontend
+      metadata: params.metadata ?? {},
     });
   }
 
   // 2. Verify payment
-  async verifyPayment(intentId) {
+  async verifyPayment(intentId: string): Promise<PaymentResult> {
     const intent = await this.stripe.paymentIntents.retrieve(intentId);
 
     return new PaymentResult({
       id: intent.id,
-      provider: 'stripe',
+      provider: this.name,
       status: intent.status === 'succeeded' ? 'succeeded' : 'failed',
       amount: intent.amount,
       currency: intent.currency,
-      paidAt: intent.status === 'succeeded' ? new Date() : null,
-      metadata: intent.metadata,
-      raw: intent,
+      paidAt: intent.status === 'succeeded' ? new Date() : undefined,
+      metadata: {},
     });
   }
 
   // 3. Get payment status
-  async getStatus(intentId) {
+  async getStatus(intentId: string): Promise<PaymentResult> {
     return this.verifyPayment(intentId);  // Can reuse verify logic
   }
 
   // 4. Refund payment
-  async refund(paymentId, amount, options = {}) {
+  async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
     const refund = await this.stripe.refunds.create({
       payment_intent: paymentId,
-      amount,
-      reason: options.reason,
+      amount: amount ?? undefined,
     });
 
     return new RefundResult({
       id: refund.id,
-      provider: 'stripe',
-      status: refund.status,
+      provider: this.name,
+      status: refund.status === 'succeeded' ? 'succeeded' : 'failed',
       amount: refund.amount,
       currency: refund.currency,
       refundedAt: new Date(),
-      reason: refund.reason,
-      raw: refund,
+      metadata: {},
     });
   }
 
   // 5. Handle webhooks
-  async handleWebhook(payload, headers) {
-    const signature = headers['stripe-signature'];
+  async handleWebhook(payload: unknown, headers?: Record<string, string>): Promise<WebhookEvent> {
+    const signature = headers?.['stripe-signature'];
     const event = this.stripe.webhooks.constructEvent(
-      payload,
-      signature,
-      this.config.webhookSecret
+      payload as string,
+      signature!,
+      this.config.webhookSecret as string
     );
 
     return new WebhookEvent({
       id: event.id,
-      provider: 'stripe',
-      type: event.type,  // payment.succeeded, payment.failed, etc.
-      data: event.data.object,
+      provider: this.name,
+      type: event.type,  // payment_intent.succeeded, etc.
+      data: event.data.object as any,
       createdAt: new Date(event.created * 1000),
-      raw: event,
     });
   }
 
   // 6. Declare capabilities
-  getCapabilities() {
+  override getCapabilities(): ProviderCapabilities {
     return {
       supportsWebhooks: true,
       supportsRefunds: true,
@@ -119,37 +133,46 @@ export class StripeProvider extends PaymentProvider {
 }
 ```
 
-## Usage
+## Usage with Fluent API
 
-```javascript
+```typescript
 // In your app
-import { createRevenue } from '@classytic/revenue';
-import { StripeProvider } from '@classytic/revenue-stripe';
+import { Revenue } from '@classytic/revenue';
+import { StripeProvider } from '@yourorg/revenue-stripe';
 
-const revenue = createRevenue({
-  models: { Transaction },
-  providers: {
-    stripe: new StripeProvider({
-      apiKey: process.env.STRIPE_SECRET_KEY,
-      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-    }),
-  },
-});
+const revenue = Revenue
+  .create({ defaultCurrency: 'USD' })
+  .withModels({ Transaction })
+  .withProvider('stripe', new StripeProvider({
+    apiKey: process.env.STRIPE_SECRET_KEY!,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET!,
+  }))
+  .withCommission(10, 2.9)
+  .build();
 
-// Create subscription with Stripe
+// Create payment
 const { transaction, paymentIntent } = await revenue.monetization.create({
-  data: { organizationId, customerId },
-  planKey: 'monthly',
-  amount: 99.99,
-  gateway: 'stripe',  // Uses your provider
+  data: {
+    customerId,
+    organizationId,
+    referenceId: orderId,
+    referenceModel: 'Order',
+  },
+  planKey: 'one_time',
+  monetizationType: 'purchase',
+  amount: 9999,
+  gateway: 'stripe',
 });
+
+// Frontend uses clientSecret
+console.log('Client Secret:', paymentIntent.clientSecret);
 
 // Webhook endpoint (Express/Fastify)
 app.post('/webhooks/stripe', async (req, res) => {
   const result = await revenue.payments.handleWebhook(
     'stripe',
     req.body,
-    req.headers
+    req.headers as Record<string, string>
   );
   res.json(result);
 });
@@ -161,38 +184,55 @@ app.post('/webhooks/stripe', async (req, res) => {
 2. **Provider validates** signature and parses event
 3. **Provider returns** `WebhookEvent` with standardized data
 4. **Library updates** transaction status automatically
-5. **Library triggers** hooks (`payment.webhook.payment.succeeded`)
+5. **Library emits** events (`payment.succeeded`, `payment.failed`)
 
 ## Complete Example: SSLCommerz Provider
 
-```javascript
-import { PaymentProvider, PaymentIntent, PaymentResult, WebhookEvent } from '@classytic/revenue';
+```typescript
+import {
+  PaymentProvider,
+  PaymentIntent,
+  PaymentResult,
+  RefundResult,
+  WebhookEvent,
+  type CreateIntentParams,
+  type ProviderCapabilities,
+} from '@classytic/revenue';
 import { SSLCommerzPayment } from 'sslcommerz-lts';
 
+export interface SSLCommerzConfig {
+  storeId: string;
+  storePassword: string;
+  sandbox?: boolean;
+}
+
 export class SSLCommerzProvider extends PaymentProvider {
-  constructor(config) {
+  public override readonly name = 'sslcommerz';
+  private ssl: SSLCommerzPayment;
+
+  constructor(config: SSLCommerzConfig) {
     super(config);
-    this.name = 'sslcommerz';
     this.ssl = new SSLCommerzPayment(
       config.storeId,
       config.storePassword,
-      config.sandbox
+      config.sandbox ?? false
     );
   }
 
-  async createIntent(params) {
+  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+    const metadata = params.metadata ?? {};
     const data = {
       total_amount: params.amount,
-      currency: params.currency || 'BDT',
+      currency: params.currency ?? 'BDT',
       tran_id: `tran_${Date.now()}`,
-      success_url: params.metadata.successUrl,
-      fail_url: params.metadata.failUrl,
-      cancel_url: params.metadata.cancelUrl,
-      product_name: params.metadata.productName || 'Subscription',
-      product_category: 'Subscription',
-      cus_name: params.metadata.customerName,
-      cus_email: params.metadata.customerEmail,
-      cus_phone: params.metadata.customerPhone,
+      success_url: metadata.successUrl as string,
+      fail_url: metadata.failUrl as string,
+      cancel_url: metadata.cancelUrl as string,
+      product_name: (metadata.productName as string) ?? 'Payment',
+      product_category: 'Service',
+      cus_name: metadata.customerName as string,
+      cus_email: metadata.customerEmail as string,
+      cus_phone: metadata.customerPhone as string,
       shipping_method: 'NO',
       product_profile: 'non-physical-goods',
     };
@@ -201,79 +241,69 @@ export class SSLCommerzProvider extends PaymentProvider {
 
     return new PaymentIntent({
       id: data.tran_id,
-      provider: 'sslcommerz',
+      paymentIntentId: data.tran_id,
+      sessionId: null,
+      provider: this.name,
       status: 'pending',
       amount: params.amount,
-      currency: params.currency || 'BDT',
+      currency: params.currency ?? 'BDT',
       paymentUrl: response.GatewayPageURL,  // Redirect user here
-      metadata: params.metadata,
-      raw: response,
+      metadata: params.metadata ?? {},
     });
   }
 
-  async verifyPayment(intentId) {
+  async verifyPayment(intentId: string): Promise<PaymentResult> {
     const response = await this.ssl.validate({ tran_id: intentId });
 
     return new PaymentResult({
       id: intentId,
-      provider: 'sslcommerz',
+      provider: this.name,
       status: response.status === 'VALID' ? 'succeeded' : 'failed',
       amount: parseFloat(response.amount),
       currency: response.currency,
-      paidAt: response.status === 'VALID' ? new Date() : null,
+      paidAt: response.status === 'VALID' ? new Date() : undefined,
       metadata: {
         cardType: response.card_type,
         cardBrand: response.card_brand,
       },
-      raw: response,
     });
   }
 
-  async getStatus(intentId) {
+  async getStatus(intentId: string): Promise<PaymentResult> {
     return this.verifyPayment(intentId);
   }
 
-  async refund(paymentId, amount, options = {}) {
-    const response = await this.ssl.refund({
-      refund_amount: amount,
-      refund_remarks: options.reason || 'Customer request',
-      bank_tran_id: options.bankTransId,
-    });
-
+  async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
+    // SSLCommerz refund implementation
     return new RefundResult({
-      id: response.refund_ref_id,
-      provider: 'sslcommerz',
-      status: response.status === 'success' ? 'succeeded' : 'failed',
-      amount,
+      id: `refund_${paymentId}`,
+      provider: this.name,
+      status: 'succeeded',
+      amount: amount ?? 0,
       currency: 'BDT',
       refundedAt: new Date(),
-      reason: options.reason,
-      raw: response,
+      metadata: {},
     });
   }
 
-  async handleWebhook(payload, headers) {
-    // SSLCommerz sends data as form-urlencoded
-    const { tran_id, status, val_id } = payload;
-
-    // Validate with SSLCommerz API
-    const validation = await this.ssl.validate({ val_id });
+  async handleWebhook(payload: unknown, _headers?: Record<string, string>): Promise<WebhookEvent> {
+    const data = payload as any;
+    const { tran_id, status, val_id } = data;
 
     return new WebhookEvent({
       id: val_id,
-      provider: 'sslcommerz',
+      provider: this.name,
       type: status === 'VALID' ? 'payment.succeeded' : 'payment.failed',
       data: {
         paymentIntentId: tran_id,
         validationId: val_id,
-        ...validation,
+        ...data,
       },
       createdAt: new Date(),
-      raw: payload,
     });
   }
 
-  getCapabilities() {
+  override getCapabilities(): ProviderCapabilities {
     return {
       supportsWebhooks: true,
       supportsRefunds: true,
@@ -291,13 +321,27 @@ export class SSLCommerzProvider extends PaymentProvider {
 {
   "name": "@yourorg/revenue-stripe",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "peerDependencies": {
     "@classytic/revenue": "^1.0.0"
   },
   "dependencies": {
     "stripe": "^14.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "tsup": "^8.0.0"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts"
   },
   "keywords": [
     "revenue",
@@ -310,8 +354,8 @@ export class SSLCommerzProvider extends PaymentProvider {
 
 ## Testing Your Provider
 
-```javascript
-import { StripeProvider } from './index.js';
+```typescript
+import { StripeProvider } from './src/index';
 
 const provider = new StripeProvider({
   apiKey: 'sk_test_...',
@@ -323,14 +367,14 @@ console.log(provider.getCapabilities());
 
 // Test payment intent creation
 const intent = await provider.createIntent({
-  amount: 9999,  // $99.99
-  currency: 'USD',
+  amount: 9999,  // $99.99 in cents
+  currency: 'usd',
   metadata: {
     customerId: '123',
     planKey: 'monthly',
   },
 });
-console.log('Payment URL:', intent.clientSecret);
+console.log('Client Secret:', intent.clientSecret);
 
 // Test verification
 const result = await provider.verifyPayment(intent.id);
@@ -339,23 +383,24 @@ console.log('Payment status:', result.status);
 
 ## Best Practices
 
-1. **Always include `raw` responses** - helps debugging
-2. **Implement idempotency** - handle duplicate webhooks gracefully
-3. **Validate webhook signatures** - prevent fraud
-4. **Use proper error handling** - throw clear errors
-5. **Support partial refunds** if possible
+1. **Always use TypeScript** - Better DX and type safety
+2. **Implement all 5 methods** - Even if some throw "not supported"
+3. **Validate webhook signatures** - Prevent fraud
+4. **Use proper error handling** - Throw clear errors
+5. **Support partial refunds** if the gateway allows
 6. **Document configuration** - API keys, webhook secrets, etc.
-7. **Add TypeScript definitions** if applicable
+7. **Include raw responses** - Helps debugging
 
 ## Community Providers
 
 Build and publish providers for:
-- ✅ Stripe (`@classytic/revenue-stripe`)
-- ✅ SSLCommerz (`@classytic/revenue-sslcommerz`)
-- PayPal (`@classytic/revenue-paypal`)
-- Razorpay (`@classytic/revenue-razorpay`)
-- bKash API (`@classytic/revenue-bkash-api`)
-- Nagad API (`@classytic/revenue-nagad-api`)
+- ✅ Manual (`@classytic/revenue-manual`)
+- Stripe (`@yourorg/revenue-stripe`)
+- PayPal (`@yourorg/revenue-paypal`)
+- Razorpay (`@yourorg/revenue-razorpay`)
+- SSLCommerz (`@yourorg/revenue-sslcommerz`)
+- bKash API (`@yourorg/revenue-bkash`)
+- Nagad API (`@yourorg/revenue-nagad`)
 - Any custom gateway!
 
 ## Support
