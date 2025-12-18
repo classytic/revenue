@@ -662,6 +662,56 @@ import type {
 } from '@classytic/revenue';
 ```
 
+### Type Guards
+
+Runtime type checking for all enum values:
+
+```typescript
+import {
+  isTransactionType,
+  isTransactionStatus,
+  isPaymentStatus,
+  isSubscriptionStatus,
+  isMonetizationType,
+  isHoldStatus,
+  isSplitType,
+} from '@classytic/revenue';
+
+// Validate and narrow types at runtime
+if (isTransactionStatus(userInput)) {
+  // userInput is narrowed to TransactionStatusValue
+  console.log('Valid status:', userInput);
+}
+
+// Useful for API input validation
+function processPayment(status: unknown) {
+  if (!isPaymentStatus(status)) {
+    throw new Error('Invalid payment status');
+  }
+  // status is now typed as PaymentStatusValue
+}
+```
+
+**Available type guards:**
+
+| Guard | Validates |
+|-------|-----------|
+| `isTransactionType` | `'income'` \| `'expense'` |
+| `isTransactionStatus` | `'pending'` \| `'verified'` \| `'completed'` \| ... |
+| `isLibraryCategory` | `'subscription'` \| `'purchase'` |
+| `isPaymentStatus` | `'pending'` \| `'succeeded'` \| `'failed'` \| ... |
+| `isPaymentGatewayType` | `'manual'` \| `'automatic'` |
+| `isGatewayType` | `'redirect'` \| `'direct'` \| `'webhook'` |
+| `isSubscriptionStatus` | `'active'` \| `'paused'` \| `'cancelled'` \| ... |
+| `isPlanKey` | `'monthly'` \| `'yearly'` \| `'one_time'` \| ... |
+| `isMonetizationType` | `'subscription'` \| `'purchase'` |
+| `isHoldStatus` | `'held'` \| `'released'` \| `'partially_released'` \| ... |
+| `isReleaseReason` | `'completed'` \| `'cancelled'` \| `'refunded'` \| ... |
+| `isHoldReason` | `'escrow'` \| `'dispute'` \| `'verification'` \| ... |
+| `isSplitType` | `'platform_commission'` \| `'affiliate_commission'` \| ... |
+| `isSplitStatus` | `'pending'` \| `'processed'` \| `'failed'` |
+| `isPayoutMethod` | `'bank_transfer'` \| `'wallet'` \| `'manual'` |
+
 ---
 
 ## Testing

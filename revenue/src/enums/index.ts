@@ -24,6 +24,9 @@ import {
   TRANSACTION_STATUS_VALUES,
   LIBRARY_CATEGORIES,
   LIBRARY_CATEGORY_VALUES,
+  isLibraryCategory,
+  isTransactionType,
+  isTransactionStatus,
 } from './transaction.enums.js';
 
 import {
@@ -33,6 +36,9 @@ import {
   PAYMENT_GATEWAY_TYPE_VALUES,
   GATEWAY_TYPES,
   GATEWAY_TYPE_VALUES,
+  isPaymentStatus,
+  isPaymentGatewayType,
+  isGatewayType,
 } from './payment.enums.js';
 
 import {
@@ -40,11 +46,14 @@ import {
   SUBSCRIPTION_STATUS_VALUES,
   PLAN_KEYS,
   PLAN_KEY_VALUES,
+  isSubscriptionStatus,
+  isPlanKey,
 } from './subscription.enums.js';
 
 import {
   MONETIZATION_TYPES,
   MONETIZATION_TYPE_VALUES,
+  isMonetizationType,
 } from './monetization.enums.js';
 
 import {
@@ -54,6 +63,9 @@ import {
   RELEASE_REASON_VALUES,
   HOLD_REASON,
   HOLD_REASON_VALUES,
+  isHoldStatus,
+  isReleaseReason,
+  isHoldReason,
 } from './escrow.enums.js';
 
 import {
@@ -63,6 +75,9 @@ import {
   SPLIT_STATUS_VALUES,
   PAYOUT_METHOD,
   PAYOUT_METHOD_VALUES,
+  isSplitType,
+  isSplitStatus,
+  isPayoutMethod,
 } from './split.enums.js';
 
 export default {
@@ -73,6 +88,9 @@ export default {
   TRANSACTION_STATUS_VALUES,
   LIBRARY_CATEGORIES,
   LIBRARY_CATEGORY_VALUES,
+  isLibraryCategory,
+  isTransactionType,
+  isTransactionStatus,
 
   // Payment enums
   PAYMENT_STATUS,
@@ -81,16 +99,22 @@ export default {
   PAYMENT_GATEWAY_TYPE_VALUES,
   GATEWAY_TYPES,
   GATEWAY_TYPE_VALUES,
+  isPaymentStatus,
+  isPaymentGatewayType,
+  isGatewayType,
 
   // Subscription enums
   SUBSCRIPTION_STATUS,
   SUBSCRIPTION_STATUS_VALUES,
   PLAN_KEYS,
   PLAN_KEY_VALUES,
+  isSubscriptionStatus,
+  isPlanKey,
 
   // Monetization enums
   MONETIZATION_TYPES,
   MONETIZATION_TYPE_VALUES,
+  isMonetizationType,
 
   // Escrow enums
   HOLD_STATUS,
@@ -99,6 +123,9 @@ export default {
   RELEASE_REASON_VALUES,
   HOLD_REASON,
   HOLD_REASON_VALUES,
+  isHoldStatus,
+  isReleaseReason,
+  isHoldReason,
 
   // Split enums
   SPLIT_TYPE,
@@ -107,5 +134,7 @@ export default {
   SPLIT_STATUS_VALUES,
   PAYOUT_METHOD,
   PAYOUT_METHOD_VALUES,
+  isSplitType,
+  isSplitStatus,
+  isPayoutMethod,
 } as const;
-

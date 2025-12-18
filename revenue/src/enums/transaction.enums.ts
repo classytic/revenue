@@ -22,7 +22,9 @@ export const TRANSACTION_TYPE = {
 
 export type TransactionType = typeof TRANSACTION_TYPE;
 export type TransactionTypeValue = TransactionType[keyof TransactionType];
-export const TRANSACTION_TYPE_VALUES = Object.values(TRANSACTION_TYPE);
+export const TRANSACTION_TYPE_VALUES = Object.values(
+  TRANSACTION_TYPE,
+) as TransactionTypeValue[];
 
 // ============ TRANSACTION STATUS ============
 /**
@@ -44,7 +46,9 @@ export const TRANSACTION_STATUS = {
 
 export type TransactionStatus = typeof TRANSACTION_STATUS;
 export type TransactionStatusValue = TransactionStatus[keyof TransactionStatus];
-export const TRANSACTION_STATUS_VALUES = Object.values(TRANSACTION_STATUS);
+export const TRANSACTION_STATUS_VALUES = Object.values(
+  TRANSACTION_STATUS,
+) as TransactionStatusValue[];
 
 // ============ LIBRARY CATEGORIES ============
 /**
@@ -72,5 +76,26 @@ export const LIBRARY_CATEGORIES = {
 
 export type LibraryCategories = typeof LIBRARY_CATEGORIES;
 export type LibraryCategoryValue = LibraryCategories[keyof LibraryCategories];
-export const LIBRARY_CATEGORY_VALUES = Object.values(LIBRARY_CATEGORIES);
+export const LIBRARY_CATEGORY_VALUES = Object.values(
+  LIBRARY_CATEGORIES,
+) as LibraryCategoryValue[];
 
+const transactionTypeSet = new Set<TransactionTypeValue>(TRANSACTION_TYPE_VALUES);
+const transactionStatusSet = new Set<TransactionStatusValue>(
+  TRANSACTION_STATUS_VALUES,
+);
+const libraryCategorySet = new Set<LibraryCategoryValue>(LIBRARY_CATEGORY_VALUES);
+
+export function isLibraryCategory(value: unknown): value is LibraryCategoryValue {
+  return typeof value === 'string' && libraryCategorySet.has(value as LibraryCategoryValue);
+}
+
+export function isTransactionType(value: unknown): value is TransactionTypeValue {
+  return typeof value === 'string' && transactionTypeSet.has(value as TransactionTypeValue);
+}
+
+export function isTransactionStatus(
+  value: unknown,
+): value is TransactionStatusValue {
+  return typeof value === 'string' && transactionStatusSet.has(value as TransactionStatusValue);
+}
