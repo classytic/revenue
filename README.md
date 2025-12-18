@@ -124,7 +124,7 @@ npm install
 # Build all packages
 npm run build
 
-# Run tests (75 tests including integration)
+# Run tests (84 tests including integration)
 npm test
 
 # Type check

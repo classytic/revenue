@@ -12,7 +12,6 @@ import {
   TransactionNotFoundError,
 } from '../../revenue/dist/index.js';
 import type {
-  TransactionDocument,
   PaymentResultData,
   RefundResultData,
   WebhookEventData,

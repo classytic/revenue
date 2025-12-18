@@ -667,7 +667,7 @@ import type {
 ## Testing
 
 ```bash
-# Run all tests (75 tests)
+# Run all tests (84 tests)
 npm test
 
 # Run integration tests (requires MongoDB)

@@ -21,7 +21,7 @@ import { TransactionService } from '../services/transaction.service.js';
 import { EscrowService } from '../services/escrow.service.js';
 import { ConfigurationError } from './errors.js';
 import { PaymentProvider } from '../providers/base.js';
-import type { MongooseModel, PaymentProviderInterface } from '../types/index.js';
+import type { HooksRegistry, MongooseModel, PaymentProviderInterface } from '../types/index.js';
 
 // ============ TYPES ============
 
@@ -65,9 +65,15 @@ export interface ProvidersConfig {
   [name: string]: PaymentProvider;
 }
 
-export interface HooksConfig {
-  [key: string]: ((...args: any[]) => void | Promise<void>) | undefined;
-}
+type HookHandler = (data: unknown) => void | Promise<void>;
+
+/**
+ * Hooks config accepted by the builder.
+ *
+ * At runtime, hooks are executed via the `HooksRegistry` shape (event -> handlers[]).
+ * This type also accepts a legacy shorthand (event -> handler or handlers[]).
+ */
+export type HooksConfig = HooksRegistry | Record<string, HookHandler | HookHandler[] | undefined>;
 
 // ============ REVENUE CLASS ============
 
@@ -351,7 +357,7 @@ export class RevenueBuilder {
   private models: ModelsConfig | null = null;
   private providers: ProvidersConfig = {};
   private plugins: RevenuePlugin[] = [];
-  private hooks: HooksConfig = {};
+  private hooks: HooksRegistry = {};
   private categoryMappings: Record<string, string> = {};
 
   constructor(options: RevenueOptions = {}) {
@@ -440,8 +446,17 @@ export class RevenueBuilder {
    * })
    * ```
    */
+  withHooks(hooks: HooksRegistry): this;
+  withHooks(hooks: HooksConfig): this;
   withHooks(hooks: HooksConfig): this {
-    this.hooks = { ...this.hooks, ...hooks };
+    const normalized: HooksRegistry = {};
+
+    for (const [event, handlerOrHandlers] of Object.entries(hooks)) {
+      if (!handlerOrHandlers) continue;
+      normalized[event] = Array.isArray(handlerOrHandlers) ? handlerOrHandlers : [handlerOrHandlers];
+    }
+
+    this.hooks = { ...this.hooks, ...normalized };
     return this;
   }
 
