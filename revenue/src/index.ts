@@ -120,7 +120,6 @@ export {
   validate,
   safeValidate,
   formatZodError,
-  z,
   // Types
   type CreatePaymentInput,
   type VerifyPaymentInput,
