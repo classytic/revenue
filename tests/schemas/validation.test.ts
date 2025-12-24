@@ -26,6 +26,10 @@ import {
   CreatePaymentSchema,
   VerifyPaymentSchema,
   RefundSchema,
+  // Current payment / split payment schemas
+  PaymentStatusEnumSchema,
+  PaymentEntrySchema,
+  CurrentPaymentInputSchema,
   // Subscription schemas
   SubscriptionStatusSchema,
   IntervalSchema,
@@ -49,10 +53,13 @@ import {
   validate,
   safeValidate,
   formatZodError,
+  validateSplitPayments,
   // Types
   type CreatePaymentInput,
   type CreateSubscriptionInput,
   type CreateMonetizationInput,
+  type PaymentEntryInput,
+  type CurrentPaymentInput,
 } from '../../revenue/dist/index.js';
 
 // Import everything to check exports
@@ -316,6 +323,221 @@ describe('Zod Validation Schemas', () => {
             amount: -100,
           })
         ).toThrow();
+      });
+    });
+  });
+
+  // ============ CURRENT PAYMENT / SPLIT PAYMENT SCHEMAS ============
+  describe('Current Payment / Split Payment Schemas', () => {
+    describe('PaymentStatusEnumSchema', () => {
+      it('accepts valid payment status values', () => {
+        const validStatuses = ['pending', 'verified', 'failed', 'refunded', 'cancelled'];
+        validStatuses.forEach((status) => {
+          expect(PaymentStatusEnumSchema.parse(status)).toBe(status);
+        });
+      });
+
+      it('rejects invalid status', () => {
+        expect(() => PaymentStatusEnumSchema.parse('invalid')).toThrow();
+      });
+    });
+
+    describe('PaymentEntrySchema', () => {
+      it('accepts valid payment entry', () => {
+        const entry = {
+          method: 'cash',
+          amount: 10000, // 100 BDT in paisa
+        };
+        const result = PaymentEntrySchema.parse(entry);
+        expect(result.method).toBe('cash');
+        expect(result.amount).toBe(10000);
+      });
+
+      it('accepts optional reference and details', () => {
+        const entry = {
+          method: 'bkash',
+          amount: 30000,
+          reference: 'TRX456',
+          details: { walletNumber: '01712345678' },
+        };
+        const result = PaymentEntrySchema.parse(entry);
+        expect(result.reference).toBe('TRX456');
+        expect(result.details).toEqual({ walletNumber: '01712345678' });
+      });
+
+      it('rejects empty method', () => {
+        expect(() => PaymentEntrySchema.parse({ method: '', amount: 1000 })).toThrow();
+      });
+
+      it('rejects negative amount', () => {
+        expect(() => PaymentEntrySchema.parse({ method: 'cash', amount: -100 })).toThrow();
+      });
+
+      it('type inference works correctly', () => {
+        const entry: PaymentEntryInput = {
+          method: 'bank_transfer',
+          amount: 5000,
+          reference: 'TRF123',
+        };
+        expect(PaymentEntrySchema.parse(entry)).toBeDefined();
+      });
+    });
+
+    describe('CurrentPaymentInputSchema', () => {
+      describe('Single Payment (backward compatible)', () => {
+        it('accepts single payment without payments array', () => {
+          const payment = {
+            amount: 50000,
+            method: 'cash',
+            status: 'verified',
+          };
+          const result = CurrentPaymentInputSchema.parse(payment);
+          expect(result.amount).toBe(50000);
+          expect(result.method).toBe('cash');
+          expect(result.payments).toBeUndefined();
+        });
+
+        it('applies default status', () => {
+          const result = CurrentPaymentInputSchema.parse({
+            amount: 1000,
+            method: 'cash',
+          });
+          expect(result.status).toBe('pending');
+        });
+
+        it('accepts optional fields', () => {
+          const result = CurrentPaymentInputSchema.parse({
+            amount: 1000,
+            method: 'bank_transfer',
+            reference: 'REF123',
+            transactionId: 'txn_123',
+          });
+          expect(result.reference).toBe('REF123');
+          expect(result.transactionId).toBe('txn_123');
+        });
+      });
+
+      describe('Split Payment (multi-method)', () => {
+        it('accepts split payment with matching totals', () => {
+          const payment = {
+            amount: 50000, // Total: 500 BDT
+            method: 'split',
+            status: 'verified',
+            payments: [
+              { method: 'cash', amount: 10000 },           // 100 BDT
+              { method: 'bank_transfer', amount: 10000 },  // 100 BDT
+              { method: 'bkash', amount: 30000 },          // 300 BDT
+            ],
+          };
+          const result = CurrentPaymentInputSchema.parse(payment);
+          expect(result.method).toBe('split');
+          expect(result.payments).toHaveLength(3);
+          expect(result.payments![0].method).toBe('cash');
+        });
+
+        it('accepts split payment with references and details', () => {
+          const payment = {
+            amount: 50000,
+            method: 'split',
+            payments: [
+              { method: 'cash', amount: 10000 },
+              { method: 'bank_transfer', amount: 10000, reference: 'TRF123' },
+              { method: 'bkash', amount: 30000, reference: 'TRX456', details: { walletNumber: '01712345678' } },
+            ],
+          };
+          const result = CurrentPaymentInputSchema.parse(payment);
+          expect(result.payments![1].reference).toBe('TRF123');
+          expect(result.payments![2].details).toEqual({ walletNumber: '01712345678' });
+        });
+
+        it('rejects split payment with mismatched totals', () => {
+          const payment = {
+            amount: 50000, // 500 BDT total
+            method: 'split',
+            payments: [
+              { method: 'cash', amount: 10000 },   // 100 BDT
+              { method: 'bkash', amount: 20000 },  // 200 BDT - Total: 300, not 500!
+            ],
+          };
+          const result = safeValidate(CurrentPaymentInputSchema, payment);
+          expect(result.success).toBe(false);
+          if (!result.success) {
+            expect(result.error.issues.some((i) =>
+              i.message.includes('Split payments total must equal')
+            )).toBe(true);
+          }
+        });
+
+        it('accepts empty payments array (treated as single payment)', () => {
+          const payment = {
+            amount: 50000,
+            method: 'cash',
+            payments: [],
+          };
+          // Empty array should pass - no validation needed
+          const result = CurrentPaymentInputSchema.parse(payment);
+          expect(result.payments).toEqual([]);
+        });
+      });
+
+      it('type inference works correctly', () => {
+        const payment: CurrentPaymentInput = {
+          amount: 50000,
+          method: 'split',
+          status: 'verified',
+          payments: [
+            { method: 'cash', amount: 25000 },
+            { method: 'bkash', amount: 25000 },
+          ],
+        };
+        expect(CurrentPaymentInputSchema.parse(payment)).toBeDefined();
+      });
+    });
+
+    describe('validateSplitPayments helper', () => {
+      it('returns true for single payment (no payments array)', () => {
+        const payment = { amount: 50000 };
+        expect(validateSplitPayments(payment)).toBe(true);
+      });
+
+      it('returns true for empty payments array', () => {
+        const payment = { amount: 50000, payments: [] };
+        expect(validateSplitPayments(payment)).toBe(true);
+      });
+
+      it('returns true when split totals match', () => {
+        const payment = {
+          amount: 50000,
+          payments: [
+            { amount: 10000 },
+            { amount: 10000 },
+            { amount: 30000 },
+          ],
+        };
+        expect(validateSplitPayments(payment)).toBe(true);
+      });
+
+      it('returns false when split totals do not match', () => {
+        const payment = {
+          amount: 50000,
+          payments: [
+            { amount: 10000 },
+            { amount: 20000 },
+            // Missing 20000!
+          ],
+        };
+        expect(validateSplitPayments(payment)).toBe(false);
+      });
+
+      it('handles zero amounts correctly', () => {
+        const payment = {
+          amount: 0,
+          payments: [
+            { amount: 0 },
+            { amount: 0 },
+          ],
+        };
+        expect(validateSplitPayments(payment)).toBe(true);
       });
     });
   });

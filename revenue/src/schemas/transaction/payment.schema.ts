@@ -11,10 +11,40 @@ import {
 } from '../../enums/index.js';
 
 /**
+ * Individual Payment Entry Schema
+ * For split/multi-payment scenarios (e.g., cash + bank + mobile wallet)
+ *
+ * Use in currentPaymentSchema.payments array
+ */
+export const paymentEntrySchema = new Schema(
+  {
+    method: {
+      type: String,
+      required: true,
+    },
+    amount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    reference: {
+      type: String,
+      trim: true,
+    },
+    details: {
+      type: Schema.Types.Mixed,
+      // For method-specific data: walletNumber, bankName, trxId, etc.
+    },
+  },
+  { _id: false }
+);
+
+/**
  * Current Payment Schema
  * Use this in your model: currentPayment: { type: currentPaymentSchema }
  *
  * Tracks the latest payment transaction for an entity
+ * Supports both single payments and multi-payment (split) scenarios
  */
 export const currentPaymentSchema = new Schema(
   {
@@ -26,6 +56,7 @@ export const currentPaymentSchema = new Schema(
     amount: {
       type: Number,
       min: 0,
+      // Total amount (sum of all payments for split payments)
     },
     status: {
       type: String,
@@ -35,11 +66,16 @@ export const currentPaymentSchema = new Schema(
     },
     method: {
       type: String,
-      // Users define payment methods in their transaction model
+      // Primary method for single payments, or 'split' when multiple methods
     },
     reference: {
       type: String,
       trim: true,
+    },
+    // Split payments support - array of individual payment entries
+    payments: {
+      type: [paymentEntrySchema],
+      default: undefined, // Not set for single payments (backward compat)
     },
     verifiedAt: {
       type: Date,
@@ -114,6 +150,7 @@ export const tenantSnapshotSchema = new Schema(
 );
 
 export default {
+  paymentEntrySchema,
   currentPaymentSchema,
   paymentSummarySchema,
   paymentDetailsSchema,

@@ -126,7 +126,14 @@ revenue.on('*', (event) => {
 ### Validation (Zod v4)
 
 ```typescript
-import { CreatePaymentSchema, validate, safeValidate } from '@classytic/revenue';
+import {
+  CreatePaymentSchema,
+  PaymentEntrySchema,
+  CurrentPaymentInputSchema,
+  validate,
+  safeValidate,
+  validateSplitPayments,
+} from '@classytic/revenue';
 
 // Validate input (throws on error)
 const payment = validate(CreatePaymentSchema, userInput);
@@ -136,6 +143,16 @@ const result = safeValidate(CreatePaymentSchema, userInput);
 if (!result.success) {
   console.log(result.error.issues);
 }
+
+// Split payment validation
+const splitResult = safeValidate(CurrentPaymentInputSchema, {
+  amount: 50000,
+  method: 'split',
+  payments: [
+    { method: 'cash', amount: 25000 },
+    { method: 'bkash', amount: 25000 },
+  ],
+});
 ```
 
 ---
@@ -403,6 +420,7 @@ export const Transaction = mongoose.model('Transaction', transactionSchema);
 | `holdSchema` | Escrow hold/release | `hold: holdSchema` |
 | `splitSchema` | Multi-party splits | `splits: [splitSchema]` |
 | `currentPaymentSchema` | For Order/Subscription models | `currentPayment: currentPaymentSchema` |
+| `paymentEntrySchema` | Individual payment in split payments | Used within `currentPaymentSchema.payments` |
 
 **Usage:** Import and use as nested objects (NOT spread):
 
@@ -513,6 +531,102 @@ const pending = await Transaction.find({
   referenceId: orderId,
   status: 'pending',
 });
+```
+
+---
+
+## Multi-Payment Method Support (POS)
+
+For POS scenarios where customers pay using multiple methods (e.g., cash + bank + mobile wallet):
+
+### Schema Structure
+
+```typescript
+import { currentPaymentSchema, paymentEntrySchema } from '@classytic/revenue';
+
+// currentPaymentSchema now supports a `payments` array for split payments
+const orderSchema = new mongoose.Schema({
+  currentPayment: currentPaymentSchema,
+  // ...
+});
+```
+
+### Single Payment (Backward Compatible)
+
+```typescript
+// Traditional single-method payment
+currentPayment: {
+  amount: 50000,  // 500 BDT in paisa
+  method: 'cash',
+  status: 'verified',
+  verifiedAt: new Date(),
+  verifiedBy: cashierId,
+}
+```
+
+### Split Payment (Multiple Methods)
+
+```typescript
+// Customer pays 500 BDT using: 100 cash + 100 bank + 300 bKash
+currentPayment: {
+  amount: 50000,  // Total: 500 BDT
+  method: 'split',
+  status: 'verified',
+  payments: [
+    { method: 'cash', amount: 10000 },                                    // 100 BDT
+    { method: 'bank_transfer', amount: 10000, reference: 'TRF123' },      // 100 BDT
+    { method: 'bkash', amount: 30000, reference: 'TRX456', details: { walletNumber: '01712345678' } }, // 300 BDT
+  ],
+  verifiedAt: new Date(),
+  verifiedBy: cashierId,
+}
+```
+
+### Validation
+
+```typescript
+import {
+  CurrentPaymentInputSchema,
+  PaymentEntrySchema,
+  validateSplitPayments,
+  safeValidate,
+} from '@classytic/revenue';
+
+// Zod validation (automatically validates totals match)
+const result = safeValidate(CurrentPaymentInputSchema, paymentInput);
+if (!result.success) {
+  console.log(result.error.issues); // "Split payments total must equal the transaction amount"
+}
+
+// Helper function for runtime validation
+const isValid = validateSplitPayments({
+  amount: 50000,
+  payments: [
+    { amount: 10000 },
+    { amount: 10000 },
+    { amount: 30000 },
+  ],
+}); // true - totals match
+```
+
+### TypeScript Types
+
+```typescript
+import type { PaymentEntry, CurrentPayment } from '@classytic/revenue';
+
+const entry: PaymentEntry = {
+  method: 'bkash',
+  amount: 30000,
+  reference: 'TRX456',
+  details: { walletNumber: '01712345678' },
+};
+
+const payment: CurrentPayment = {
+  amount: 50000,
+  method: 'split',
+  status: 'verified',
+  payments: [entry],
+};
 ```
 
 ---
@@ -659,6 +773,11 @@ import type {
   ProviderCapabilities,
   RevenueEvents,
   MonetizationCreateParams,
+  // Multi-payment types
+  PaymentEntry,
+  CurrentPayment,
+  PaymentEntryInput,
+  CurrentPaymentInput,
 } from '@classytic/revenue';
 ```
 
@@ -717,7 +836,7 @@ function processPayment(status: unknown) {
 ## Testing
 
 ```bash
-# Run all tests (84 tests)
+# Run all tests (196 tests)
 npm test
 
 # Run integration tests (requires MongoDB)

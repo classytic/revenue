@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Enterprise revenue management system with subscriptions, payments, escrow, splits - Modern, Type-safe, Resilient",
   "type": "module",
   "main": "./dist/index.js",

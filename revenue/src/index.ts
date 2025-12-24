@@ -97,6 +97,10 @@ export {
   CreatePaymentSchema,
   VerifyPaymentSchema,
   RefundSchema,
+  // Current payment / split payment schemas
+  PaymentStatusEnumSchema,
+  PaymentEntrySchema,
+  CurrentPaymentInputSchema,
   // Subscription schemas
   SubscriptionStatusSchema,
   IntervalSchema,
@@ -120,10 +124,14 @@ export {
   validate,
   safeValidate,
   formatZodError,
+  validateSplitPayments,
   // Types
   type CreatePaymentInput,
   type VerifyPaymentInput,
   type RefundInput,
+  type PaymentStatusEnum,
+  type PaymentEntryInput,
+  type CurrentPaymentInput,
   type SubscriptionStatus,
   type Interval,
   type CreateSubscriptionInput,
@@ -242,6 +250,8 @@ export type {
   // Payment types
   PaymentStatusValue,
   PaymentGatewayTypeValue,
+  PaymentEntry,
+  CurrentPayment,
   // Monetization types
   MonetizationTypeValue,
   // Escrow types
