@@ -10,7 +10,7 @@ import type {
   PeriodRangeResult,
   ProratedAmountParams,
   DurationResult,
-} from '../../types/index.js';
+} from '../../shared/types/index.js';
 
 export type DurationUnit = 'days' | 'day' | 'weeks' | 'week' | 'months' | 'month' | 'years' | 'year';
 

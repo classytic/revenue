@@ -13,26 +13,19 @@ import { Container } from './container.js';
 import { EventBus, createEventBus } from './events.js';
 import { PluginManager, type RevenuePlugin, type PluginContext, type PluginLogger } from './plugin.js';
 import { type Result, tryCatch } from './result.js';
-import { IdempotencyManager, createIdempotencyManager } from '../utils/idempotency.js';
-import { retry, type RetryConfig, CircuitBreaker, createCircuitBreaker } from '../utils/retry.js';
-import { MonetizationService } from '../services/monetization.service.js';
-import { PaymentService } from '../services/payment.service.js';
-import { TransactionService } from '../services/transaction.service.js';
-import { EscrowService } from '../services/escrow.service.js';
+import { IdempotencyManager, createIdempotencyManager } from '../shared/utils/resilience/idempotency.js';
+import { retry, type RetryConfig, CircuitBreaker, type CircuitBreakerConfig, createCircuitBreaker } from '../shared/utils/resilience/retry.js';
+import { MonetizationService } from '../application/services/monetization.service.js';
+import { PaymentService } from '../application/services/payment.service.js';
+import { TransactionService } from '../application/services/transaction.service.js';
+import { EscrowService } from '../application/services/escrow.service.js';
+import { SettlementService } from '../application/services/settlement.service.js';
 import { ConfigurationError } from './errors.js';
 import { PaymentProvider } from '../providers/base.js';
-import type { HooksRegistry, MongooseModel, PaymentProviderInterface } from '../types/index.js';
+import type { MongooseModel, PaymentProviderInterface, RevenueConfig } from '../shared/types/index.js';
+import { resolveConfig } from '../infrastructure/config/resolver.js';
 
 // ============ TYPES ============
-
-/** Internal config for Revenue instance */
-export interface InternalConfig {
-  defaultCurrency: string;
-  commissionRate: number;
-  gatewayFeeRate: number;
-  targetModels?: string[];
-  categoryMappings?: Record<string, string>;
-}
 
 export interface RevenueOptions {
   /** Default currency (ISO 4217) */
@@ -41,17 +34,17 @@ export interface RevenueOptions {
   environment?: 'development' | 'staging' | 'production';
   /** Debug mode */
   debug?: boolean;
-  /** Retry configuration */
+  /** Retry configuration for provider calls */
   retry?: Partial<RetryConfig>;
   /** Idempotency TTL in ms */
   idempotencyTtl?: number;
-  /** Enable circuit breaker */
-  circuitBreaker?: boolean;
+  /** Circuit breaker configuration for provider calls */
+  circuitBreaker?: Partial<CircuitBreakerConfig> | boolean;
   /** Custom logger */
   logger?: PluginLogger;
-  /** Commission rate (0-100) */
+  /** Commission rate as decimal (0-1, e.g., 0.10 for 10%) */
   commissionRate?: number;
-  /** Gateway fee rate (0-100) */
+  /** Gateway fee rate as decimal (0-1, e.g., 0.029 for 2.9%) */
   gatewayFeeRate?: number;
 }
 
@@ -64,16 +57,6 @@ export interface ModelsConfig {
 export interface ProvidersConfig {
   [name: string]: PaymentProvider;
 }
-
-type HookHandler = (data: unknown) => void | Promise<void>;
-
-/**
- * Hooks config accepted by the builder.
- *
- * At runtime, hooks are executed via the `HooksRegistry` shape (event -> handlers[]).
- * This type also accepts a legacy shorthand (event -> handler or handlers[]).
- */
-export type HooksConfig = HooksRegistry | Record<string, HookHandler | HookHandler[] | undefined>;
 
 // ============ REVENUE CLASS ============
 
@@ -95,7 +78,7 @@ export type HooksConfig = HooksRegistry | Record<string, HookHandler | HookHandl
  * await revenue.payments.verify({ ... });
  *
  * // Or use events
- * revenue.on('payment.succeeded', (event) => { ... });
+ * revenue.on('payment.verified', (event) => { ... });
  * ```
  */
 export class Revenue {
@@ -108,7 +91,7 @@ export class Revenue {
   private readonly _options: Required<RevenueOptions>;
   private readonly _logger: PluginLogger;
   private readonly _providers: ProvidersConfig;
-  private readonly _config: InternalConfig;
+  private readonly _config: Partial<RevenueConfig>;
 
   // ============ SERVICES ============
   /** Monetization service - purchases, subscriptions, free items */
@@ -119,6 +102,8 @@ export class Revenue {
   public readonly transactions: TransactionService;
   /** Escrow service - hold, release, splits */
   public readonly escrow: EscrowService;
+  /** Settlement service - payout tracking */
+  public readonly settlement: SettlementService;
 
   private constructor(
     container: Container,
@@ -126,7 +111,7 @@ export class Revenue {
     plugins: PluginManager,
     options: Required<RevenueOptions>,
     providers: ProvidersConfig,
-    config: InternalConfig
+    config: Partial<RevenueConfig>
   ) {
     this._container = container;
     this._events = events;
@@ -143,7 +128,10 @@ export class Revenue {
 
     // Initialize circuit breaker
     if (options.circuitBreaker) {
-      this._circuitBreaker = createCircuitBreaker();
+      const cbConfig = typeof options.circuitBreaker === 'boolean'
+        ? {}
+        : options.circuitBreaker;
+      this._circuitBreaker = createCircuitBreaker(cbConfig);
     }
 
     // Register utilities in container
@@ -151,12 +139,15 @@ export class Revenue {
     container.singleton('plugins', plugins);
     container.singleton('idempotency', this._idempotency);
     container.singleton('logger', this._logger);
+    container.singleton('retryConfig', options.retry || {});
+    container.singleton('circuitBreaker', this._circuitBreaker || null);
 
     // Initialize services
     this.monetization = new MonetizationService(container);
     this.payments = new PaymentService(container);
     this.transactions = new TransactionService(container);
     this.escrow = new EscrowService(container);
+    this.settlement = new SettlementService(container);
 
     // Freeze for immutability
     Object.freeze(this._providers);
@@ -199,7 +190,7 @@ export class Revenue {
   }
 
   /** Configuration (frozen) */
-  get config(): Readonly<InternalConfig> {
+  get config(): Readonly<Partial<RevenueConfig>> {
     return this._config;
   }
 
@@ -249,8 +240,8 @@ export class Revenue {
    *
    * @example
    * ```typescript
-   * revenue.on('payment.succeeded', (event) => {
-   *   console.log('Payment:', event.transactionId);
+   * revenue.on('payment.verified', (event) => {
+   *   console.log('Payment:', event.transaction._id);
    * });
    * ```
    */
@@ -328,7 +319,6 @@ export class Revenue {
     return {
       events: this._events,
       logger: this._logger,
-      get: <T>(key: string) => this._container.get<T>(key),
       storage: new Map(),
       meta: {
         ...meta,
@@ -344,6 +334,7 @@ export class Revenue {
   async destroy(): Promise<void> {
     await this._plugins.destroy();
     this._events.clear();
+    this._idempotency.destroy();
   }
 }
 
@@ -357,7 +348,6 @@ export class RevenueBuilder {
   private models: ModelsConfig | null = null;
   private providers: ProvidersConfig = {};
   private plugins: RevenuePlugin[] = [];
-  private hooks: HooksRegistry = {};
   private categoryMappings: Record<string, string> = {};
 
   constructor(options: RevenueOptions = {}) {
@@ -385,7 +375,7 @@ export class RevenueBuilder {
    */
   withModel(name: string, model: MongooseModel<any>): this {
     if (!this.models) {
-      this.models = { Transaction: model } as ModelsConfig;
+      this.models = {} as ModelsConfig;
     }
     (this.models as any)[name] = model;
     return this;
@@ -435,30 +425,6 @@ export class RevenueBuilder {
     return this;
   }
 
-  /**
-   * Register event hooks (for backward compatibility)
-   *
-   * @example
-   * ```typescript
-   * .withHooks({
-   *   onPaymentVerified: async (tx) => { ... },
-   *   onSubscriptionRenewed: async (sub) => { ... },
-   * })
-   * ```
-   */
-  withHooks(hooks: HooksRegistry): this;
-  withHooks(hooks: HooksConfig): this;
-  withHooks(hooks: HooksConfig): this {
-    const normalized: HooksRegistry = {};
-
-    for (const [event, handlerOrHandlers] of Object.entries(hooks)) {
-      if (!handlerOrHandlers) continue;
-      normalized[event] = Array.isArray(handlerOrHandlers) ? handlerOrHandlers : [handlerOrHandlers];
-    }
-
-    this.hooks = { ...this.hooks, ...normalized };
-    return this;
-  }
 
   /**
    * Set retry configuration
@@ -506,7 +472,15 @@ export class RevenueBuilder {
   }
 
   /**
-   * Set commission rate (0-100)
+   * Set commission rate as decimal (0-1, e.g., 0.10 for 10%)
+   *
+   * @param rate - Commission rate (0-1 decimal format)
+   * @param gatewayFeeRate - Gateway fee rate (0-1 decimal format, e.g., 0.029 for 2.9%)
+   *
+   * @example
+   * ```typescript
+   * .withCommission(0.10, 0.029) // 10% commission + 2.9% gateway fee
+   * ```
    */
   withCommission(rate: number, gatewayFeeRate = 0): this {
     this.options.commissionRate = rate;
@@ -578,18 +552,16 @@ export class RevenueBuilder {
       gatewayFeeRate: this.options.gatewayFeeRate ?? 0,
     };
 
-    // Build config for services
-    const config: InternalConfig = {
-      defaultCurrency: resolvedOptions.defaultCurrency,
-      commissionRate: resolvedOptions.commissionRate,
-      gatewayFeeRate: resolvedOptions.gatewayFeeRate,
+    // Build config for services using resolver pattern (Stripe-inspired)
+    const config: Partial<RevenueConfig> = {
+      ...resolveConfig(resolvedOptions),  // Converts singular → plural with '*' global default
+      targetModels: [],
       categoryMappings: this.categoryMappings,
     };
 
     // Register in container (same format as legacy for service compatibility)
     container.singleton('models', this.models);
     container.singleton('providers', this.providers as Record<string, unknown>);
-    container.singleton('hooks', this.hooks);
     container.singleton('config', config);
 
     // Create event bus
@@ -639,7 +611,6 @@ export function createRevenue(config: {
   providers: ProvidersConfig;
   options?: RevenueOptions;
   plugins?: RevenuePlugin[];
-  hooks?: HooksConfig;
 }): Revenue {
   let builder = Revenue.create(config.options);
 
@@ -648,10 +619,6 @@ export function createRevenue(config: {
 
   if (config.plugins) {
     builder = builder.withPlugins(config.plugins);
-  }
-
-  if (config.hooks) {
-    builder = builder.withHooks(config.hooks);
   }
 
   return builder.build();

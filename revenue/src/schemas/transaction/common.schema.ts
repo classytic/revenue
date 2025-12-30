@@ -17,23 +17,6 @@ export const baseMetadataSchema = new Schema(
   { _id: false, strict: false }
 );
 
-/**
- * Reference schema for polymorphic associations
- */
-export const referenceSchema = {
-  referenceId: {
-    type: Schema.Types.ObjectId,
-    refPath: 'referenceModel',
-    index: true,
-  },
-  referenceModel: {
-    type: String,
-    enum: ['Subscription', 'Order', 'Membership', 'Booking', 'Invoice'],
-  },
-};
-
 export default {
   baseMetadataSchema,
-  referenceSchema,
 };
-

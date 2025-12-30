@@ -3,9 +3,9 @@
  * @classytic/revenue
  *
  * Tests the ONE Transaction model pattern for:
- * - Subscriptions (referenceModel: 'Subscription')
- * - Purchases (referenceModel: 'Order')
- * - Split payments (multiple payers, same referenceId)
+ * - Subscriptions (sourceModel: 'Subscription')
+ * - Purchases (sourceModel: 'Order')
+ * - Split payments (multiple payers, same sourceId)
  */
 
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from 'vitest';
@@ -95,10 +95,11 @@ class FakeProvider extends PaymentProvider {
 interface TxDoc extends Document {
   organizationId: mongoose.Types.ObjectId;
   customerId: mongoose.Types.ObjectId;
-  referenceId?: mongoose.Types.ObjectId;
-  referenceModel?: string;
+  sourceId?: mongoose.Types.ObjectId;
+  sourceModel?: string;
   category?: string;
   type: string;
+  flow: 'inflow' | 'outflow';
   status: string;
   amount: number;
   currency: string;
@@ -117,10 +118,11 @@ const TxSchema = new Schema<TxDoc>(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
     customerId: { type: Schema.Types.ObjectId, required: true },
-    referenceId: { type: Schema.Types.ObjectId, refPath: 'referenceModel' },
-    referenceModel: { type: String },
+    sourceId: { type: Schema.Types.ObjectId, refPath: 'sourceModel' },
+    sourceModel: { type: String },
     category: { type: String },
-    type: { type: String, enum: ['income', 'expense'], default: 'income' },
+    type: { type: String, default: 'purchase' },
+    flow: { type: String, enum: ['inflow', 'outflow'], default: 'inflow' },
     status: { type: String, default: 'pending' },
     amount: { type: Number, required: true },
     currency: { type: String, default: 'USD' },
@@ -143,7 +145,10 @@ let mongoAvailable = true;
 
 beforeAll(async () => {
   try {
-    await mongoose.connect(MONGO_URL);
+    await mongoose.connect(MONGO_URL, { serverSelectionTimeoutMS: 2000 });
+    if (mongoose.models.Transaction) {
+      mongoose.deleteModel('Transaction');
+    }
     Transaction =
       (mongoose.models.Transaction as Model<TxDoc>) ??
       mongoose.model<TxDoc>('Transaction', TxSchema);
@@ -189,7 +194,7 @@ function skipIfNoMongo(): boolean {
 // ---------- Tests ----------
 
 describe('Single Transaction Model - Subscription Payments', () => {
-  it('creates subscription payment with referenceModel', async () => {
+  it('creates subscription payment with sourceModel', async () => {
     if (skipIfNoMongo()) return;
 
     const orgId = new mongoose.Types.ObjectId();
@@ -200,8 +205,8 @@ describe('Single Transaction Model - Subscription Payments', () => {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: subscriptionId,
-        referenceModel: 'Subscription',
+        sourceId: subscriptionId,
+        sourceModel: 'Subscription',
       },
       planKey: 'monthly',
       monetizationType: 'subscription',
@@ -210,8 +215,8 @@ describe('Single Transaction Model - Subscription Payments', () => {
     });
 
     expect(transaction).toBeDefined();
-    expect(transaction.referenceId.toString()).toBe(subscriptionId.toString());
-    expect(transaction.referenceModel).toBe('Subscription');
+    expect(transaction.sourceId.toString()).toBe(subscriptionId.toString());
+    expect(transaction.sourceModel).toBe('Subscription');
     expect(transaction.amount).toBe(2999);
     // Status depends on gateway - could be 'pending' or 'payment_initiated'
     expect(['pending', 'payment_initiated']).toContain(transaction.status);
@@ -229,8 +234,8 @@ describe('Single Transaction Model - Subscription Payments', () => {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: subscriptionId,
-        referenceModel: 'Subscription',
+        sourceId: subscriptionId,
+        sourceModel: 'Subscription',
       },
       planKey: 'monthly',
       monetizationType: 'subscription',
@@ -248,7 +253,7 @@ describe('Single Transaction Model - Subscription Payments', () => {
     expect(updated?.verifiedAt).toBeInstanceOf(Date);
   }, TEST_TIMEOUT);
 
-  it('queries payments by referenceId (subscription)', async () => {
+  it('queries payments by sourceId (subscription)', async () => {
     if (skipIfNoMongo()) return;
 
     const orgId = new mongoose.Types.ObjectId();
@@ -260,8 +265,8 @@ describe('Single Transaction Model - Subscription Payments', () => {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: subscriptionId,
-        referenceModel: 'Subscription',
+        sourceId: subscriptionId,
+        sourceModel: 'Subscription',
       },
       planKey: 'monthly',
       monetizationType: 'subscription',
@@ -274,8 +279,8 @@ describe('Single Transaction Model - Subscription Payments', () => {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: subscriptionId,
-        referenceModel: 'Subscription',
+        sourceId: subscriptionId,
+        sourceModel: 'Subscription',
       },
       planKey: 'monthly',
       monetizationType: 'subscription',
@@ -284,19 +289,19 @@ describe('Single Transaction Model - Subscription Payments', () => {
       metadata: { isRenewal: true },
     });
 
-    // Query by referenceId
+    // Query by sourceId
     const payments = await Transaction.find({
-      referenceModel: 'Subscription',
-      referenceId: subscriptionId,
+      sourceModel: 'Subscription',
+      sourceId: subscriptionId,
     });
 
     expect(payments).toHaveLength(2);
-    expect(payments.every(p => p.referenceId?.toString() === subscriptionId.toString())).toBe(true);
+    expect(payments.every(p => p.sourceId?.toString() === subscriptionId.toString())).toBe(true);
   }, TEST_TIMEOUT);
 });
 
 describe('Single Transaction Model - One-time Purchases', () => {
-  it('creates one-time purchase with referenceModel', async () => {
+  it('creates one-time purchase with sourceModel', async () => {
     if (skipIfNoMongo()) return;
 
     const orgId = new mongoose.Types.ObjectId();
@@ -307,8 +312,8 @@ describe('Single Transaction Model - One-time Purchases', () => {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'one_time',
       monetizationType: 'purchase',
@@ -316,8 +321,8 @@ describe('Single Transaction Model - One-time Purchases', () => {
       gateway: 'fake',
     });
 
-    expect(transaction.referenceId.toString()).toBe(orderId.toString());
-    expect(transaction.referenceModel).toBe('Order');
+    expect(transaction.sourceId.toString()).toBe(orderId.toString());
+    expect(transaction.sourceModel).toBe('Order');
     expect(transaction.amount).toBe(1500);
     expect(paymentIntent).toBeDefined();
   }, TEST_TIMEOUT);
@@ -333,8 +338,8 @@ describe('Single Transaction Model - One-time Purchases', () => {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'one_time',
       monetizationType: 'purchase',
@@ -357,7 +362,7 @@ describe('Single Transaction Model - One-time Purchases', () => {
 });
 
 describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
-  it('allows multiple payers for one order using referenceId', async () => {
+  it('allows multiple payers for one order using sourceId', async () => {
     if (skipIfNoMongo()) return;
 
     const orgId = new mongoose.Types.ObjectId();
@@ -371,8 +376,8 @@ describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
       data: {
         organizationId: orgId,
         customerId: friend1,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'split_payment',
       monetizationType: 'purchase',
@@ -386,8 +391,8 @@ describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
       data: {
         organizationId: orgId,
         customerId: friend2,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'split_payment',
       monetizationType: 'purchase',
@@ -401,8 +406,8 @@ describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
       data: {
         organizationId: orgId,
         customerId: friend3,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'split_payment',
       monetizationType: 'purchase',
@@ -413,8 +418,8 @@ describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
 
     // Query all contributions for this order
     const contributions = await Transaction.find({
-      referenceId: orderId,
-      referenceModel: 'Order',
+      sourceId: orderId,
+      sourceModel: 'Order',
     });
 
     expect(contributions).toHaveLength(3);
@@ -444,8 +449,8 @@ describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
       data: {
         organizationId: orgId,
         customerId: friend1,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'split_payment',
       monetizationType: 'purchase',
@@ -459,8 +464,8 @@ describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
       data: {
         organizationId: orgId,
         customerId: friend2,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'split_payment',
       monetizationType: 'purchase',
@@ -470,11 +475,11 @@ describe('Single Transaction Model - Split Payments (Multiple Payers)', () => {
 
     // Check verified vs pending
     const verified = await Transaction.find({
-      referenceId: orderId,
+      sourceId: orderId,
       status: 'verified',
     });
     const pending = await Transaction.find({
-      referenceId: orderId,
+      sourceId: orderId,
       status: { $in: ['pending', 'payment_initiated'] },
     });
 
@@ -543,7 +548,7 @@ describe('Single Transaction Model - Revenue Calculations', () => {
       { 
         $match: { 
           organizationId: orgId, 
-          type: 'income', 
+          flow: 'inflow', 
           status: { $in: ['verified', 'completed', 'partially_refunded'] },
         },
       },
@@ -551,7 +556,7 @@ describe('Single Transaction Model - Revenue Calculations', () => {
     ]);
 
     const expenseTotal = await Transaction.aggregate([
-      { $match: { organizationId: orgId, type: 'expense' } },
+      { $match: { organizationId: orgId, flow: 'outflow' } },
       { $group: { _id: null, total: { $sum: '$amount' } } },
     ]);
 

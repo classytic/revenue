@@ -155,8 +155,8 @@ const { transaction, paymentIntent } = await revenue.monetization.create({
   data: {
     customerId,
     organizationId,
-    referenceId: orderId,
-    referenceModel: 'Order',
+    sourceId: orderId,
+    sourceModel: 'Order',
   },
   planKey: 'one_time',
   monetizationType: 'purchase',
@@ -184,7 +184,7 @@ app.post('/webhooks/stripe', async (req, res) => {
 2. **Provider validates** signature and parses event
 3. **Provider returns** `WebhookEvent` with standardized data
 4. **Library updates** transaction status automatically
-5. **Library emits** events (`payment.succeeded`, `payment.failed`)
+5. **Library emits** events (`payment.verified`, `payment.failed`, `webhook.processed`)
 
 ## Complete Example: SSLCommerz Provider
 

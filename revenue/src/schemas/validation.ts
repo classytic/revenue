@@ -172,10 +172,10 @@ export const CreateSubscriptionSchema = z.object({
   intervalCount: z.number().int().positive().default(1),
   /** Payment provider */
   provider: z.string().min(1),
-  /** Reference to external entity */
-  referenceId: z.string().optional(),
-  /** Reference model name */
-  referenceModel: z.string().optional(),
+  /** Source entity ID (your app model) */
+  sourceId: z.string().optional(),
+  /** Source model name (your app model) */
+  sourceModel: z.string().optional(),
   /** Idempotency key */
   idempotencyKey: IdempotencyKeySchema,
   /** Metadata */
@@ -231,10 +231,10 @@ export const CreateMonetizationSchema = z.object({
   provider: z.string().min(1),
   /** Plan key for categorization */
   planKey: z.string().optional(),
-  /** Reference ID */
-  referenceId: z.string().optional(),
-  /** Reference model */
-  referenceModel: z.string().optional(),
+  /** Source entity ID (your app model) */
+  sourceId: z.string().optional(),
+  /** Source model name (your app model) */
+  sourceModel: z.string().optional(),
   /** Idempotency key */
   idempotencyKey: IdempotencyKeySchema,
   /** Metadata */
@@ -265,8 +265,8 @@ export const SplitRecipientSchema = z.object({
   recipientId: z.string().min(1),
   /** Recipient type (user, organization, etc.) */
   recipientType: z.string().default('user'),
-  /** Percentage of net amount (0-100) */
-  percentage: z.number().min(0).max(100),
+  /** Split rate as decimal (0-1, e.g., 0.10 for 10%) */
+  percentage: z.number().min(0).max(1),
   /** Role description */
   role: z.string().optional(),
 });
@@ -277,10 +277,10 @@ export type SplitRecipient = z.infer<typeof SplitRecipientSchema>;
  * Commission configuration
  */
 export const CommissionConfigSchema = z.object({
-  /** Platform commission rate (0-100) */
-  platformRate: z.number().min(0).max(100).default(0),
-  /** Gateway fee rate (0-100) */
-  gatewayFeeRate: z.number().min(0).max(100).default(0),
+  /** Platform commission rate as decimal (0-1, e.g., 0.15 for 15%) */
+  platformRate: z.number().min(0).max(1).default(0),
+  /** Gateway fee rate as decimal (0-1, e.g., 0.029 for 2.9%) */
+  gatewayFeeRate: z.number().min(0).max(1).default(0),
   /** Fixed gateway fee (smallest unit) */
   gatewayFixedFee: MoneyAmountSchema.default(0),
   /** Split recipients */
@@ -289,7 +289,8 @@ export const CommissionConfigSchema = z.object({
   affiliate: z.object({
     recipientId: z.string(),
     recipientType: z.string().default('user'),
-    rate: z.number().min(0).max(100),
+    /** Affiliate rate as decimal (0-1, e.g., 0.05 for 5%) */
+    rate: z.number().min(0).max(1),
   }).optional(),
 });
 

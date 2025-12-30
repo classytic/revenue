@@ -13,7 +13,7 @@
  * ```
  */
 
-import type { Logger } from '../types/index.js';
+import type { Logger } from '../shared/types/index.js';
 
 let _logger: Logger = console;
 

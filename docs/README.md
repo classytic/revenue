@@ -33,8 +33,8 @@ const { transaction, paymentIntent } = await revenue.monetization.create({
   data: {
     customerId,
     organizationId,
-    referenceId: subscriptionId,
-    referenceModel: 'Subscription',
+    sourceId: subscriptionId,
+    sourceModel: 'Subscription',
   },
   planKey: 'monthly',
   monetizationType: 'subscription',
@@ -46,8 +46,8 @@ const { transaction, paymentIntent } = await revenue.monetization.create({
 await revenue.payments.verify(paymentIntent.paymentIntentId);
 
 // Listen to events
-revenue.on('payment.succeeded', (event) => {
-  console.log('Verified:', event.transactionId);
+revenue.on('payment.verified', (event) => {
+  console.log('Verified:', event.transaction._id);
 });
 ```
 

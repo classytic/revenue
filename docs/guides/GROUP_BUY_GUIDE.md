@@ -103,8 +103,8 @@ async function createPledge(campaignId: string, customerId: string) {
     data: {
       organizationId: campaign.merchantId,
       customerId,
-      referenceId: campaignId,
-      referenceModel: 'Campaign',
+      sourceId: campaignId,
+      sourceModel: 'Campaign',
     },
     planKey: 'group_buy',
     monetizationType: 'purchase',

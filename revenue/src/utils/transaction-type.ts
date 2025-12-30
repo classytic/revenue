@@ -12,7 +12,7 @@ import type {
   TransactionDocument,
   TransactionTypeOptions,
   FieldUpdateValidationResult,
-} from '../types/index.js';
+} from '../shared/types/index.js';
 
 /**
  * Transaction types with different protection rules
@@ -67,8 +67,8 @@ export function isMonetizationTransaction(
     additionalCategories = [],
   } = options;
 
-  // Check 1: Has referenceModel from registered models
-  if (transaction.referenceModel && targetModels.includes(transaction.referenceModel)) {
+  // Check 1: Has sourceModel from registered models
+  if (transaction.sourceModel && targetModels.includes(transaction.sourceModel)) {
     return true;
   }
 
@@ -131,8 +131,8 @@ export const PROTECTED_MONETIZATION_FIELDS = [
   'metadata.gateway',
   'type',
   'category',
-  'referenceModel',
-  'referenceId',
+  'sourceModel',
+  'sourceId',
 ] as const;
 
 /**

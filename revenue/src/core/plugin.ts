@@ -18,9 +18,7 @@ export interface PluginContext {
   events: EventBus;
   /** Logger instance */
   logger: PluginLogger;
-  /** Get registered service */
-  get<T>(key: string): T;
-  /** Plugin-specific storage */
+  /** Plugin-specific storage (use this to share data between hook calls) */
   storage: Map<string, unknown>;
   /** Request metadata */
   meta: {
@@ -54,6 +52,10 @@ export type HookFn<TInput = unknown, TOutput = unknown> = (
  * Available hook points
  */
 export interface PluginHooks {
+  // Monetization hooks (NEW - for tax plugin and others)
+  'monetization.create.before': HookFn<MonetizationCreateInput>;
+  'monetization.create.after': HookFn<MonetizationCreateInput, MonetizationCreateOutput>;
+
   // Payment hooks
   'payment.create.before': HookFn<PaymentCreateInput>;
   'payment.create.after': HookFn<PaymentCreateInput, PaymentCreateOutput>;
@@ -61,17 +63,25 @@ export interface PluginHooks {
   'payment.verify.after': HookFn<PaymentVerifyInput, PaymentVerifyOutput>;
   'payment.refund.before': HookFn<RefundInput>;
   'payment.refund.after': HookFn<RefundInput, RefundOutput>;
-  
+
   // Subscription hooks
   'subscription.create.before': HookFn<SubscriptionCreateInput>;
   'subscription.create.after': HookFn<SubscriptionCreateInput, SubscriptionCreateOutput>;
+  'subscription.activate.before': HookFn<SubscriptionActivateInput>;
+  'subscription.activate.after': HookFn<SubscriptionActivateInput, SubscriptionActivateOutput>;
   'subscription.cancel.before': HookFn<SubscriptionCancelInput>;
   'subscription.cancel.after': HookFn<SubscriptionCancelInput, SubscriptionCancelOutput>;
-  
+  'subscription.pause.before': HookFn<SubscriptionPauseInput>;
+  'subscription.pause.after': HookFn<SubscriptionPauseInput, SubscriptionPauseOutput>;
+  'subscription.resume.before': HookFn<SubscriptionResumeInput>;
+  'subscription.resume.after': HookFn<SubscriptionResumeInput, SubscriptionResumeOutput>;
+
   // Transaction hooks
   'transaction.create.before': HookFn<TransactionCreateInput>;
   'transaction.create.after': HookFn<TransactionCreateInput, TransactionCreateOutput>;
-  
+  'transaction.update.before': HookFn<TransactionUpdateInput>;
+  'transaction.update.after': HookFn<TransactionUpdateInput, TransactionUpdateOutput>;
+
   // Escrow hooks
   'escrow.hold.before': HookFn<EscrowHoldInput>;
   'escrow.hold.after': HookFn<EscrowHoldInput, EscrowHoldOutput>;
@@ -79,23 +89,199 @@ export interface PluginHooks {
   'escrow.release.after': HookFn<EscrowReleaseInput, EscrowReleaseOutput>;
 }
 
-// Simplified input/output types for hooks
-interface PaymentCreateInput { amount: number; currency: string; [key: string]: unknown }
-interface PaymentCreateOutput { transactionId: string; intentId: string; [key: string]: unknown }
-interface PaymentVerifyInput { id: string; [key: string]: unknown }
-interface PaymentVerifyOutput { verified: boolean; [key: string]: unknown }
-interface RefundInput { transactionId: string; amount?: number; [key: string]: unknown }
-interface RefundOutput { refundId: string; [key: string]: unknown }
-interface SubscriptionCreateInput { planKey: string; [key: string]: unknown }
-interface SubscriptionCreateOutput { subscriptionId: string; [key: string]: unknown }
-interface SubscriptionCancelInput { subscriptionId: string; [key: string]: unknown }
-interface SubscriptionCancelOutput { cancelled: boolean; [key: string]: unknown }
-interface TransactionCreateInput { amount: number; [key: string]: unknown }
-interface TransactionCreateOutput { transactionId: string; [key: string]: unknown }
-interface EscrowHoldInput { transactionId: string; [key: string]: unknown }
-interface EscrowHoldOutput { held: boolean; [key: string]: unknown }
-interface EscrowReleaseInput { transactionId: string; [key: string]: unknown }
-interface EscrowReleaseOutput { released: boolean; [key: string]: unknown }
+/**
+ * Clean, explicit hook input/output types
+ * Self-documenting and fully type-safe - no more `as any` needed!
+ */
+
+/**
+ * Data passed to monetization.create hooks
+ * Includes all parameters plus tax if injected by tax plugin
+ */
+export interface MonetizationCreateInput {
+  data: {
+    organizationId?: string;
+    customerId?: string;
+    sourceId?: string;
+    sourceModel?: string;
+  };
+  planKey: string;
+  amount: number;
+  currency?: string;
+  gateway?: string;
+  entity?: string | null;
+  monetizationType?: 'subscription' | 'purchase' | 'free';
+  paymentData?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  idempotencyKey?: string | null;
+  // Tax injected by tax plugin (optional)
+  tax?: {
+    isApplicable: boolean;
+    rate: number;
+    baseAmount: number;
+    taxAmount: number;
+    totalAmount: number;
+    pricesIncludeTax: boolean;
+    type: 'collected' | 'paid' | 'exempt';
+  };
+}
+
+export interface MonetizationCreateOutput {
+  transactionId?: string;
+  subscriptionId?: string;
+}
+
+/**
+ * Data passed to payment.create hooks
+ */
+export interface PaymentCreateInput {
+  transactionId: string;
+  amount: number;
+  currency: string;
+  gateway: string;
+  paymentData?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PaymentCreateOutput {
+  paymentIntentId: string;
+  clientSecret?: string;
+}
+
+export interface PaymentVerifyInput {
+  id: string;
+  verifiedBy?: string;
+}
+
+export interface PaymentVerifyOutput {
+  verified: boolean;
+}
+
+export interface RefundInput {
+  transactionId: string;
+  amount?: number;
+  reason?: string;
+}
+
+export interface RefundOutput {
+  refundId: string;
+}
+
+/**
+ * Data passed to subscription.create hooks
+ * Note: subscriptionId is undefined in .before hook (not yet created)
+ *       and populated in .after hook (already created)
+ */
+export interface SubscriptionCreateInput {
+  subscriptionId?: string;
+  planKey: string;
+  customerId?: string;
+  organizationId?: string;
+  entity?: string | null;
+}
+
+export interface SubscriptionCreateOutput {
+  subscription: unknown;
+  transaction?: unknown;
+}
+
+/**
+ * Data passed to subscription.activate hooks
+ */
+export interface SubscriptionActivateInput {
+  subscriptionId: string;
+  transactionId?: string;
+  activatedAt?: Date;
+}
+
+export interface SubscriptionActivateOutput {
+  activated: boolean;
+  activatedAt: Date;
+}
+
+/**
+ * Data passed to subscription.cancel hooks
+ */
+export interface SubscriptionCancelInput {
+  subscriptionId: string;
+  immediate?: boolean;
+  reason?: string;
+}
+
+export interface SubscriptionCancelOutput {
+  cancelled: boolean;
+  effectiveDate?: Date;
+}
+
+/**
+ * Data passed to subscription.pause hooks
+ */
+export interface SubscriptionPauseInput {
+  subscriptionId: string;
+  reason?: string;
+}
+
+export interface SubscriptionPauseOutput {
+  paused: boolean;
+  pausedAt: Date;
+}
+
+/**
+ * Data passed to subscription.resume hooks
+ */
+export interface SubscriptionResumeInput {
+  subscriptionId: string;
+  extendPeriod?: boolean;
+}
+
+export interface SubscriptionResumeOutput {
+  resumed: boolean;
+  resumedAt: Date;
+}
+
+/**
+ * Data passed to transaction.create hooks
+ */
+export interface TransactionCreateInput {
+  amount: number;
+  currency: string;
+  type: string;
+  organizationId?: string;
+  customerId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TransactionCreateOutput {
+  transactionId: string;
+}
+
+export interface TransactionUpdateInput {
+  transactionId: string;
+  updates: Record<string, unknown>;
+}
+
+export interface TransactionUpdateOutput {
+  transaction: unknown;
+}
+
+export interface EscrowHoldInput {
+  transactionId: string;
+  reason?: string;
+}
+
+export interface EscrowHoldOutput {
+  held: boolean;
+}
+
+export interface EscrowReleaseInput {
+  transactionId: string;
+  recipientId?: string;
+  recipientType?: string;
+}
+
+export interface EscrowReleaseOutput {
+  released: boolean;
+}
 
 /**
  * Plugin definition
@@ -264,22 +450,22 @@ export function loggingPlugin(options: { level?: 'debug' | 'info' } = {}): Reven
     version: '1.0.0',
     description: 'Logs all revenue operations',
     hooks: {
-      'payment.create.before': async (ctx, input, next) => {
+      'payment.create.after': async (ctx, input, next) => {
         ctx.logger[level]('Creating payment', { amount: input.amount, currency: input.currency });
         const result = await next();
-        ctx.logger[level]('Payment created', { transactionId: (result as any)?.transactionId });
+        ctx.logger[level]('Payment created', { paymentIntentId: result?.paymentIntentId });
         return result;
       },
-      'payment.verify.before': async (ctx, input, next) => {
+      'payment.verify.after': async (ctx, input, next) => {
         ctx.logger[level]('Verifying payment', { id: input.id });
         const result = await next();
-        ctx.logger[level]('Payment verified', { verified: (result as any)?.verified });
+        ctx.logger[level]('Payment verified', { verified: result?.verified });
         return result;
       },
-      'payment.refund.before': async (ctx, input, next) => {
+      'payment.refund.after': async (ctx, input, next) => {
         ctx.logger[level]('Processing refund', { transactionId: input.transactionId, amount: input.amount });
         const result = await next();
-        ctx.logger[level]('Refund processed', { refundId: (result as any)?.refundId });
+        ctx.logger[level]('Refund processed', { refundId: result?.refundId });
         return result;
       },
     },

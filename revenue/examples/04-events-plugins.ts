@@ -39,12 +39,12 @@ const notificationPlugin = definePlugin({
   version: '1.0.0',
   description: 'Send notifications on payment events',
   events: {
-    'payment.succeeded': async (event) => {
-      console.log(`📧 [Notification] Payment succeeded: ${event.transactionId}`);
+    'payment.verified': async (event) => {
+      console.log(`📧 [Notification] Payment verified: ${event.transaction._id}`);
       // await sendEmail(event.transaction.customerId, 'Payment received!');
     },
     'payment.failed': async (event) => {
-      console.log(`📧 [Notification] Payment failed: ${event.transactionId}`);
+      console.log(`📧 [Notification] Payment failed: ${event.transaction._id}`);
       // await sendEmail(event.transaction.customerId, 'Payment failed');
     },
     'subscription.renewed': async (event) => {
@@ -131,8 +131,8 @@ async function main() {
     // Subscribe to specific events
     console.log('\n🎯 Setting up event listeners...\n');
 
-    revenue.on('payment.succeeded', (event) => {
-      console.log('✅ Payment succeeded:', event.transactionId);
+    revenue.on('payment.verified', (event) => {
+      console.log('✅ Payment verified:', event.transaction._id);
       // event is fully typed!
     });
 
@@ -162,7 +162,7 @@ async function main() {
     });
 
     // One-time listener
-    revenue.once('payment.succeeded', () => {
+    revenue.once('payment.verified', () => {
       console.log('🎉 First payment received!');
     });
 

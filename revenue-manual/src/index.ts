@@ -22,7 +22,7 @@ import {
 import type {
   CreateIntentParams,
   ProviderCapabilities,
-} from '@classytic/revenue';
+} from '@classytic/revenue/providers';
 import { nanoid } from 'nanoid';
 
 /**
@@ -74,7 +74,7 @@ export class ManualProvider extends PaymentProvider {
       provider: 'manual',
       status: 'pending',
       amount: params.amount,
-      currency: params.currency ?? 'BDT',
+      currency: params.currency ?? 'USD',
       metadata: params.metadata ?? {},
       instructions: this._getPaymentInstructions(params),
       raw: params,
@@ -92,7 +92,7 @@ export class ManualProvider extends PaymentProvider {
       provider: 'manual',
       status: 'succeeded', // Admin has verified, mark as succeeded
       amount: 0, // Amount will be filled by transaction
-      currency: 'BDT',
+      currency: 'USD',
       paidAt: new Date(),
       metadata: {
         manuallyVerified: true,
@@ -122,7 +122,7 @@ export class ManualProvider extends PaymentProvider {
       provider: 'manual',
       status: 'succeeded', // Manual refunds are immediately marked as succeeded
       amount: amount ?? 0,
-      currency: options.currency ?? 'BDT',
+      currency: options.currency ?? 'USD',
       refundedAt: new Date(),
       reason: options.reason ?? 'Manual refund',
       metadata: options.metadata ?? {},
@@ -167,11 +167,11 @@ export class ManualProvider extends PaymentProvider {
 
     // Generic fallback
     if (!paymentInfo) {
-      return `Payment Amount: ${params.amount} ${params.currency ?? 'BDT'}\n\nPlease contact the organization for payment details.`;
+      return `Payment Amount: ${params.amount} ${params.currency ?? 'USD'}\n\nPlease contact the organization for payment details.`;
     }
 
     // Build instructions from paymentInfo
-    const lines: string[] = [`Payment Amount: ${params.amount} ${params.currency ?? 'BDT'}`, ''];
+    const lines: string[] = [`Payment Amount: ${params.amount} ${params.currency ?? 'USD'}`, ''];
 
     // Add all payment info fields generically
     Object.entries(paymentInfo).forEach(([key, value]) => {

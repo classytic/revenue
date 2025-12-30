@@ -11,7 +11,7 @@ import {
   Revenue,
   Money,
   // Enums
-  TRANSACTION_TYPE_VALUES,
+  TRANSACTION_FLOW_VALUES,
   TRANSACTION_STATUS_VALUES,
   // Mongoose schemas (compose into your model)
   gatewaySchema,
@@ -33,8 +33,8 @@ const CATEGORIES = [
 const TransactionSchema = new mongoose.Schema({
   organizationId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
   customerId: { type: mongoose.Schema.Types.ObjectId, index: true },
-  type: { type: String, enum: TRANSACTION_TYPE_VALUES, required: true },
-  category: { type: String, enum: CATEGORIES },
+  type: { type: String, enum: CATEGORIES, required: true }, // category
+  flow: { type: String, enum: TRANSACTION_FLOW_VALUES, required: true },
   status: { type: String, enum: TRANSACTION_STATUS_VALUES, default: 'pending' },
   amount: { type: Number, required: true, min: 0 },
   currency: { type: String, default: 'USD' },
@@ -45,9 +45,9 @@ const TransactionSchema = new mongoose.Schema({
   commission: commissionSchema,
   paymentDetails: paymentDetailsSchema,
 
-  // Polymorphic reference
-  referenceId: { type: mongoose.Schema.Types.ObjectId, refPath: 'referenceModel' },
-  referenceModel: { type: String, enum: ['Subscription', 'Order', 'Enrollment'] },
+  // Polymorphic source
+  sourceId: { type: mongoose.Schema.Types.ObjectId, refPath: 'sourceModel' },
+  sourceModel: { type: String, enum: ['Subscription', 'Order', 'Enrollment'] },
 
   // Verification
   verifiedAt: Date,
@@ -89,8 +89,8 @@ async function main() {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: subscriptionId,
-        referenceModel: 'Subscription',
+        sourceId: subscriptionId,
+        sourceModel: 'Subscription',
       },
       planKey: 'monthly',
       monetizationType: 'subscription',
@@ -104,8 +104,8 @@ async function main() {
     });
 
     console.log('Transaction ID:', transaction?._id);
-    console.log('Category:', transaction?.category);  // 'platform_subscription'
-    console.log('Type:', transaction?.type);          // 'income'
+    console.log('Type:', transaction?.type);          // 'platform_subscription'
+    console.log('Flow:', transaction?.flow);          // 'inflow'
     console.log('Status:', transaction?.status);      // 'pending'
 
     // 2. Verify payment
@@ -119,8 +119,8 @@ async function main() {
       data: {
         organizationId: orgId,
         customerId,
-        referenceId: orderId,
-        referenceModel: 'Order',
+        sourceId: orderId,
+        sourceModel: 'Order',
       },
       planKey: 'one_time',
       monetizationType: 'purchase',
@@ -146,8 +146,8 @@ async function main() {
 
     // 5. Query by reference
     const subPayments = await Transaction.find({
-      referenceModel: 'Subscription',
-      referenceId: subscriptionId,
+      sourceModel: 'Subscription',
+      sourceId: subscriptionId,
     });
     console.log('Payments for subscription:', subPayments.length);
 
@@ -159,8 +159,8 @@ async function main() {
     console.log('Split 3:', price.split(3).map(m => m.format())); // ["$10.00", "$9.99", "$10.00"]
 
     // 7. Events
-    revenue.on('payment.succeeded', (event) => {
-      console.log('\n🎉 Event: Payment succeeded:', event.transactionId);
+    revenue.on('payment.verified', (event) => {
+      console.log('\n🎉 Event: Payment verified:', event.transaction._id);
     });
 
   } finally {

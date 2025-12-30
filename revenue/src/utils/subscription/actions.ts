@@ -6,7 +6,7 @@
  */
 
 import { SUBSCRIPTION_STATUS } from '../../enums/subscription.enums.js';
-import type { SubscriptionEntity, SubscriptionDocument } from '../../types/index.js';
+import type { SubscriptionEntity, SubscriptionDocument } from '../../shared/types/index.js';
 
 /**
  * Check if subscription is active

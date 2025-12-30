@@ -13,3 +13,13 @@ export {
 
 export type { default as PaymentProviderDefault } from './base.js';
 
+// Export types needed by provider implementations
+export type {
+  CreateIntentParams,
+  ProviderCapabilities,
+  PaymentIntentData,
+  PaymentResultData,
+  RefundResultData,
+  WebhookEventData,
+} from '../shared/types/index.js';
+

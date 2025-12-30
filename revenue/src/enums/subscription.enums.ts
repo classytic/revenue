@@ -15,6 +15,7 @@ export const SUBSCRIPTION_STATUS = {
   CANCELLED: 'cancelled',
   EXPIRED: 'expired',
   PENDING: 'pending',
+  PENDING_RENEWAL: 'pending_renewal',
   INACTIVE: 'inactive',
 } as const;
 

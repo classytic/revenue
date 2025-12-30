@@ -11,7 +11,6 @@ export {
   type RevenueOptions,
   type ModelsConfig,
   type ProvidersConfig,
-  type HooksConfig,
 } from './revenue.js';
 
 export { Container } from './container.js';
@@ -42,27 +41,28 @@ export {
   createEventBus,
   type RevenueEvents,
   type BaseEvent,
-  type PaymentSucceededEvent,
+  type PaymentVerifiedEvent,
   type PaymentFailedEvent,
   type PaymentRefundedEvent,
-  type PaymentInitiatedEvent,
+  type MonetizationCreatedEvent,
+  type PurchaseCreatedEvent,
+  type FreeCreatedEvent,
   type SubscriptionCreatedEvent,
   type SubscriptionActivatedEvent,
   type SubscriptionRenewedEvent,
   type SubscriptionCancelledEvent,
   type SubscriptionPausedEvent,
   type SubscriptionResumedEvent,
-  type SubscriptionExpiredEvent,
-  type TransactionCreatedEvent,
-  type TransactionVerifiedEvent,
-  type TransactionCompletedEvent,
-  type TransactionFailedEvent,
+  type TransactionUpdatedEvent,
   type EscrowHeldEvent,
   type EscrowReleasedEvent,
   type EscrowCancelledEvent,
-  type CommissionCalculatedEvent,
-  type CommissionPaidEvent,
-  type WebhookReceivedEvent,
+  type EscrowSplitEvent,
+  type SettlementCreatedEvent,
+  type SettlementScheduledEvent,
+  type SettlementProcessingEvent,
+  type SettlementCompletedEvent,
+  type SettlementFailedEvent,
   type WebhookProcessedEvent,
 } from './events.js';
 
@@ -79,6 +79,16 @@ export {
   type PluginHooks,
   type HookFn,
 } from './plugin.js';
+
+// ============ STATE MACHINES ============
+export {
+  StateMachine,
+  TRANSACTION_STATE_MACHINE,
+  SUBSCRIPTION_STATE_MACHINE,
+  SETTLEMENT_STATE_MACHINE,
+  HOLD_STATE_MACHINE,
+  SPLIT_STATE_MACHINE,
+} from './state-machine/index.js';
 
 // ============ ERRORS ============
 export * from './errors.js';

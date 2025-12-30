@@ -13,6 +13,7 @@
 
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from 'vitest';
 import mongoose, { Schema, type Model, type Document } from 'mongoose';
+import { connectToMongoDB, disconnectFromMongoDB, clearCollections } from '../helpers/mongodb-memory.js';
 import {
   Revenue,
   PaymentProvider,
@@ -25,7 +26,6 @@ import {
 } from '../../revenue/src/index.js';
 
 // ============ CONFIG ============
-const MONGO_URL = process.env.MONGO_URL ?? 'mongodb://localhost:27017/revenue_test';
 const TEST_TIMEOUT = 10000;
 
 // ============ FAKE PROVIDER ============
@@ -117,15 +117,39 @@ class FakeProvider extends PaymentProvider {
   }
 
   async handleWebhook(
-    _payload: unknown,
+    payload: unknown,
     _headers?: Record<string, string>
   ): Promise<WebhookEvent> {
-    throw new Error('FakeProvider does not support webhooks');
+    // Parse webhook payload
+    const data = payload as {
+      eventId: string;
+      eventType: string;
+      sessionId?: string;
+      paymentIntentId?: string;
+      createdAt?: Date;
+    };
+
+    // Validate required fields
+    if (!data.eventId || !data.eventType) {
+      throw new Error('Invalid webhook payload: missing eventId or eventType');
+    }
+
+    return new WebhookEvent({
+      id: data.eventId,
+      provider: this.name,
+      type: data.eventType,
+      data: {
+        sessionId: data.sessionId,
+        paymentIntentId: data.paymentIntentId,
+      },
+      createdAt: data.createdAt ?? new Date(),
+      raw: payload,
+    });
   }
 
   override getCapabilities(): ProviderCapabilities {
     return {
-      supportsWebhooks: false,
+      supportsWebhooks: true,  // ✅ Enable webhook support
       supportsRefunds: true,
       supportsPartialRefunds: true,
       requiresManualVerification: false,
@@ -147,10 +171,13 @@ class FakeProvider extends PaymentProvider {
 interface ITransaction extends Document {
   organizationId?: mongoose.Types.ObjectId;
   customerId?: mongoose.Types.ObjectId;
-  referenceId?: mongoose.Types.ObjectId;
-  referenceModel?: string;
+  sourceId?: mongoose.Types.ObjectId;
+  sourceModel?: string;
+  sourceId?: mongoose.Types.ObjectId;
+  sourceModel?: string;
   category?: string;
   type: string;
+  flow?: 'inflow' | 'outflow';
   method?: string;
   monetizationType?: string;
   amount: number;
@@ -169,10 +196,18 @@ interface ITransaction extends Document {
   refundedAt?: Date;
   verifiedAt?: Date;
   verifiedBy?: string | null;
+  failedAt?: Date;
   failureReason?: string | null;
   paymentDetails?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
+  webhook?: {
+    eventId?: string;
+    eventType?: string;
+    receivedAt?: Date;
+    processedAt?: Date;
+    data?: Record<string, unknown>;
+  };
 }
 
 interface ISubscription extends Document {
@@ -188,10 +223,11 @@ const TransactionSchema = new Schema<ITransaction>(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: 'Org' },
     customerId: { type: Schema.Types.ObjectId, ref: 'User' },
-    referenceId: { type: Schema.Types.ObjectId },
-    referenceModel: String,
+    sourceId: { type: Schema.Types.ObjectId },
+    sourceModel: String,
     category: String,
-    type: { type: String, default: 'income' },
+    type: { type: String, default: 'payment' },  // ✅ Type = category
+    flow: { type: String, default: 'inflow' },  // ✅ Flow = direction
     method: { type: String, default: 'manual' },
     monetizationType: String,
     amount: { type: Number, required: true },
@@ -210,10 +246,18 @@ const TransactionSchema = new Schema<ITransaction>(
     refundedAt: Date,
     verifiedAt: Date,
     verifiedBy: String,
+    failedAt: Date,
     failureReason: String,
     paymentDetails: Schema.Types.Mixed,
     metadata: Schema.Types.Mixed,
     idempotencyKey: String,
+    webhook: {
+      eventId: String,
+      eventType: String,
+      receivedAt: Date,
+      processedAt: Date,
+      data: Schema.Types.Mixed,
+    },
   },
   { timestamps: true }
 );
@@ -235,52 +279,29 @@ let TransactionModel: Model<ITransaction>;
 let SubscriptionModel: Model<ISubscription>;
 let revenue: Revenue;
 let fakeProvider: FakeProvider;
-let mongoAvailable = true;
 
 beforeAll(async () => {
-  try {
-    await mongoose.connect(MONGO_URL, {
-      serverSelectionTimeoutMS: 3000,
-    });
-    
-    // Clear existing models to avoid OverwriteModelError
-    if (mongoose.models.Transaction) {
-      delete mongoose.models.Transaction;
-    }
-    if (mongoose.models.Subscription) {
-      delete mongoose.models.Subscription;
-    }
-    
-    TransactionModel = mongoose.model<ITransaction>('Transaction', TransactionSchema);
-    SubscriptionModel = mongoose.model<ISubscription>('Subscription', SubscriptionSchema);
-  } catch (err) {
-    mongoAvailable = false;
-    console.warn('⚠️  MongoDB not available - integration tests will be skipped');
-    console.warn('   Start MongoDB with: mongod --dbpath /data/db');
+  await connectToMongoDB();
+
+  // Clear existing models to avoid OverwriteModelError
+  if (mongoose.models.Transaction) {
+    delete mongoose.models.Transaction;
   }
+  if (mongoose.models.Subscription) {
+    delete mongoose.models.Subscription;
+  }
+
+  TransactionModel = mongoose.model<ITransaction>('Transaction', TransactionSchema);
+  SubscriptionModel = mongoose.model<ISubscription>('Subscription', SubscriptionSchema);
 }, TEST_TIMEOUT);
 
 afterAll(async () => {
-  if (!mongoAvailable) return;
-  try {
-    await mongoose.connection.dropDatabase();
-    await mongoose.disconnect();
-  } catch {
-    // Ignore cleanup errors
-  }
+  await disconnectFromMongoDB();
 });
 
 beforeEach(async () => {
-  if (!mongoAvailable) return;
-
-  // Clean collections
-  const db = mongoose.connection.db;
-  if (db) {
-    const collections = await db.listCollections().toArray();
-    for (const coll of collections) {
-      await db.dropCollection(coll.name).catch(() => {});
-    }
-  }
+  // Clear all collections
+  await clearCollections();
 
   // Fresh provider instance
   fakeProvider = new FakeProvider();
@@ -297,20 +318,10 @@ beforeEach(async () => {
     .build();
 });
 
-// ============ HELPER ============
-function skipIfNoMongo() {
-  if (!mongoAvailable) {
-    console.log('    ↳ Skipped (no MongoDB)');
-    return true;
-  }
-  return false;
-}
-
 // ============ TEST SUITES ============
 
 describe('Integration: Payment Verification', () => {
   it('should verify a pending payment and update transaction status', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_verify_test';
@@ -320,7 +331,8 @@ describe('Integration: Payment Verification', () => {
       amount: 1500,
       currency: 'USD',
       status: 'payment_initiated',
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: {
         type: 'fake',
         paymentIntentId,
@@ -344,7 +356,6 @@ describe('Integration: Payment Verification', () => {
   }, TEST_TIMEOUT);
 
   it('should throw error when verifying non-existent transaction', async () => {
-    if (skipIfNoMongo()) return;
 
     // Use a valid-looking payment intent ID that doesn't exist
     const fakeId = 'fake_pi_does_not_exist_123';
@@ -355,7 +366,6 @@ describe('Integration: Payment Verification', () => {
   }, TEST_TIMEOUT);
 
   it('should throw error when verifying already verified transaction', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_already_verified';
@@ -374,7 +384,6 @@ describe('Integration: Payment Verification', () => {
 
 describe('Integration: Payment Refunds', () => {
   it('should process a full refund', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_full_refund';
@@ -384,7 +393,8 @@ describe('Integration: Payment Refunds', () => {
       amount: 2000,
       currency: 'USD',
       status: 'verified',
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: { type: 'fake', paymentIntentId },
     });
 
@@ -396,12 +406,12 @@ describe('Integration: Payment Refunds', () => {
     expect(result.transaction.refundedAmount).toBe(2000);
     expect(result.refundResult.status).toBe('succeeded');
     expect(result.refundTransaction).toBeDefined();
-    expect(result.refundTransaction.type).toBe('expense');
+    expect(result.refundTransaction.type).toBe('refund');  // ✅ Type = category
+    expect(result.refundTransaction.flow).toBe('outflow');  // ✅ Flow = direction
     expect(result.refundTransaction.amount).toBe(2000);
   }, TEST_TIMEOUT);
 
   it('should process a partial refund', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_partial_refund';
@@ -411,7 +421,8 @@ describe('Integration: Payment Refunds', () => {
       amount: 3000,
       currency: 'USD',
       status: 'verified',
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: { type: 'fake', paymentIntentId },
     });
 
@@ -425,7 +436,6 @@ describe('Integration: Payment Refunds', () => {
   }, TEST_TIMEOUT);
 
   it('should process multiple partial refunds on completed transaction', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange - Note: Service only allows refunds on 'verified' or 'completed' status
     // After first partial refund, status becomes 'partially_refunded'
@@ -437,7 +447,8 @@ describe('Integration: Payment Refunds', () => {
       amount: 5000,
       currency: 'USD',
       status: 'completed', // Using 'completed' for this test
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: { type: 'fake', paymentIntentId },
     });
 
@@ -457,15 +468,14 @@ describe('Integration: Payment Refunds', () => {
     expect(result.transaction.refundedAmount).toBe(3500); // 1500 + 2000
 
     // Verify refund transaction count
-    const refundTxs = await TransactionModel.find({ 
-      type: 'expense',
+    const refundTxs = await TransactionModel.find({
+      type: 'refund',  // ✅ Type = 'refund', not 'outflow'
       'metadata.isRefund': true,
     });
     expect(refundTxs).toHaveLength(2);
   }, TEST_TIMEOUT);
 
   it('should reject refund exceeding refundable amount', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_over_refund';
@@ -475,7 +485,8 @@ describe('Integration: Payment Refunds', () => {
       amount: 1000,
       currency: 'USD',
       status: 'verified',
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: { type: 'fake', paymentIntentId },
     });
 
@@ -485,7 +496,6 @@ describe('Integration: Payment Refunds', () => {
   }, TEST_TIMEOUT);
 
   it('should reject refund on pending transaction', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_pending';
@@ -493,7 +503,8 @@ describe('Integration: Payment Refunds', () => {
       amount: 1000,
       currency: 'USD',
       status: 'pending',
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: { type: 'fake', paymentIntentId },
     });
 
@@ -505,7 +516,6 @@ describe('Integration: Payment Refunds', () => {
 
 describe('Integration: Payment Status', () => {
   it('should get payment status for existing transaction', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_status';
@@ -515,7 +525,8 @@ describe('Integration: Payment Status', () => {
       amount: 1200,
       currency: 'USD',
       status: 'verified',
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: { type: 'fake', paymentIntentId },
     });
 
@@ -531,7 +542,6 @@ describe('Integration: Payment Status', () => {
 
 describe('Integration: Event System', () => {
   it('should emit events on payment verification', async () => {
-    if (skipIfNoMongo()) return;
 
     // Arrange
     const paymentIntentId = 'fake_pi_events';
@@ -541,7 +551,8 @@ describe('Integration: Event System', () => {
       amount: 999,
       currency: 'USD',
       status: 'payment_initiated',
-      type: 'income',
+      type: 'payment',
+      flow: 'inflow',
       gateway: { type: 'fake', paymentIntentId },
     });
 
@@ -562,7 +573,6 @@ describe('Integration: Event System', () => {
 
 describe('Integration: Revenue Builder', () => {
   it('should create revenue instance with fluent API', () => {
-    if (skipIfNoMongo()) return;
 
     // Assert instance properties
     expect(revenue).toBeDefined();
@@ -580,7 +590,6 @@ describe('Integration: Revenue Builder', () => {
   });
 
   it('should throw when building without providers', () => {
-    if (skipIfNoMongo()) return;
 
     expect(() => {
       Revenue.create()
@@ -591,4 +600,287 @@ describe('Integration: Revenue Builder', () => {
         .build();
     }).toThrow(/provider/i);
   });
+});
+
+describe('Integration: Webhook Processing', () => {
+  it('should process payment.succeeded webhook', async () => {
+
+    // Arrange
+    const paymentIntentId = 'fake_pi_webhook_success';
+    fakeProvider._addIntent(paymentIntentId, 5000, 'USD', 'succeeded');
+
+    const tx = await TransactionModel.create({
+      amount: 5000,
+      currency: 'USD',
+      status: 'payment_initiated',
+      type: 'subscription',
+      flow: 'inflow',
+      gateway: {
+        type: 'fake',
+        paymentIntentId,
+      },
+    });
+
+    // Act
+    const result = await revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_001',
+      eventType: 'payment.succeeded',
+      paymentIntentId,
+      createdAt: new Date(),
+    });
+
+    // Assert
+    expect(result.status).toBe('processed');
+    expect(result.event.type).toBe('payment.succeeded');
+    expect(result.transaction).toBeDefined();
+
+    // Verify DB state
+    const updated = await TransactionModel.findById(tx._id);
+    expect(updated?.status).toBe('verified');
+    expect(updated?.verifiedAt).toBeInstanceOf(Date);
+    expect(updated?.webhook?.eventId).toBe('evt_webhook_001');
+    expect(updated?.webhook?.eventType).toBe('payment.succeeded');
+    expect(updated?.webhook?.processedAt).toBeInstanceOf(Date);
+  }, TEST_TIMEOUT);
+
+  it('should process payment.failed webhook', async () => {
+
+    // Arrange
+    const paymentIntentId = 'fake_pi_webhook_failed';
+    fakeProvider._addIntent(paymentIntentId, 3000, 'USD', 'failed');
+
+    const tx = await TransactionModel.create({
+      amount: 3000,
+      currency: 'USD',
+      status: 'processing',
+      type: 'subscription',
+      flow: 'inflow',
+      gateway: {
+        type: 'fake',
+        paymentIntentId,
+      },
+    });
+
+    // Act
+    const result = await revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_002',
+      eventType: 'payment.failed',
+      paymentIntentId,
+      createdAt: new Date(),
+    });
+
+    // Assert
+    expect(result.status).toBe('processed');
+    expect(result.event.type).toBe('payment.failed');
+
+    // Verify DB state
+    const updated = await TransactionModel.findById(tx._id);
+    expect(updated?.status).toBe('failed');
+    expect(updated?.failedAt).toBeInstanceOf(Date);
+    expect(updated?.webhook?.eventId).toBe('evt_webhook_002');
+  }, TEST_TIMEOUT);
+
+  it('should process refund.succeeded webhook', async () => {
+
+    // Arrange
+    const paymentIntentId = 'fake_pi_webhook_refund';
+    fakeProvider._addIntent(paymentIntentId, 4000, 'USD', 'succeeded');
+
+    const tx = await TransactionModel.create({
+      amount: 4000,
+      currency: 'USD',
+      status: 'verified',
+      type: 'subscription',
+      flow: 'inflow',
+      gateway: {
+        type: 'fake',
+        paymentIntentId,
+      },
+    });
+
+    // Act
+    const result = await revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_003',
+      eventType: 'refund.succeeded',
+      paymentIntentId,
+      createdAt: new Date(),
+    });
+
+    // Assert
+    expect(result.status).toBe('processed');
+    expect(result.event.type).toBe('refund.succeeded');
+
+    // Verify DB state
+    const updated = await TransactionModel.findById(tx._id);
+    expect(updated?.status).toBe('refunded');
+    expect(updated?.refundedAt).toBeInstanceOf(Date);
+  }, TEST_TIMEOUT);
+
+  it('should handle duplicate webhook (idempotency)', async () => {
+
+    // Arrange
+    const paymentIntentId = 'fake_pi_webhook_duplicate';
+    fakeProvider._addIntent(paymentIntentId, 2000, 'USD', 'succeeded');
+
+    const tx = await TransactionModel.create({
+      amount: 2000,
+      currency: 'USD',
+      status: 'payment_initiated',
+      type: 'subscription',
+      flow: 'inflow',
+      gateway: {
+        type: 'fake',
+        paymentIntentId,
+      },
+    });
+
+    // Act - First webhook
+    const firstResult = await revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_duplicate',
+      eventType: 'payment.succeeded',
+      paymentIntentId,
+      createdAt: new Date(),
+    });
+
+    expect(firstResult.status).toBe('processed');
+
+    // Act - Duplicate webhook (same eventId)
+    const secondResult = await revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_duplicate',  // Same event ID
+      eventType: 'payment.succeeded',
+      paymentIntentId,
+      createdAt: new Date(),
+    });
+
+    // Assert
+    expect(secondResult.status).toBe('already_processed');
+    expect(secondResult.event.id).toBe('evt_webhook_duplicate');
+
+    // Verify DB state - status should still be verified (not changed)
+    const updated = await TransactionModel.findById(tx._id);
+    expect(updated?.status).toBe('verified');
+  }, TEST_TIMEOUT);
+
+  it('should throw error for webhook with non-existent transaction', async () => {
+
+    // Act & Assert
+    await expect(revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_404',
+      eventType: 'payment.succeeded',
+      paymentIntentId: 'fake_pi_does_not_exist',
+      createdAt: new Date(),
+    })).rejects.toThrow(/not found/i);
+  }, TEST_TIMEOUT);
+
+  it('should throw error for provider without webhook support', async () => {
+
+    // Arrange - Create a provider that doesn't support webhooks
+    class NoWebhookProvider extends FakeProvider {
+      override getCapabilities() {
+        return {
+          ...super.getCapabilities(),
+          supportsWebhooks: false,  // Disable webhooks
+        };
+      }
+    }
+
+    const noWebhookProvider = new NoWebhookProvider();
+    const revenueWithNoWebhook = Revenue
+      .create({ defaultCurrency: 'USD' })
+      .withModels({
+        Transaction: TransactionModel as any,
+        Subscription: SubscriptionModel as any,
+      })
+      .withProvider('no-webhook', noWebhookProvider)
+      .withDebug(false)
+      .build();
+
+    // Act & Assert
+    await expect(revenueWithNoWebhook.payments.handleWebhook('no-webhook', {
+      eventId: 'evt_webhook_unsupported',
+      eventType: 'payment.succeeded',
+      paymentIntentId: 'fake_pi_test',
+      createdAt: new Date(),
+    })).rejects.toThrow(/webhook/i);
+  }, TEST_TIMEOUT);
+
+  it('should emit webhook.processed event', async () => {
+
+    // Arrange
+    const paymentIntentId = 'fake_pi_webhook_event';
+    fakeProvider._addIntent(paymentIntentId, 1500, 'USD', 'succeeded');
+
+    await TransactionModel.create({
+      amount: 1500,
+      currency: 'USD',
+      status: 'payment_initiated',
+      type: 'subscription',
+      flow: 'inflow',
+      gateway: {
+        type: 'fake',
+        paymentIntentId,
+      },
+    });
+
+    const eventSpy = vi.fn();
+    revenue.on('webhook.processed', eventSpy);
+
+    // Act
+    await revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_event_test',
+      eventType: 'payment.succeeded',
+      paymentIntentId,
+      createdAt: new Date(),
+    });
+
+    // Assert - give time for async event handlers
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    expect(eventSpy).toHaveBeenCalled();
+    expect(eventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        webhookType: 'payment.succeeded',
+        provider: 'fake',
+        event: expect.objectContaining({
+          id: 'evt_webhook_event_test',
+          type: 'payment.succeeded',
+        }),
+        transaction: expect.any(Object),
+      })
+    );
+  }, TEST_TIMEOUT);
+
+  it('should find transaction by sessionId if paymentIntentId not available', async () => {
+
+    // Arrange
+    const sessionId = 'fake_session_webhook';
+
+    const tx = await TransactionModel.create({
+      amount: 3500,
+      currency: 'USD',
+      status: 'payment_initiated',
+      type: 'subscription',
+      flow: 'inflow',
+      gateway: {
+        type: 'fake',
+        sessionId,  // Only sessionId, no paymentIntentId
+      },
+    });
+
+    // Act
+    const result = await revenue.payments.handleWebhook('fake', {
+      eventId: 'evt_webhook_session',
+      eventType: 'payment.succeeded',
+      sessionId,  // Webhook includes sessionId
+      createdAt: new Date(),
+    });
+
+    // Assert
+    expect(result.status).toBe('processed');
+    expect(result.transaction._id.toString()).toBe(tx._id.toString());
+
+    // Verify DB state
+    const updated = await TransactionModel.findById(tx._id);
+    expect(updated?.status).toBe('verified');
+  }, TEST_TIMEOUT);
 });

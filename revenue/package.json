@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "Enterprise revenue management system with subscriptions, payments, escrow, splits - Modern, Type-safe, Resilient",
   "type": "module",
   "main": "./dist/index.js",
@@ -62,6 +62,22 @@
       "types": "./dist/enums/index.d.ts",
       "import": "./dist/enums/index.js"
     },
+    "./events": {
+      "types": "./dist/core/events.d.ts",
+      "import": "./dist/core/events.js"
+    },
+    "./plugins": {
+      "types": "./dist/infrastructure/plugins/index.d.ts",
+      "import": "./dist/infrastructure/plugins/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    },
+    "./reconciliation": {
+      "types": "./dist/reconciliation/index.d.ts",
+      "import": "./dist/reconciliation/index.js"
+    },
     "./schemas": {
       "types": "./dist/schemas/index.d.ts",
       "import": "./dist/schemas/index.js"
@@ -70,17 +86,13 @@
       "types": "./dist/schemas/validation.d.ts",
       "import": "./dist/schemas/validation.js"
     },
+    "./services": {
+      "types": "./dist/application/services/index.d.ts",
+      "import": "./dist/application/services/index.js"
+    },
     "./utils": {
       "types": "./dist/utils/index.d.ts",
       "import": "./dist/utils/index.js"
-    },
-    "./providers": {
-      "types": "./dist/providers/index.d.ts",
-      "import": "./dist/providers/index.js"
-    },
-    "./services": {
-      "types": "./dist/services/index.d.ts",
-      "import": "./dist/services/index.js"
     }
   },
   "files": [
@@ -103,6 +115,7 @@
     "zod": "^4.1.13"
   },
   "dependencies": {
+    "@classytic/shared-types": "^1.0.0",
     "nanoid": "^5.1.6"
   }
 }

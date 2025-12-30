@@ -51,7 +51,6 @@ export const currentPaymentSchema = new Schema(
     transactionId: {
       type: Schema.Types.ObjectId,
       ref: 'Transaction',
-      index: true,
     },
     amount: {
       type: Number,
@@ -62,7 +61,6 @@ export const currentPaymentSchema = new Schema(
       type: String,
       enum: PAYMENT_STATUS_VALUES,
       default: 'pending',
-      index: true,
     },
     method: {
       type: String,
@@ -156,4 +154,3 @@ export default {
   paymentDetailsSchema,
   tenantSnapshotSchema,
 };
-

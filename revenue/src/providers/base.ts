@@ -13,7 +13,7 @@ import type {
   RefundResultData,
   WebhookEventData,
   ProviderCapabilities,
-} from '../types/index.js';
+} from '../shared/types/index.js';
 
 /**
  * Payment Intent - standardized response from createIntent
@@ -39,7 +39,7 @@ export class PaymentIntent implements PaymentIntentData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency ?? 'BDT';
+    this.currency = data.currency ?? 'USD';
     this.metadata = data.metadata ?? {};
     this.clientSecret = data.clientSecret;
     this.paymentUrl = data.paymentUrl;
@@ -54,7 +54,7 @@ export class PaymentIntent implements PaymentIntentData {
 export class PaymentResult implements PaymentResultData {
   public readonly id: string;
   public readonly provider: string;
-  public readonly status: 'succeeded' | 'failed' | 'processing';
+  public readonly status: 'succeeded' | 'failed' | 'processing' | 'requires_action';
   public readonly amount?: number;
   public readonly currency: string;
   public readonly paidAt?: Date;
@@ -66,7 +66,7 @@ export class PaymentResult implements PaymentResultData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency ?? 'BDT';
+    this.currency = data.currency ?? 'USD';
     this.paidAt = data.paidAt;
     this.metadata = data.metadata ?? {};
     this.raw = data.raw;
@@ -92,7 +92,7 @@ export class RefundResult implements RefundResultData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency ?? 'BDT';
+    this.currency = data.currency ?? 'USD';
     this.refundedAt = data.refundedAt;
     this.reason = data.reason;
     this.metadata = data.metadata ?? {};

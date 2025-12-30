@@ -7,18 +7,19 @@
  * This is the ONLY required model. Use it for:
  * - Subscriptions (platform_subscription, course_enrollment)
  * - Purchases (product_order, one_time)
- * - Refunds (expense type)
+ * - Refunds (outflow)
  * - Operational expenses (rent, salary, utilities)
  *
  * The Subscription model is OPTIONAL (only if you need subscription state tracking)
  */
 
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
+import type { ITransaction } from '@classytic/shared-types';
 
 // ============ IMPORT FROM LIBRARY ============
 import {
   // Enums
-  TRANSACTION_TYPE_VALUES,
+  TRANSACTION_FLOW_VALUES,
   TRANSACTION_STATUS_VALUES,
   // Mongoose Schemas (compose into your model)
   gatewaySchema,
@@ -56,10 +57,10 @@ export const TRANSACTION_CATEGORIES = {
 export const TRANSACTION_CATEGORIES_VALUES = Object.values(TRANSACTION_CATEGORIES);
 
 /**
- * Polymorphic Reference Models
+ * Polymorphic Source Models
  * Links transaction to any entity in your app
  */
-export const REFERENCE_MODELS = {
+export const SOURCE_MODELS = {
   SUBSCRIPTION: 'Subscription',
   ORDER: 'Order',
   ENROLLMENT: 'Enrollment',
@@ -67,7 +68,7 @@ export const REFERENCE_MODELS = {
   INVOICE: 'Invoice',
 } as const;
 
-export const REFERENCE_MODEL_VALUES = Object.values(REFERENCE_MODELS);
+export const SOURCE_MODEL_VALUES = Object.values(SOURCE_MODELS);
 
 /**
  * Payment Methods (your app-specific)
@@ -84,42 +85,6 @@ export const PAYMENT_METHODS = {
 export const PAYMENT_METHOD_VALUES = Object.values(PAYMENT_METHODS);
 
 // ============ INTERFACE ============
-
-export interface ITransaction extends Document {
-  organizationId: mongoose.Types.ObjectId;
-  customerId?: mongoose.Types.ObjectId;
-  handledBy?: mongoose.Types.ObjectId;
-  type: 'income' | 'expense';
-  category: string;
-  status: string;
-  amount: number;
-  currency: string;
-  method: string;
-  gateway?: any;
-  idempotencyKey?: string;
-  webhook?: {
-    eventId?: string;
-    receivedAt?: Date;
-    processedAt?: Date;
-    payload?: any;
-  };
-  reference?: string;
-  paymentDetails?: any;
-  notes?: string;
-  date: Date;
-  verifiedAt?: Date;
-  verifiedBy?: mongoose.Types.ObjectId | 'system';
-  commission?: any;
-  hold?: any;
-  splits?: any[];
-  referenceId?: mongoose.Types.ObjectId;
-  referenceModel?: string;
-  refundedAmount?: number;
-  refundedAt?: Date;
-  metadata?: Record<string, unknown>;
-  createdAt: Date;
-  updatedAt: Date;
-}
 
 // ============ SCHEMA ============
 
@@ -143,14 +108,14 @@ const transactionSchema = new Schema<ITransaction>(
     },
     type: {
       type: String,
-      enum: TRANSACTION_TYPE_VALUES, // ['income', 'expense']
+      enum: TRANSACTION_CATEGORIES_VALUES, // category (e.g. subscription, refund)
       required: true,
       index: true,
     },
-    category: {
+    flow: {
       type: String,
-      enum: TRANSACTION_CATEGORIES_VALUES,
-      trim: true,
+      enum: TRANSACTION_FLOW_VALUES,
+      required: true,
       index: true,
     },
     status: {
@@ -231,16 +196,16 @@ const transactionSchema = new Schema<ITransaction>(
     refundedAmount: { type: Number },
     refundedAt: { type: Date },
 
-    // ============ POLYMORPHIC REFERENCE ============
+    // ============ POLYMORPHIC SOURCE ============
     // Links transaction to any entity (Order, Subscription, Enrollment)
-    referenceId: {
+    sourceId: {
       type: Schema.Types.ObjectId,
-      refPath: 'referenceModel',
+      refPath: 'sourceModel',
       index: true,
     },
-    referenceModel: {
+    sourceModel: {
       type: String,
-      enum: REFERENCE_MODEL_VALUES,
+      enum: SOURCE_MODEL_VALUES,
     },
 
     // ============ METADATA ============
@@ -256,9 +221,9 @@ const transactionSchema = new Schema<ITransaction>(
 // ============ INDEXES ============
 transactionSchema.index({ organizationId: 1, status: 1, createdAt: -1 });
 transactionSchema.index({ customerId: 1, type: 1, createdAt: -1 });
-transactionSchema.index({ category: 1, type: 1 });
+transactionSchema.index({ type: 1, flow: 1 });
 transactionSchema.index({ 'gateway.paymentIntentId': 1 });
-transactionSchema.index({ referenceModel: 1, referenceId: 1 });
+transactionSchema.index({ sourceModel: 1, sourceId: 1 });
 
 // ============ VIRTUALS ============
 transactionSchema.virtual('isRefundable').get(function () {
@@ -297,12 +262,12 @@ const { transaction } = await revenue.monetization.create({
   data: {
     organizationId,
     customerId,
-    referenceId: subscriptionId,
-    referenceModel: 'Subscription',
+    sourceId: subscriptionId,
+    sourceModel: 'Subscription',
   },
   planKey: 'monthly',
   monetizationType: 'subscription',  // Stored in metadata
-  entity: 'PlatformSubscription',     // Maps to 'platform_subscription' category
+  entity: 'PlatformSubscription',     // Maps to 'platform_subscription' type
   amount: 2999,
   gateway: 'manual',
 });
@@ -312,36 +277,36 @@ const { transaction: orderTx } = await revenue.monetization.create({
   data: {
     organizationId,
     customerId,
-    referenceId: orderId,
-    referenceModel: 'Order',
+    sourceId: orderId,
+    sourceModel: 'Order',
   },
   planKey: 'one_time',
   monetizationType: 'purchase',
-  entity: 'ProductOrder',  // Maps to 'product_order' category
+  entity: 'ProductOrder',  // Maps to 'product_order' type
   amount: 1500,
   gateway: 'manual',
 });
 
-// Query by category
+// Query by type (category)
 const subscriptionPayments = await Transaction.find({
-  category: 'platform_subscription',
+  type: 'platform_subscription',
   status: 'verified',
 });
 
-// Query by reference
+// Query by source
 const orderPayments = await Transaction.find({
-  referenceModel: 'Order',
-  referenceId: orderId,
+  sourceModel: 'Order',
+  sourceId: orderId,
 });
 
 // Calculate revenue
 const income = await Transaction.aggregate([
-  { $match: { type: 'income', status: 'verified' } },
+  { $match: { flow: 'inflow', status: 'verified' } },
   { $group: { _id: null, total: { $sum: '$amount' } } },
 ]);
 
 const expenses = await Transaction.aggregate([
-  { $match: { type: 'expense', status: 'verified' } },
+  { $match: { flow: 'outflow', status: 'verified' } },
   { $group: { _id: null, total: { $sum: '$amount' } } },
 ]);
 

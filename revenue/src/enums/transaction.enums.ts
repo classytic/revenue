@@ -6,25 +6,47 @@
  * Users should define their own categories and merge with these.
  */
 
-// ============ TRANSACTION TYPE ============
+// ============ TRANSACTION FLOW ============
 /**
- * Transaction Type - Income vs Expense
+ * Transaction Flow - Directional money movement
  *
- * INCOME: Money coming in (payments, subscriptions, purchases)
- * EXPENSE: Money going out (refunds, payouts)
+ * INFLOW: Money coming in (payments, subscriptions, purchases, receipts)
+ * OUTFLOW: Money going out (refunds, payouts, expenses, disbursements)
  *
- * Users can map these in their config via transactionTypeMapping
+ * Industry-standard terminology compatible with QuickBooks, Xero, and other accounting systems.
+ * Users can map categories to flow directions via transactionTypeMapping config.
+ *
+ * @example
+ * // Revenue platform
+ * { type: 'subscription', flow: 'inflow' }
+ *
+ * // Payroll platform
+ * { type: 'salary', flow: 'outflow' }
+ *
+ * // Marketplace
+ * { type: 'commission', flow: 'outflow' }  // Paying sellers
+ * { type: 'platform_fee', flow: 'inflow' } // Platform revenue
  */
-export const TRANSACTION_TYPE = {
-  INCOME: 'income',
-  EXPENSE: 'expense',
+export const TRANSACTION_FLOW = {
+  INFLOW: 'inflow',
+  OUTFLOW: 'outflow',
 } as const;
 
-export type TransactionType = typeof TRANSACTION_TYPE;
-export type TransactionTypeValue = TransactionType[keyof TransactionType];
-export const TRANSACTION_TYPE_VALUES = Object.values(
-  TRANSACTION_TYPE,
-) as TransactionTypeValue[];
+/** @deprecated Use TRANSACTION_FLOW instead */
+export const TRANSACTION_TYPE = TRANSACTION_FLOW;
+
+export type TransactionFlow = typeof TRANSACTION_FLOW;
+export type TransactionFlowValue = TransactionFlow[keyof TransactionFlow];
+export const TRANSACTION_FLOW_VALUES = Object.values(
+  TRANSACTION_FLOW,
+) as TransactionFlowValue[];
+
+/** @deprecated Use TransactionFlow instead */
+export type TransactionType = TransactionFlow;
+/** @deprecated Use TransactionFlowValue instead */
+export type TransactionTypeValue = TransactionFlowValue;
+/** @deprecated Use TRANSACTION_FLOW_VALUES instead */
+export const TRANSACTION_TYPE_VALUES = TRANSACTION_FLOW_VALUES;
 
 // ============ TRANSACTION STATUS ============
 /**
@@ -80,7 +102,7 @@ export const LIBRARY_CATEGORY_VALUES = Object.values(
   LIBRARY_CATEGORIES,
 ) as LibraryCategoryValue[];
 
-const transactionTypeSet = new Set<TransactionTypeValue>(TRANSACTION_TYPE_VALUES);
+const transactionFlowSet = new Set<TransactionFlowValue>(TRANSACTION_FLOW_VALUES);
 const transactionStatusSet = new Set<TransactionStatusValue>(
   TRANSACTION_STATUS_VALUES,
 );
@@ -90,8 +112,13 @@ export function isLibraryCategory(value: unknown): value is LibraryCategoryValue
   return typeof value === 'string' && libraryCategorySet.has(value as LibraryCategoryValue);
 }
 
+export function isTransactionFlow(value: unknown): value is TransactionFlowValue {
+  return typeof value === 'string' && transactionFlowSet.has(value as TransactionFlowValue);
+}
+
+/** @deprecated Use isTransactionFlow instead */
 export function isTransactionType(value: unknown): value is TransactionTypeValue {
-  return typeof value === 'string' && transactionTypeSet.has(value as TransactionTypeValue);
+  return isTransactionFlow(value);
 }
 
 export function isTransactionStatus(

@@ -3,14 +3,14 @@
  * @classytic/revenue
  *
  * TWO PATTERNS:
- * 1. Transaction-only (recommended) - Track payments, use referenceModel
+ * 1. Transaction-only (recommended) - Track payments, use sourceModel
  * 2. With Subscription model - For subscription STATE management (optional)
  */
 
 import mongoose from 'mongoose';
 import {
   Revenue,
-  TRANSACTION_TYPE_VALUES,
+  TRANSACTION_FLOW_VALUES,
   TRANSACTION_STATUS_VALUES,
   gatewaySchema,
   commissionSchema,
@@ -19,19 +19,24 @@ import { ManualProvider } from '@classytic/revenue-manual';
 
 // ============ TRANSACTION MODEL (Required) ============
 
+const CATEGORIES = [
+  'platform_subscription',
+  'refund',
+] as const;
+
 const TransactionSchema = new mongoose.Schema({
   organizationId: { type: mongoose.Schema.Types.ObjectId, required: true },
   customerId: mongoose.Schema.Types.ObjectId,
-  type: { type: String, enum: TRANSACTION_TYPE_VALUES, default: 'income' },
-  category: { type: String },
+  type: { type: String, enum: CATEGORIES, required: true }, // category
+  flow: { type: String, enum: TRANSACTION_FLOW_VALUES, required: true },
   status: { type: String, enum: TRANSACTION_STATUS_VALUES, default: 'pending' },
   amount: { type: Number, required: true },
   currency: { type: String, default: 'USD' },
   method: { type: String, default: 'manual' },
   gateway: gatewaySchema,
   commission: commissionSchema,
-  referenceId: { type: mongoose.Schema.Types.ObjectId, refPath: 'referenceModel' },
-  referenceModel: { type: String },
+  sourceId: { type: mongoose.Schema.Types.ObjectId, refPath: 'sourceModel' },
+  sourceModel: { type: String },
   verifiedAt: Date,
   metadata: mongoose.Schema.Types.Mixed,
 }, { timestamps: true });
@@ -62,7 +67,7 @@ const Subscription = mongoose.model('Subscription', SubscriptionSchema);
 async function patternTransactionOnly() {
   console.log('\n📊 PATTERN 1: Transaction-Only\n');
   console.log('Use this when you manage subscription state elsewhere.');
-  console.log('Transaction tracks PAYMENTS, referenceModel links to your entities.\n');
+  console.log('Transaction tracks PAYMENTS, sourceModel links to your entities.\n');
 
   const revenue = Revenue
     .create({ defaultCurrency: 'USD' })
@@ -83,8 +88,8 @@ async function patternTransactionOnly() {
     data: {
       organizationId: orgId,
       customerId,
-      referenceId: subscriptionId,
-      referenceModel: 'Subscription',
+      sourceId: subscriptionId,
+      sourceModel: 'Subscription',
     },
     planKey: 'monthly',
     monetizationType: 'subscription',
@@ -93,7 +98,7 @@ async function patternTransactionOnly() {
     gateway: 'manual',
   });
   console.log('Transaction:', transaction?._id);
-  console.log('Linked to:', transaction?.referenceModel, transaction?.referenceId);
+  console.log('Linked to:', transaction?.sourceModel, transaction?.sourceId);
 
   // Verify payment
   console.log('\n2️⃣ Verifying payment...');
@@ -101,8 +106,8 @@ async function patternTransactionOnly() {
 
   // Query payments for this subscription
   const payments = await Transaction.find({
-    referenceModel: 'Subscription',
-    referenceId: subscriptionId,
+    sourceModel: 'Subscription',
+    sourceId: subscriptionId,
     status: 'verified',
   });
   console.log('\n3️⃣ Payments for subscription:', payments.length);
@@ -195,7 +200,7 @@ console.log(`
 ║  PATTERN 1: Transaction-Only (Recommended for most apps)          ║
 ║  ─────────────────────────────────────────────────────             ║
 ║  • Transaction tracks payments                                     ║
-║  • referenceId/referenceModel links to YOUR entities               ║
+║  • sourceId/sourceModel links to YOUR entities               ║
 ║  • You manage subscription state in your own model                 ║
 ║  • More flexible, less coupling                                    ║
 ║                                                                    ║
