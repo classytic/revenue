@@ -66,6 +66,7 @@ export class ManualProvider extends PaymentProvider {
    */
   async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
     const intentId = `manual_${nanoid(16)}`;
+    const currency = params.currency ?? this.defaultCurrency;
 
     return new PaymentIntent({
       id: intentId,
@@ -74,9 +75,9 @@ export class ManualProvider extends PaymentProvider {
       provider: 'manual',
       status: 'pending',
       amount: params.amount,
-      currency: params.currency ?? 'USD',
+      currency,
       metadata: params.metadata ?? {},
-      instructions: this._getPaymentInstructions(params),
+      instructions: this._getPaymentInstructions(params, currency),
       raw: params,
     });
   }
@@ -92,7 +93,7 @@ export class ManualProvider extends PaymentProvider {
       provider: 'manual',
       status: 'succeeded', // Admin has verified, mark as succeeded
       amount: 0, // Amount will be filled by transaction
-      currency: 'USD',
+      // Don't hardcode currency - let the transaction's currency be used
       paidAt: new Date(),
       metadata: {
         manuallyVerified: true,
@@ -122,7 +123,7 @@ export class ManualProvider extends PaymentProvider {
       provider: 'manual',
       status: 'succeeded', // Manual refunds are immediately marked as succeeded
       amount: amount ?? 0,
-      currency: options.currency ?? 'USD',
+      currency: options.currency ?? this.defaultCurrency,
       refundedAt: new Date(),
       reason: options.reason ?? 'Manual refund',
       metadata: options.metadata ?? {},
@@ -155,7 +156,7 @@ export class ManualProvider extends PaymentProvider {
    * Generate payment instructions for customer
    * @private
    */
-  private _getPaymentInstructions(params: CreateIntentParams): string {
+  private _getPaymentInstructions(params: CreateIntentParams, currency: string): string {
     const metadata = params.metadata as Record<string, unknown> | undefined;
     const paymentInfo = metadata?.paymentInfo as PaymentInfo | undefined;
     const paymentInstructions = metadata?.paymentInstructions as string | undefined;
@@ -167,11 +168,11 @@ export class ManualProvider extends PaymentProvider {
 
     // Generic fallback
     if (!paymentInfo) {
-      return `Payment Amount: ${params.amount} ${params.currency ?? 'USD'}\n\nPlease contact the organization for payment details.`;
+      return `Payment Amount: ${params.amount} ${currency}\n\nPlease contact the organization for payment details.`;
     }
 
     // Build instructions from paymentInfo
-    const lines: string[] = [`Payment Amount: ${params.amount} ${params.currency ?? 'USD'}`, ''];
+    const lines: string[] = [`Payment Amount: ${params.amount} ${currency}`, ''];
 
     // Add all payment info fields generically
     Object.entries(paymentInfo).forEach(([key, value]) => {

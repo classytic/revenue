@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue-manual",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Manual payment provider for @classytic/revenue - Reference implementation",
   "type": "module",
   "main": "./dist/index.js",

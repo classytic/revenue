@@ -22,7 +22,7 @@ import { EscrowService } from '../application/services/escrow.service.js';
 import { SettlementService } from '../application/services/settlement.service.js';
 import { ConfigurationError } from './errors.js';
 import { PaymentProvider } from '../providers/base.js';
-import type { MongooseModel, PaymentProviderInterface, RevenueConfig } from '../shared/types/index.js';
+import type { MongooseModel, PaymentProviderInterface, RevenueConfig, TransactionFlowValue } from '../shared/types/index.js';
 import { resolveConfig } from '../infrastructure/config/resolver.js';
 
 // ============ TYPES ============
@@ -349,6 +349,7 @@ export class RevenueBuilder {
   private providers: ProvidersConfig = {};
   private plugins: RevenuePlugin[] = [];
   private categoryMappings: Record<string, string> = {};
+  private transactionTypeMapping: Record<string, TransactionFlowValue> = {};
 
   constructor(options: RevenueOptions = {}) {
     this.options = options;
@@ -506,6 +507,23 @@ export class RevenueBuilder {
   }
 
   /**
+   * Set transaction flow mapping by category or monetization type
+   *
+   * @example
+   * ```typescript
+   * .withTransactionTypeMapping({
+   *   platform_subscription: 'inflow',
+   *   subscription: 'inflow',
+   *   refund: 'outflow',
+   * })
+   * ```
+   */
+  withTransactionTypeMapping(mapping: Record<string, TransactionFlowValue>): this {
+    this.transactionTypeMapping = { ...this.transactionTypeMapping, ...mapping };
+    return this;
+  }
+
+  /**
    * Build the Revenue instance
    */
   build(): Revenue {
@@ -557,7 +575,15 @@ export class RevenueBuilder {
       ...resolveConfig(resolvedOptions),  // Converts singular → plural with '*' global default
       targetModels: [],
       categoryMappings: this.categoryMappings,
+      transactionTypeMapping: this.transactionTypeMapping,
     };
+
+    // Inject defaultCurrency into all providers
+    for (const provider of Object.values(this.providers)) {
+      if (typeof provider.setDefaultCurrency === 'function') {
+        provider.setDefaultCurrency(resolvedOptions.defaultCurrency);
+      }
+    }
 
     // Register in container (same format as legacy for service compatibility)
     container.singleton('models', this.models);

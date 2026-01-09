@@ -25,7 +25,7 @@ export class PaymentIntent implements PaymentIntentData {
   public readonly provider: string;
   public readonly status: string;
   public readonly amount: number;
-  public readonly currency: string;
+  public readonly currency?: string;
   public readonly metadata: Record<string, unknown>;
   public readonly clientSecret?: string;
   public readonly paymentUrl?: string;
@@ -39,7 +39,7 @@ export class PaymentIntent implements PaymentIntentData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency ?? 'USD';
+    this.currency = data.currency; // Don't default - use app's defaultCurrency config
     this.metadata = data.metadata ?? {};
     this.clientSecret = data.clientSecret;
     this.paymentUrl = data.paymentUrl;
@@ -56,7 +56,7 @@ export class PaymentResult implements PaymentResultData {
   public readonly provider: string;
   public readonly status: 'succeeded' | 'failed' | 'processing' | 'requires_action';
   public readonly amount?: number;
-  public readonly currency: string;
+  public readonly currency?: string;
   public readonly paidAt?: Date;
   public readonly metadata: Record<string, unknown>;
   public readonly raw?: unknown;
@@ -66,7 +66,7 @@ export class PaymentResult implements PaymentResultData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency ?? 'USD';
+    this.currency = data.currency; // Don't default - let transaction's currency be used
     this.paidAt = data.paidAt;
     this.metadata = data.metadata ?? {};
     this.raw = data.raw;
@@ -81,7 +81,7 @@ export class RefundResult implements RefundResultData {
   public readonly provider: string;
   public readonly status: 'succeeded' | 'failed' | 'processing';
   public readonly amount?: number;
-  public readonly currency: string;
+  public readonly currency?: string;
   public readonly refundedAt?: Date;
   public readonly reason?: string;
   public readonly metadata: Record<string, unknown>;
@@ -92,7 +92,7 @@ export class RefundResult implements RefundResultData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency ?? 'USD';
+    this.currency = data.currency; // Don't default - let transaction's currency be used
     this.refundedAt = data.refundedAt;
     this.reason = data.reason;
     this.metadata = data.metadata ?? {};
@@ -129,9 +129,33 @@ export abstract class PaymentProvider {
   public readonly config: Record<string, unknown>;
   public readonly name: string;
 
+  /** Default currency - injected by Revenue when provider is registered */
+  private _defaultCurrency: string = 'USD';
+
   constructor(config: Record<string, unknown> = {}) {
     this.config = config;
     this.name = 'base'; // Override in subclass
+
+    // Allow defaultCurrency to be passed via config
+    if (config.defaultCurrency && typeof config.defaultCurrency === 'string') {
+      this._defaultCurrency = config.defaultCurrency;
+    }
+  }
+
+  /**
+   * Get the default currency for this provider
+   * Used when creating PaymentIntent, PaymentResult, RefundResult without explicit currency
+   */
+  get defaultCurrency(): string {
+    return this._defaultCurrency;
+  }
+
+  /**
+   * Set the default currency (called by Revenue when registering provider)
+   * @internal
+   */
+  setDefaultCurrency(currency: string): void {
+    this._defaultCurrency = currency;
   }
 
   /**

@@ -521,6 +521,40 @@ describe('Single Transaction Model - Category Mappings', () => {
     expect(transaction).toBeDefined();
     expect(transaction.amount).toBe(999);
   }, TEST_TIMEOUT);
+
+  it('prioritizes category mapping for transaction flow', async () => {
+    if (skipIfNoMongo()) return;
+
+    const orgId = new mongoose.Types.ObjectId();
+    const customerId = new mongoose.Types.ObjectId();
+
+    const customRevenue = Revenue.create({ defaultCurrency: 'USD' })
+      .withModels({ Transaction })
+      .withProvider('fake', new FakeProvider())
+      .withCategoryMappings({
+        PlatformSubscription: 'platform_subscription',
+      })
+      .withTransactionTypeMapping({
+        platform_subscription: 'outflow',
+        subscription: 'inflow',
+      })
+      .build();
+
+    const { transaction } = await customRevenue.monetization.create({
+      data: {
+        organizationId: orgId,
+        customerId,
+      },
+      entity: 'PlatformSubscription',
+      planKey: 'test',
+      monetizationType: 'subscription',
+      amount: 1250,
+      gateway: 'fake',
+    });
+
+    expect(transaction.type).toBe('platform_subscription');
+    expect(transaction.flow).toBe('outflow');
+  }, TEST_TIMEOUT);
 });
 
 describe('Single Transaction Model - Revenue Calculations', () => {

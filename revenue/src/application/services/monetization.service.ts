@@ -226,7 +226,7 @@ export class MonetizationService {
 
       // Resolve transaction type using config mapping or default to 'income'
       const transactionFlow: TransactionFlowValue =
-        this.config.transactionTypeMapping?.subscription ??
+        this.config.transactionTypeMapping?.[category] ??
         this.config.transactionTypeMapping?.[monetizationType] ??
         TRANSACTION_FLOW.INFLOW;
 
@@ -575,8 +575,8 @@ export class MonetizationService {
 
     // Resolve transaction type using config mapping or default to 'income'
     const transactionFlow: TransactionFlowValue =
+      this.config.transactionTypeMapping?.[category] ??
       this.config.transactionTypeMapping?.subscription_renewal ??
-      this.config.transactionTypeMapping?.subscription ??
       this.config.transactionTypeMapping?.[effectiveMonetizationType] ??
       TRANSACTION_FLOW.INFLOW;
 
@@ -987,4 +987,3 @@ export class MonetizationService {
 }
 
 export default MonetizationService;
-
