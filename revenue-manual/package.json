@@ -3,9 +3,10 @@
   "version": "0.2.2",
   "description": "Manual payment provider for @classytic/revenue - Reference implementation",
   "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
   "keywords": [
     "revenue",
     "payment",
@@ -19,23 +20,25 @@
     "rocket",
     "typescript"
   ],
-  "author": "Sadman Chowdhury",
+  "author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
+  "contributors": [
+    "Sadman Chowdhury (https://github.com/siam923)"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/classytic/revenue.git"
   },
   "scripts": {
-    "build": "tsup",
-    "build:watch": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "clean": "rimraf dist",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "npm run build"
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
     }
   },
   "files": [
@@ -47,8 +50,7 @@
     "@classytic/revenue": ">=1.0.0"
   },
   "devDependencies": {
-    "rimraf": "^6.0.0",
-    "tsup": "^8.3.0",
+    "tsdown": "^0.20.3",
     "typescript": "^5.6.3"
   },
   "dependencies": {

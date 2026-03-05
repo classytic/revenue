@@ -1,9 +1,8 @@
-import { defineConfig } from 'tsup';
+import { defineConfig } from 'tsdown';
 
 export default defineConfig({
   entry: [
     'src/index.ts',
-    // Core modules
     'src/core/index.ts',
     'src/core/events.ts',
     'src/enums/index.ts',
@@ -15,18 +14,12 @@ export default defineConfig({
     'src/providers/index.ts',
     'src/application/services/index.ts',
   ],
-  format: ['esm'],
-  dts: true,
-  clean: true,
-  splitting: false,
-  sourcemap: true,
-  treeshake: true,
-  external: ['mongoose', 'nanoid', 'zod'],
-  outDir: 'dist',
-  target: 'node18',
-  shims: false,
-  banner: {
-    js: '// @classytic/revenue - Enterprise Revenue Management System',
+  format: 'esm',
+  dts: {
+    sourcemap: false,
   },
+  clean: true,
+  sourcemap: false,
+  minify: false,
+  external: ['mongoose', 'nanoid', 'zod', 'bson', '@classytic/shared-types'],
 });
-

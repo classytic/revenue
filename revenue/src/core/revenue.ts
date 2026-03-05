@@ -156,6 +156,18 @@ export class Revenue {
 
   // ============ STATIC FACTORY ============
 
+  /** @internal Used by RevenueBuilder — do not call directly */
+  static _fromBuilder(
+    container: Container,
+    events: EventBus,
+    plugins: PluginManager,
+    options: Required<RevenueOptions>,
+    providers: ProvidersConfig,
+    config: Partial<RevenueConfig>
+  ): Revenue {
+    return new Revenue(container, events, plugins, options, providers, config);
+  }
+
   /**
    * Create a new Revenue builder
    *
@@ -599,8 +611,8 @@ export class RevenueBuilder {
       pluginManager.register(plugin);
     }
 
-    // Create Revenue instance using private constructor access
-    const revenue = new (Revenue as any)(
+    // Create Revenue instance via internal factory
+    const revenue = Revenue._fromBuilder(
       container,
       events,
       pluginManager,

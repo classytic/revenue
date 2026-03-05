@@ -36,7 +36,10 @@
     "subscription",
     "payment"
   ],
-  "author": "Sadman Chowdhury",
+  "author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
+  "contributors": [
+    "Sadman Chowdhury (https://github.com/siam923)"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

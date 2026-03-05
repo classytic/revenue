@@ -144,114 +144,103 @@ export class PaymentService {
         const TransactionModel = this.models.Transaction;
         const transaction = await this._findTransaction(TransactionModel, paymentIntentId);
 
-    if (!transaction) {
-      throw new TransactionNotFoundError(paymentIntentId);
-    }
-
-    if (transaction.status === 'verified' || transaction.status === 'completed') {
-      throw new AlreadyVerifiedError(transaction._id.toString());
-    }
-
-    // Get provider for verification
-    const gatewayType = transaction.gateway?.type ?? 'manual';
-    const provider = this.providers[gatewayType];
-
-    if (!provider) {
-      throw new ProviderNotFoundError(gatewayType, Object.keys(this.providers));
-    }
-
-    // Verify payment with provider
-    let paymentResult: PaymentResultData | null = null;
-    try {
-      // Use the actual payment intent ID from the transaction's gateway info
-      const actualIntentId = transaction.gateway?.paymentIntentId || transaction.gateway?.sessionId || paymentIntentId;
-      paymentResult = await this.executeProviderCall(
-        () => provider.verifyPayment(actualIntentId),
-        `${gatewayType}.verifyPayment`
-      );
-    } catch (error) {
-      this.logger.error('Payment verification failed:', error);
-
-      // Validate state transition and create audit event
-      const auditEvent = TRANSACTION_STATE_MACHINE.validateAndCreateAuditEvent(
-        transaction.status,
-        'failed',
-        transaction._id.toString(),
-        {
-          changedBy: 'system',
-          reason: `Payment verification failed: ${(error as Error).message}`,
-          metadata: { error: (error as Error).message }
+        if (!transaction) {
+          throw new TransactionNotFoundError(paymentIntentId);
         }
-      );
 
-      // Update transaction as failed
-      transaction.status = 'failed';
-      transaction.failureReason = (error as Error).message;
+        if (transaction.status === 'verified' || transaction.status === 'completed') {
+          throw new AlreadyVerifiedError(transaction._id.toString());
+        }
 
-      // Append audit event to metadata
-      Object.assign(transaction, appendAuditEvent(transaction, auditEvent));
+        // Get provider for verification
+        const gatewayType = transaction.gateway?.type ?? 'manual';
+        const provider = this.providers[gatewayType];
 
-      transaction.metadata = {
-        ...transaction.metadata,
-        verificationError: (error as Error).message,
-        failedAt: new Date().toISOString(),
-      };
-      await transaction.save();
+        if (!provider) {
+          throw new ProviderNotFoundError(gatewayType, Object.keys(this.providers));
+        }
 
-      // Emit payment.failed event
-      this.events.emit('payment.failed', {
-        transaction,
-        error: (error as Error).message,
-        provider: gatewayType,
-        paymentIntentId,
-      });
+        // Verify payment with provider
+        let paymentResult: PaymentResultData | null = null;
+        try {
+          const actualIntentId = transaction.gateway?.paymentIntentId || transaction.gateway?.sessionId || paymentIntentId;
+          paymentResult = await this.executeProviderCall(
+            () => provider.verifyPayment(actualIntentId),
+            `${gatewayType}.verifyPayment`
+          );
+        } catch (error) {
+          this.logger.error('Payment verification failed:', error);
 
-      throw new PaymentVerificationError(paymentIntentId, (error as Error).message);
-    }
+          const auditEvent = TRANSACTION_STATE_MACHINE.validateAndCreateAuditEvent(
+            transaction.status,
+            'failed',
+            transaction._id.toString(),
+            {
+              changedBy: 'system',
+              reason: `Payment verification failed: ${(error as Error).message}`,
+              metadata: { error: (error as Error).message }
+            }
+          );
 
-    // Validate amount and currency match
-    if (paymentResult.amount && paymentResult.amount !== transaction.amount) {
-      throw new ValidationError(
-        `Amount mismatch: expected ${transaction.amount}, got ${paymentResult.amount}`,
-        { expected: transaction.amount, actual: paymentResult.amount }
-      );
-    }
+          transaction.status = 'failed';
+          transaction.failureReason = (error as Error).message;
+          Object.assign(transaction, appendAuditEvent(transaction, auditEvent));
+          transaction.metadata = {
+            ...transaction.metadata,
+            verificationError: (error as Error).message,
+            failedAt: new Date().toISOString(),
+          };
+          await transaction.save();
 
-    if (paymentResult.currency && paymentResult.currency.toUpperCase() !== transaction.currency.toUpperCase()) {
-      throw new ValidationError(
-        `Currency mismatch: expected ${transaction.currency}, got ${paymentResult.currency}`,
-        { expected: transaction.currency, actual: paymentResult.currency }
-      );
-    }
+          this.events.emit('payment.failed', {
+            transaction,
+            error: (error as Error).message,
+            provider: gatewayType,
+            paymentIntentId,
+          });
 
-    // Update transaction based on verification result
-    const newStatus = paymentResult.status === 'succeeded' ? 'verified' : paymentResult.status;
+          throw new PaymentVerificationError(paymentIntentId, (error as Error).message);
+        }
 
-    // Validate state transition and create audit event
-    const auditEvent = TRANSACTION_STATE_MACHINE.validateAndCreateAuditEvent(
-      transaction.status,
-      newStatus,
-      transaction._id.toString(),
-      {
-        changedBy: verifiedBy ?? 'system',
-        reason: `Payment verification ${paymentResult.status === 'succeeded' ? 'succeeded' : 'resulted in status: ' + newStatus}`,
-        metadata: { paymentResult: paymentResult.metadata }
-      }
-    );
+        // Validate amount and currency match
+        if (paymentResult.amount && paymentResult.amount !== transaction.amount) {
+          throw new ValidationError(
+            `Amount mismatch: expected ${transaction.amount}, got ${paymentResult.amount}`,
+            { expected: transaction.amount, actual: paymentResult.amount }
+          );
+        }
 
-    transaction.status = newStatus;
-    transaction.verifiedAt = paymentResult.paidAt ?? new Date();
-    transaction.verifiedBy = verifiedBy;
-    transaction.gateway = {
-      ...transaction.gateway,
-      type: transaction.gateway?.type ?? 'manual',
-      verificationData: paymentResult.metadata,
-    };
+        if (paymentResult.currency && paymentResult.currency.toUpperCase() !== transaction.currency.toUpperCase()) {
+          throw new ValidationError(
+            `Currency mismatch: expected ${transaction.currency}, got ${paymentResult.currency}`,
+            { expected: transaction.currency, actual: paymentResult.currency }
+          );
+        }
 
-    // Append audit event to metadata
-    Object.assign(transaction, appendAuditEvent(transaction, auditEvent));
+        // Update transaction based on verification result
+        const newStatus = paymentResult.status === 'succeeded' ? 'verified' : paymentResult.status;
 
-    await transaction.save();
+        const auditEvent = TRANSACTION_STATE_MACHINE.validateAndCreateAuditEvent(
+          transaction.status,
+          newStatus,
+          transaction._id.toString(),
+          {
+            changedBy: verifiedBy ?? 'system',
+            reason: `Payment verification ${paymentResult.status === 'succeeded' ? 'succeeded' : 'resulted in status: ' + newStatus}`,
+            metadata: { paymentResult: paymentResult.metadata }
+          }
+        );
+
+        transaction.status = newStatus;
+        transaction.verifiedAt = paymentResult.paidAt ?? new Date();
+        transaction.verifiedBy = verifiedBy;
+        transaction.gateway = {
+          ...transaction.gateway,
+          type: transaction.gateway?.type ?? 'manual',
+          verificationData: paymentResult.metadata,
+        };
+        Object.assign(transaction, appendAuditEvent(transaction, auditEvent));
+        await transaction.save();
 
         // Emit appropriate event based on actual status
         if (newStatus === 'verified') {
@@ -370,179 +359,146 @@ export class PaymentService {
         const TransactionModel = this.models.Transaction;
         const transaction = await this._findTransaction(TransactionModel, paymentId);
 
-    if (!transaction) {
-      throw new TransactionNotFoundError(paymentId);
-    }
-
-    if (
-      transaction.status !== 'verified' &&
-      transaction.status !== 'completed' &&
-      transaction.status !== 'partially_refunded'
-    ) {
-      throw new InvalidStateTransitionError(
-        'transaction',
-        transaction._id.toString(),
-        transaction.status,
-        'verified, completed, or partially_refunded'
-      );
-    }
-
-    // Get provider
-    const gatewayType = transaction.gateway?.type ?? 'manual';
-    const provider = this.providers[gatewayType];
-
-    if (!provider) {
-      throw new ProviderNotFoundError(gatewayType, Object.keys(this.providers));
-    }
-
-    // Check if provider supports refunds
-    const capabilities = provider.getCapabilities();
-    if (!capabilities.supportsRefunds) {
-      throw new RefundNotSupportedError(gatewayType);
-    }
-
-    // Calculate refundable amount
-    const refundedSoFar = transaction.refundedAmount ?? 0;
-    const refundableAmount = transaction.amount - refundedSoFar;
-    const refundAmount = amount ?? refundableAmount;
-
-    // Validate refund amount
-    if (refundAmount <= 0) {
-      throw new ValidationError(`Refund amount must be positive, got ${refundAmount}`);
-    }
-
-    if (refundAmount > refundableAmount) {
-      throw new ValidationError(
-        `Refund amount (${refundAmount}) exceeds refundable balance (${refundableAmount})`,
-        { refundAmount, refundableAmount, alreadyRefunded: refundedSoFar }
-      );
-    }
-
-    // Refund via provider
-    let refundResult;
-
-    try {
-      // Use the actual payment intent ID from the transaction's gateway info
-      const actualIntentId = transaction.gateway?.paymentIntentId || transaction.gateway?.sessionId || paymentId;
-      refundResult = await this.executeProviderCall(
-        () => provider.refund(actualIntentId, refundAmount, { reason: reason ?? undefined }),
-        `${gatewayType}.refund`
-      );
-    } catch (error) {
-      this.logger.error('Refund failed:', error);
-      throw new RefundError(paymentId, (error as Error).message);
-    }
-
-    // Create separate refund transaction (EXPENSE) for proper accounting
-    // ✅ Resolve flow direction from config (not category!)
-    const refundFlow: TransactionFlowValue =
-      this.config.transactionTypeMapping?.refund ?? TRANSACTION_FLOW.OUTFLOW;
-
-    // Reverse commission proportionally for refund
-    const refundCommission = transaction.commission
-      ? reverseCommission(transaction.commission, transaction.amount, refundAmount)
-      : null;
-
-    // Reverse tax proportionally for refund (if tax exists)
-    // Note: refundAmount is the base amount (before tax), not total
-    let refundTaxAmount = 0;
-    if (transaction.tax && transaction.tax > 0) {
-      // Simple proportional calculation
-      if (transaction.amount > 0) {
-        const ratio = refundAmount / transaction.amount;
-        refundTaxAmount = Math.round(transaction.tax * ratio);
-      }
-    }
-
-    // Calculate amounts for unified structure
-    const refundFeeAmount = refundCommission?.gatewayFeeAmount || 0;
-    const refundNetAmount = refundAmount - refundFeeAmount - refundTaxAmount;
-
-    const refundTransaction = await TransactionModel.create({
-      organizationId: transaction.organizationId,
-      customerId: transaction.customerId,
-
-      // ✅ UNIFIED: Type = category (semantic), Flow = direction (from config)
-      type: 'refund',       // Category: this is a refund transaction
-      flow: refundFlow,     // Direction: income or expense (from config)
-      tags: ['refund'],
-
-      // ✅ UNIFIED: Amount structure
-      amount: refundAmount,
-      currency: transaction.currency,
-      fee: refundFeeAmount,
-      tax: refundTaxAmount,
-      net: refundNetAmount,
-
-      // Tax details (if tax existed on original)
-      ...(transaction.taxDetails && {
-        taxDetails: transaction.taxDetails
-      }),
-
-      method: transaction.method ?? 'manual',
-      status: 'completed',
-
-      gateway: {
-        provider: transaction.gateway?.provider ?? 'manual',
-        paymentIntentId: refundResult.id,
-        chargeId: refundResult.id,
-      },
-
-      paymentDetails: transaction.paymentDetails,
-
-      // Reversed commission
-      ...(refundCommission && { commission: refundCommission }),
-
-      // ✅ UNIFIED: Source reference + related transaction
-      ...(transaction.sourceId && { sourceId: transaction.sourceId }),
-      ...(transaction.sourceModel && { sourceModel: transaction.sourceModel }),
-      relatedTransactionId: transaction._id,  // Link to original transaction
-
-      metadata: {
-        ...transaction.metadata,
-        isRefund: true,
-        originalTransactionId: transaction._id.toString(),
-        refundReason: reason,
-        refundResult: refundResult.metadata,
-      },
-
-      idempotencyKey: `refund_${transaction._id}_${Date.now()}`,
-    }) as TransactionDocument;
-
-    // Update original transaction status
-    const isPartialRefund = refundAmount < refundableAmount;
-    const refundStatus = isPartialRefund ? 'partially_refunded' : 'refunded';
-
-    // Validate state transition and create audit event
-    const auditEvent = TRANSACTION_STATE_MACHINE.validateAndCreateAuditEvent(
-      transaction.status,
-      refundStatus,
-      transaction._id.toString(),
-      {
-        changedBy: 'system',
-        reason: `Refund processed: ${isPartialRefund ? 'partial' : 'full'} refund of ${refundAmount}${reason ? ' - ' + reason : ''}`,
-        metadata: {
-          refundAmount,
-          isPartialRefund,
-          refundTransactionId: refundTransaction._id.toString()
+        if (!transaction) {
+          throw new TransactionNotFoundError(paymentId);
         }
-      }
-    );
 
-    transaction.status = refundStatus;
-    transaction.refundedAmount = (transaction.refundedAmount ?? 0) + refundAmount;
-    transaction.refundedAt = refundResult.refundedAt ?? new Date();
+        if (
+          transaction.status !== 'verified' &&
+          transaction.status !== 'completed' &&
+          transaction.status !== 'partially_refunded'
+        ) {
+          throw new InvalidStateTransitionError(
+            'transaction',
+            transaction._id.toString(),
+            transaction.status,
+            'verified, completed, or partially_refunded'
+          );
+        }
 
-    // Append audit event to metadata
-    Object.assign(transaction, appendAuditEvent(transaction, auditEvent));
+        // Get provider
+        const gatewayType = transaction.gateway?.type ?? 'manual';
+        const provider = this.providers[gatewayType];
 
-    transaction.metadata = {
-      ...transaction.metadata,
-      refundTransactionId: refundTransaction._id.toString(),
-      refundReason: reason,
-    };
+        if (!provider) {
+          throw new ProviderNotFoundError(gatewayType, Object.keys(this.providers));
+        }
 
-    await transaction.save();
+        // Check if provider supports refunds
+        const capabilities = provider.getCapabilities();
+        if (!capabilities.supportsRefunds) {
+          throw new RefundNotSupportedError(gatewayType);
+        }
+
+        // Calculate refundable amount
+        const refundedSoFar = transaction.refundedAmount ?? 0;
+        const refundableAmount = transaction.amount - refundedSoFar;
+        const refundAmount = amount ?? refundableAmount;
+
+        if (refundAmount <= 0) {
+          throw new ValidationError(`Refund amount must be positive, got ${refundAmount}`);
+        }
+
+        if (refundAmount > refundableAmount) {
+          throw new ValidationError(
+            `Refund amount (${refundAmount}) exceeds refundable balance (${refundableAmount})`,
+            { refundAmount, refundableAmount, alreadyRefunded: refundedSoFar }
+          );
+        }
+
+        // Refund via provider
+        let refundResult;
+        try {
+          const actualIntentId = transaction.gateway?.paymentIntentId || transaction.gateway?.sessionId || paymentId;
+          refundResult = await this.executeProviderCall(
+            () => provider.refund(actualIntentId, refundAmount, { reason: reason ?? undefined }),
+            `${gatewayType}.refund`
+          );
+        } catch (error) {
+          this.logger.error('Refund failed:', error);
+          throw new RefundError(paymentId, (error as Error).message);
+        }
+
+        // Create separate refund transaction for proper accounting
+        const refundFlow: TransactionFlowValue =
+          this.config.transactionTypeMapping?.refund ?? TRANSACTION_FLOW.OUTFLOW;
+
+        const refundCommission = transaction.commission
+          ? reverseCommission(transaction.commission, transaction.amount, refundAmount)
+          : null;
+
+        let refundTaxAmount = 0;
+        if (transaction.tax && transaction.tax > 0 && transaction.amount > 0) {
+          const ratio = refundAmount / transaction.amount;
+          refundTaxAmount = Math.round(transaction.tax * ratio);
+        }
+
+        const refundFeeAmount = refundCommission?.gatewayFeeAmount || 0;
+        const refundNetAmount = refundAmount - refundFeeAmount - refundTaxAmount;
+
+        const refundTransaction = await TransactionModel.create({
+          organizationId: transaction.organizationId,
+          customerId: transaction.customerId,
+          type: 'refund',
+          flow: refundFlow,
+          tags: ['refund'],
+          amount: refundAmount,
+          currency: transaction.currency,
+          fee: refundFeeAmount,
+          tax: refundTaxAmount,
+          net: refundNetAmount,
+          ...(transaction.taxDetails && { taxDetails: transaction.taxDetails }),
+          method: transaction.method ?? 'manual',
+          status: 'completed',
+          gateway: {
+            provider: transaction.gateway?.provider ?? 'manual',
+            paymentIntentId: refundResult.id,
+            chargeId: refundResult.id,
+          },
+          paymentDetails: transaction.paymentDetails,
+          ...(refundCommission && { commission: refundCommission }),
+          ...(transaction.sourceId && { sourceId: transaction.sourceId }),
+          ...(transaction.sourceModel && { sourceModel: transaction.sourceModel }),
+          relatedTransactionId: transaction._id,
+          metadata: {
+            ...transaction.metadata,
+            isRefund: true,
+            originalTransactionId: transaction._id.toString(),
+            refundReason: reason,
+            refundResult: refundResult.metadata,
+          },
+          idempotencyKey: `refund_${transaction._id}_${Date.now()}`,
+        }) as TransactionDocument;
+
+        // Update original transaction status
+        const isPartialRefund = refundAmount < refundableAmount;
+        const refundStatus = isPartialRefund ? 'partially_refunded' : 'refunded';
+
+        const auditEvent = TRANSACTION_STATE_MACHINE.validateAndCreateAuditEvent(
+          transaction.status,
+          refundStatus,
+          transaction._id.toString(),
+          {
+            changedBy: 'system',
+            reason: `Refund processed: ${isPartialRefund ? 'partial' : 'full'} refund of ${refundAmount}${reason ? ' - ' + reason : ''}`,
+            metadata: {
+              refundAmount,
+              isPartialRefund,
+              refundTransactionId: refundTransaction._id.toString()
+            }
+          }
+        );
+
+        transaction.status = refundStatus;
+        transaction.refundedAmount = (transaction.refundedAmount ?? 0) + refundAmount;
+        transaction.refundedAt = refundResult.refundedAt ?? new Date();
+        Object.assign(transaction, appendAuditEvent(transaction, auditEvent));
+        transaction.metadata = {
+          ...transaction.metadata,
+          refundTransactionId: refundTransaction._id.toString(),
+          refundReason: reason,
+        };
+        await transaction.save();
 
         // Emit payment.refunded event
         this.events.emit('payment.refunded', {

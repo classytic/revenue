@@ -4,7 +4,7 @@
  *
  * Modern • Type-safe • Resilient • Composable
  *
- * @version 1.1.0
+ * @version 1.1.3
  * @author Classytic
  * @license MIT
  */
@@ -129,21 +129,3 @@ export type {
  * ```
  */
 
-// ============================================================================
-// DEFAULT EXPORT
-// ============================================================================
-
-import { Revenue, createRevenue } from './core/revenue.js';
-import { PaymentProvider } from './providers/base.js';
-import { RevenueError } from './core/errors.js';
-import { Money } from './shared/utils/formatters/money.js';
-import { Result } from './core/result.js';
-
-export default {
-  Revenue,
-  createRevenue,
-  PaymentProvider,
-  RevenueError,
-  Money,
-  Result,
-};

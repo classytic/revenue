@@ -78,12 +78,13 @@ import type { ITransaction } from '@classytic/shared-types';
 ## Installation
 
 ```bash
-npm install @classytic/revenue mongoose zod
+npm install @classytic/revenue @classytic/shared-types mongoose zod
 ```
 
 **Peer Dependencies:**
+- `@classytic/shared-types` ^1.0.0
 - `mongoose` ^8.0.0 || ^9.0.0
-- `zod` ^4.1.13
+- `zod` ^4.0.0
 
 **Provider Packages** (install as needed):
 ```bash
@@ -435,7 +436,7 @@ await revenue.escrow.split(transaction._id, {
 ```typescript
 import { EventBus } from '@classytic/revenue/events';
 
-revenue.events.on('payment:verified', async (event) => {
+revenue.events.on('payment.verified', async (event) => {
   // Grant access
   await grantAccess(event.transaction.customerId);
 
@@ -443,14 +444,14 @@ revenue.events.on('payment:verified', async (event) => {
   await sendEmail(event.transaction.customerId, 'Payment received!');
 });
 
-revenue.events.on('subscription:cancelled', async (event) => {
+revenue.events.on('subscription.cancelled', async (event) => {
   await removeAccess(event.subscription.customerId);
 });
 
 // Other events:
-// - monetization:created, payment:failed, payment:refunded
-// - subscription:activated, subscription:renewed
-// - escrow:held, escrow:released, settlement:completed
+// - monetization.created, payment.failed, payment.refunded
+// - subscription.activated, subscription.renewed
+// - escrow.held, escrow.released, settlement.completed
 ```
 
 ### Tax Plugin (Optional)

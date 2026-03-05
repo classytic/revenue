@@ -1,11 +1,12 @@
 {
   "name": "@classytic/revenue",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Enterprise revenue management system with subscriptions, payments, escrow, splits - Modern, Type-safe, Resilient",
   "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
   "keywords": [
     "revenue",
     "monetization",
@@ -31,7 +32,10 @@
     "marketplace",
     "typescript"
   ],
-  "author": "Sadman Chowdhury",
+  "author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
+  "contributors": [
+    "Sadman Chowdhury (https://github.com/siam923)"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -42,57 +46,56 @@
   },
   "homepage": "https://github.com/classytic/revenue#readme",
   "scripts": {
-    "build": "tsup",
-    "build:watch": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "clean": "rimraf dist",
-    "prepublishOnly": "npm run clean && npm run build",
-    "test": "node ../tests/run-all.js"
+    "prepublishOnly": "npm run build",
+    "test": "cd .. && vitest run"
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
     },
     "./core": {
-      "types": "./dist/core/index.d.ts",
-      "import": "./dist/core/index.js"
+      "types": "./dist/core/index.d.mts",
+      "default": "./dist/core/index.mjs"
     },
     "./enums": {
-      "types": "./dist/enums/index.d.ts",
-      "import": "./dist/enums/index.js"
+      "types": "./dist/enums/index.d.mts",
+      "default": "./dist/enums/index.mjs"
     },
     "./events": {
-      "types": "./dist/core/events.d.ts",
-      "import": "./dist/core/events.js"
+      "types": "./dist/core/events.d.mts",
+      "default": "./dist/core/events.mjs"
     },
     "./plugins": {
-      "types": "./dist/infrastructure/plugins/index.d.ts",
-      "import": "./dist/infrastructure/plugins/index.js"
+      "types": "./dist/infrastructure/plugins/index.d.mts",
+      "default": "./dist/infrastructure/plugins/index.mjs"
     },
     "./providers": {
-      "types": "./dist/providers/index.d.ts",
-      "import": "./dist/providers/index.js"
+      "types": "./dist/providers/index.d.mts",
+      "default": "./dist/providers/index.mjs"
     },
     "./reconciliation": {
-      "types": "./dist/reconciliation/index.d.ts",
-      "import": "./dist/reconciliation/index.js"
+      "types": "./dist/reconciliation/index.d.mts",
+      "default": "./dist/reconciliation/index.mjs"
     },
     "./schemas": {
-      "types": "./dist/schemas/index.d.ts",
-      "import": "./dist/schemas/index.js"
+      "types": "./dist/schemas/index.d.mts",
+      "default": "./dist/schemas/index.mjs"
     },
     "./schemas/validation": {
-      "types": "./dist/schemas/validation.d.ts",
-      "import": "./dist/schemas/validation.js"
+      "types": "./dist/schemas/validation.d.mts",
+      "default": "./dist/schemas/validation.mjs"
     },
     "./services": {
-      "types": "./dist/application/services/index.d.ts",
-      "import": "./dist/application/services/index.js"
+      "types": "./dist/application/services/index.d.mts",
+      "default": "./dist/application/services/index.mjs"
     },
     "./utils": {
-      "types": "./dist/utils/index.d.ts",
-      "import": "./dist/utils/index.js"
+      "types": "./dist/utils/index.d.mts",
+      "default": "./dist/utils/index.mjs"
     }
   },
   "files": [
@@ -101,21 +104,20 @@
     "LICENSE"
   ],
   "peerDependencies": {
+    "@classytic/shared-types": "^1.0.0",
     "mongoose": "^8.0.0 || ^9.0.0",
-    "zod": "^4.1.13"
+    "zod": "^4.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.8.7",
-    "rimraf": "^6.0.0",
-    "tsup": "^8.3.0",
+    "tsdown": "^0.20.3",
     "typescript": "^5.6.3",
     "zod": "^4.1.13"
   },
   "dependencies": {
-    "@classytic/shared-types": "^1.0.0",
     "nanoid": "^5.1.6"
   }
 }

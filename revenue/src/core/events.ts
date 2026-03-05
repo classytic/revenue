@@ -66,10 +66,10 @@ export interface RevenueEvents {
   '*': BaseEvent;
 }
 
-// ============ EVENT PAYLOADS ============
+// ============ BASE & UTILITY ============
 
 /**
- * Base event with auto-injected fields
+ * Base event with auto-injected fields (type + timestamp added by EventBus)
  */
 export interface BaseEvent {
   readonly type: string;
@@ -77,10 +77,14 @@ export interface BaseEvent {
   readonly metadata?: Record<string, unknown>;
 }
 
-/**
- * Event data types (what services emit - without type/timestamp)
- * These are clean, explicit types that make it obvious what data to pass
- */
+/** Derive a full event type from its data type */
+type EventOf<K extends string, D> = D & BaseEvent & { readonly type: K };
+
+// ============ EVENT DATA (single source of truth) ============
+// These are the clean types that services emit (without type/timestamp).
+// Full event types are derived below — no duplication.
+
+// Payment
 export interface PaymentVerifiedEventData {
   transaction: TransactionDocument;
   paymentResult: PaymentResult | PaymentResultData;
@@ -114,6 +118,7 @@ export interface PaymentProcessingEventData {
   paymentResult: PaymentResult | PaymentResultData;
 }
 
+// Monetization
 export interface MonetizationCreatedEventData {
   monetizationType: string;
   subscription?: SubscriptionDocument;
@@ -121,207 +126,13 @@ export interface MonetizationCreatedEventData {
   paymentIntent?: PaymentIntentData;
 }
 
-export interface SubscriptionActivatedEventData {
-  subscription: SubscriptionDocument;
-  activatedAt: Date;
-}
-
-export interface TransactionUpdatedEventData {
-  transaction: TransactionDocument;
-  updates: Partial<TransactionDocument>;
-}
-
-export interface PaymentVerifiedEvent extends BaseEvent {
-  type: 'payment.verified';
-  transaction: TransactionDocument;
-  paymentResult: PaymentResult;
-  verifiedBy?: string;
-}
-
-export interface PaymentFailedEvent extends BaseEvent {
-  type: 'payment.failed';
-  transaction: TransactionDocument;
-  error: string;
-  provider: string;
-  paymentIntentId: string;
-}
-
-export interface PaymentRefundedEvent extends BaseEvent {
-  type: 'payment.refunded';
-  transaction: TransactionDocument;
-  refundTransaction: TransactionDocument;
-  refundResult: RefundResult;
-  refundAmount: number;
-  reason?: string;
-  isPartialRefund: boolean;
-}
-
-export interface PaymentRequiresActionEvent extends BaseEvent {
-  type: 'payment.requires_action';
-  transaction: TransactionDocument;
-  paymentResult: PaymentResult;
-  action?: string | Record<string, unknown>;
-}
-
-export interface PaymentProcessingEvent extends BaseEvent {
-  type: 'payment.processing';
-  transaction: TransactionDocument;
-  paymentResult: PaymentResult;
-}
-
-export interface MonetizationCreatedEvent extends BaseEvent {
-  type: 'monetization.created';
-  monetizationType: string;
-  subscription?: SubscriptionDocument;
-  transaction?: TransactionDocument;
-  paymentIntent?: PaymentIntentData;
-}
-
-export interface PurchaseCreatedEvent extends BaseEvent {
-  type: 'purchase.created';
+export interface PurchaseCreatedEventData {
   monetizationType: string;
   subscription?: SubscriptionDocument;
   transaction: TransactionDocument;
   paymentIntent?: PaymentIntentData;
 }
 
-export interface FreeCreatedEvent extends BaseEvent {
-  type: 'free.created';
-  monetizationType: string;
-  subscription?: SubscriptionDocument;
-  transaction?: TransactionDocument; // Optional: free flows may not create transactions
-  paymentIntent?: PaymentIntentData;
-}
-
-export interface SubscriptionCreatedEvent extends BaseEvent {
-  type: 'subscription.created';
-  subscriptionId: string;
-  subscription: SubscriptionDocument;
-  transactionId?: string;
-}
-
-export interface SubscriptionActivatedEvent extends BaseEvent {
-  type: 'subscription.activated';
-  subscription: SubscriptionDocument;
-  activatedAt: Date;
-}
-
-export interface SubscriptionRenewedEvent extends BaseEvent {
-  type: 'subscription.renewed';
-  subscription: SubscriptionDocument;
-  transaction: TransactionDocument;
-  paymentIntent?: PaymentIntentData;
-  renewalCount: number;
-}
-
-export interface SubscriptionCancelledEvent extends BaseEvent {
-  type: 'subscription.cancelled';
-  subscription: SubscriptionDocument;
-  immediate: boolean;
-  reason?: string;
-  canceledAt: Date;
-}
-
-export interface SubscriptionPausedEvent extends BaseEvent {
-  type: 'subscription.paused';
-  subscription: SubscriptionDocument;
-  reason?: string;
-  pausedAt: Date;
-}
-
-export interface SubscriptionResumedEvent extends BaseEvent {
-  type: 'subscription.resumed';
-  subscription: SubscriptionDocument;
-  extendPeriod: boolean;
-  pauseDuration: number;
-  resumedAt: Date;
-}
-
-export interface TransactionUpdatedEvent extends BaseEvent {
-  type: 'transaction.updated';
-  transaction: TransactionDocument;
-  updates: Partial<TransactionDocument>;
-}
-
-export interface EscrowHeldEvent extends BaseEvent {
-  type: 'escrow.held';
-  transaction: TransactionDocument;
-  heldAmount: number;
-  reason: string;
-}
-
-export interface EscrowReleasedEvent extends BaseEvent {
-  type: 'escrow.released';
-  transaction: TransactionDocument;
-  releaseTransaction: TransactionDocument | null;
-  releaseAmount: number;
-  recipientId: string;
-  recipientType: string;
-  reason: string;
-  isFullRelease: boolean;
-  isPartialRelease: boolean;
-}
-
-export interface EscrowCancelledEvent extends BaseEvent {
-  type: 'escrow.cancelled';
-  transaction: TransactionDocument;
-  reason: string;
-}
-
-export interface EscrowSplitEvent extends BaseEvent {
-  type: 'escrow.split';
-  transaction: TransactionDocument;
-  splits: SplitInfo[];
-  splitTransactions: TransactionDocument[];
-  organizationTransaction: TransactionDocument | null;
-  organizationPayout: number;
-}
-
-export interface SettlementCreatedEvent extends BaseEvent {
-  type: 'settlement.created';
-  settlements: SettlementDocument[];
-  transactionId: string;
-  count: number;
-}
-
-export interface SettlementScheduledEvent extends BaseEvent {
-  type: 'settlement.scheduled';
-  settlement: SettlementDocument;
-  scheduledAt: Date;
-}
-
-export interface SettlementProcessingEvent extends BaseEvent {
-  type: 'settlement.processing';
-  settlement: SettlementDocument;
-  processedAt?: Date;
-}
-
-export interface SettlementCompletedEvent extends BaseEvent {
-  type: 'settlement.completed';
-  settlement: SettlementDocument;
-  completedAt?: Date;
-}
-
-export interface SettlementFailedEvent extends BaseEvent {
-  type: 'settlement.failed';
-  settlement: SettlementDocument;
-  reason: string;
-  code?: string;
-  retry: boolean;
-}
-
-export interface WebhookProcessedEvent extends BaseEvent {
-  type: 'webhook.processed';
-  webhookType: string;
-  provider: string;
-  event: WebhookEventData;
-  transaction: TransactionDocument;
-  processedAt: Date;
-}
-
-/**
- * Event data for free.created (transaction is optional)
- */
 export interface FreeCreatedEventData {
   monetizationType: string;
   subscription?: SubscriptionDocument;
@@ -329,18 +140,18 @@ export interface FreeCreatedEventData {
   paymentIntent?: PaymentIntentData;
 }
 
-/**
- * Event data for subscription.created
- */
+// Subscription
 export interface SubscriptionCreatedEventData {
   subscriptionId: string;
   subscription: SubscriptionDocument;
   transactionId?: string;
 }
 
-/**
- * Event data for subscription lifecycle events
- */
+export interface SubscriptionActivatedEventData {
+  subscription: SubscriptionDocument;
+  activatedAt: Date;
+}
+
 export interface SubscriptionRenewedEventData {
   subscription: SubscriptionDocument;
   transaction: TransactionDocument;
@@ -368,9 +179,13 @@ export interface SubscriptionResumedEventData {
   resumedAt: Date;
 }
 
-/**
- * Event data for escrow events
- */
+// Transaction
+export interface TransactionUpdatedEventData {
+  transaction: TransactionDocument;
+  updates: Partial<TransactionDocument>;
+}
+
+// Escrow
 export interface EscrowHeldEventData {
   transaction: TransactionDocument;
   heldAmount: number;
@@ -401,9 +216,7 @@ export interface EscrowSplitEventData {
   organizationPayout: number;
 }
 
-/**
- * Event data for settlement events
- */
+// Settlement
 export interface SettlementCreatedEventData {
   settlements: SettlementDocument[];
   transactionId: string;
@@ -432,9 +245,7 @@ export interface SettlementFailedEventData {
   retry: boolean;
 }
 
-/**
- * Event data for webhook events
- */
+// Webhook
 export interface WebhookProcessedEventData {
   webhookType: string;
   provider: string;
@@ -443,25 +254,58 @@ export interface WebhookProcessedEventData {
   processedAt: Date;
 }
 
+// ============ DERIVED EVENT TYPES ============
+// Full event = EventData + BaseEvent + { type: literal }
+
+export type PaymentVerifiedEvent = EventOf<'payment.verified', PaymentVerifiedEventData>;
+export type PaymentFailedEvent = EventOf<'payment.failed', PaymentFailedEventData>;
+export type PaymentRefundedEvent = EventOf<'payment.refunded', PaymentRefundedEventData>;
+export type PaymentRequiresActionEvent = EventOf<'payment.requires_action', PaymentRequiresActionEventData>;
+export type PaymentProcessingEvent = EventOf<'payment.processing', PaymentProcessingEventData>;
+
+export type MonetizationCreatedEvent = EventOf<'monetization.created', MonetizationCreatedEventData>;
+export type PurchaseCreatedEvent = EventOf<'purchase.created', PurchaseCreatedEventData>;
+export type FreeCreatedEvent = EventOf<'free.created', FreeCreatedEventData>;
+
+export type SubscriptionCreatedEvent = EventOf<'subscription.created', SubscriptionCreatedEventData>;
+export type SubscriptionActivatedEvent = EventOf<'subscription.activated', SubscriptionActivatedEventData>;
+export type SubscriptionRenewedEvent = EventOf<'subscription.renewed', SubscriptionRenewedEventData>;
+export type SubscriptionCancelledEvent = EventOf<'subscription.cancelled', SubscriptionCancelledEventData>;
+export type SubscriptionPausedEvent = EventOf<'subscription.paused', SubscriptionPausedEventData>;
+export type SubscriptionResumedEvent = EventOf<'subscription.resumed', SubscriptionResumedEventData>;
+
+export type TransactionUpdatedEvent = EventOf<'transaction.updated', TransactionUpdatedEventData>;
+
+export type EscrowHeldEvent = EventOf<'escrow.held', EscrowHeldEventData>;
+export type EscrowReleasedEvent = EventOf<'escrow.released', EscrowReleasedEventData>;
+export type EscrowCancelledEvent = EventOf<'escrow.cancelled', EscrowCancelledEventData>;
+export type EscrowSplitEvent = EventOf<'escrow.split', EscrowSplitEventData>;
+
+export type SettlementCreatedEvent = EventOf<'settlement.created', SettlementCreatedEventData>;
+export type SettlementScheduledEvent = EventOf<'settlement.scheduled', SettlementScheduledEventData>;
+export type SettlementProcessingEvent = EventOf<'settlement.processing', SettlementProcessingEventData>;
+export type SettlementCompletedEvent = EventOf<'settlement.completed', SettlementCompletedEventData>;
+export type SettlementFailedEvent = EventOf<'settlement.failed', SettlementFailedEventData>;
+
+export type WebhookProcessedEvent = EventOf<'webhook.processed', WebhookProcessedEventData>;
+
+// ============ EVENT DATA MAP ============
+
 /**
- * Clean mapping of event names to their data types (what you emit)
- * This makes it crystal clear what data each event needs
- * Only includes events that are actually emitted in the codebase
+ * Maps event names to their data types (what you pass to emit).
+ * EventBus auto-injects type + timestamp.
  */
 export interface EventDataMap {
-  // Payment events
   'payment.verified': PaymentVerifiedEventData;
   'payment.failed': PaymentFailedEventData;
   'payment.refunded': PaymentRefundedEventData;
   'payment.requires_action': PaymentRequiresActionEventData;
   'payment.processing': PaymentProcessingEventData;
 
-  // Monetization events
   'monetization.created': MonetizationCreatedEventData;
-  'purchase.created': MonetizationCreatedEventData;
+  'purchase.created': PurchaseCreatedEventData;
   'free.created': FreeCreatedEventData;
 
-  // Subscription events
   'subscription.created': SubscriptionCreatedEventData;
   'subscription.activated': SubscriptionActivatedEventData;
   'subscription.renewed': SubscriptionRenewedEventData;
@@ -469,23 +313,19 @@ export interface EventDataMap {
   'subscription.paused': SubscriptionPausedEventData;
   'subscription.resumed': SubscriptionResumedEventData;
 
-  // Transaction events
   'transaction.updated': TransactionUpdatedEventData;
 
-  // Escrow events
   'escrow.held': EscrowHeldEventData;
   'escrow.released': EscrowReleasedEventData;
   'escrow.cancelled': EscrowCancelledEventData;
   'escrow.split': EscrowSplitEventData;
 
-  // Settlement events
   'settlement.created': SettlementCreatedEventData;
   'settlement.scheduled': SettlementScheduledEventData;
   'settlement.processing': SettlementProcessingEventData;
   'settlement.completed': SettlementCompletedEventData;
   'settlement.failed': SettlementFailedEventData;
 
-  // Webhook events
   'webhook.processed': WebhookProcessedEventData;
 }
 
