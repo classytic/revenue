@@ -3,16 +3,15 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
   entry: [
     'src/index.ts',
-    'src/core/index.ts',
-    'src/core/events.ts',
     'src/enums/index.ts',
-    'src/infrastructure/plugins/index.ts',
-    'src/reconciliation/index.ts',
-    'src/schemas/index.ts',
-    'src/schemas/validation.ts',
-    'src/utils/index.ts',
+    'src/events/index.ts',
+    'src/validators/index.ts',
     'src/providers/index.ts',
-    'src/application/services/index.ts',
+    'src/bridges/index.ts',
+    'src/repositories/create-repositories.ts',
+    'src/shared/index.ts',
+    'src/core/state-machines.ts',
+    'src/plugins/plugin.interface.ts',
   ],
   format: 'esm',
   dts: {
@@ -21,5 +20,7 @@ export default defineConfig({
   clean: true,
   sourcemap: false,
   minify: false,
-  external: ['mongoose', 'nanoid', 'zod', 'bson', '@classytic/shared-types'],
+  deps: {
+    neverBundle: ['mongoose', 'zod', /^@classytic\//],
+  },
 });

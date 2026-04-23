@@ -1,10 +1,3 @@
-/**
- * Escrow/Hold Enums
- * @classytic/revenue
- *
- * Enums for platform-as-intermediary payment flow
- */
-
 export const HOLD_STATUS = {
   PENDING: 'pending',
   HELD: 'held',
@@ -27,9 +20,7 @@ export const RELEASE_REASON = {
 
 export type ReleaseReason = typeof RELEASE_REASON;
 export type ReleaseReasonValue = ReleaseReason[keyof ReleaseReason];
-export const RELEASE_REASON_VALUES = Object.values(
-  RELEASE_REASON,
-) as ReleaseReasonValue[];
+export const RELEASE_REASON_VALUES = Object.values(RELEASE_REASON) as ReleaseReasonValue[];
 
 export const HOLD_REASON = {
   PAYMENT_VERIFICATION: 'payment_verification',
@@ -52,10 +43,7 @@ export function isHoldStatus(value: unknown): value is HoldStatusValue {
 }
 
 export function isReleaseReason(value: unknown): value is ReleaseReasonValue {
-  return (
-    typeof value === 'string' &&
-    releaseReasonSet.has(value as ReleaseReasonValue)
-  );
+  return typeof value === 'string' && releaseReasonSet.has(value as ReleaseReasonValue);
 }
 
 export function isHoldReason(value: unknown): value is HoldReasonValue {

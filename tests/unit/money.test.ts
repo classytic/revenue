@@ -1,206 +1,156 @@
 /**
- * Money Utility Tests
- * @classytic/revenue
+ * Money Utility Tests — @classytic/revenue
  *
- * Tests integer-safe money arithmetic, allocation, and formatting
+ * Revenue re-exports the canonical `Money` surface from
+ * `@classytic/primitives/money` (PACKAGE_RULES P1/P12). These tests pin the
+ * re-export contract so hosts continue to get functional equivalence and
+ * revenue's own arithmetic stays integer-safe.
  */
 
-import { describe, it, expect } from 'vitest';
-import { Money, toSmallestUnit, fromSmallestUnit } from '../../revenue/src/shared/utils/formatters/money.js';
+import { describe, expect, it } from 'vitest';
+import {
+  addMoney,
+  compareMoney,
+  CurrencyMismatchError,
+  equalsMoney,
+  fromMajor,
+  fromSmallestUnit,
+  isNegativeMoney,
+  isPositiveMoney,
+  isZeroMoney,
+  money,
+  multiplyMoney,
+  subtractMoney,
+  sumMoney,
+  toSmallestUnit,
+} from '../../revenue/src/shared/formatters/money.js';
+import { allocate } from '@classytic/primitives/split-allocation';
 
-describe('Money', () => {
-  describe('Factory Methods', () => {
-    it('should create from cents', () => {
-      const m = Money.cents(1999, 'USD');
+describe('Money (re-exported from @classytic/primitives/money)', () => {
+  describe('Construction', () => {
+    it('money() builds from minor-unit integer', () => {
+      const m = money(1999, 'USD');
       expect(m.amount).toBe(1999);
       expect(m.currency).toBe('USD');
     });
 
-    it('should create from major unit', () => {
-      const m = Money.of(19.99, 'USD');
-      expect(m.amount).toBe(1999);
+    it('fromMajor() scales to minor units', () => {
+      expect(fromMajor(19.99, 'USD').amount).toBe(1999);
     });
 
-    it('should handle JPY (zero decimals)', () => {
-      const m = Money.of(500, 'JPY');
-      expect(m.amount).toBe(500);
+    it('fromMajor() respects JPY zero-decimal', () => {
+      expect(fromMajor(500, 'JPY').amount).toBe(500);
     });
 
-    it('should create zero money', () => {
-      const m = Money.zero('EUR');
+    it('fromMajor() respects KWD three-decimal', () => {
+      expect(fromMajor(1.234, 'KWD').amount).toBe(1234);
+    });
+
+    it('money() rejects non-integer amounts', () => {
+      expect(() => money(19.5, 'USD')).toThrow(TypeError);
+    });
+
+    it('money(0, currency) is the zero value', () => {
+      const m = money(0, 'EUR');
       expect(m.amount).toBe(0);
       expect(m.currency).toBe('EUR');
-    });
-
-    it('should uppercase currency codes', () => {
-      const m = Money.cents(100, 'usd');
-      expect(m.currency).toBe('USD');
-    });
-
-    it('should reject non-integer amounts', () => {
-      expect(() => Money.cents(19.5, 'USD')).not.toThrow(); // rounds
-      // But direct construction via internals would throw (private constructor)
-    });
-
-    it('should provide shorthand factories', () => {
-      expect(Money.usd(100).currency).toBe('USD');
-      expect(Money.eur(200).currency).toBe('EUR');
-      expect(Money.gbp(300).currency).toBe('GBP');
-      expect(Money.bdt(400).currency).toBe('BDT');
-      expect(Money.inr(500).currency).toBe('INR');
-      expect(Money.jpy(600).currency).toBe('JPY');
+      expect(isZeroMoney(m)).toBe(true);
     });
   });
 
   describe('Arithmetic', () => {
-    it('should add same-currency money', () => {
-      const result = Money.usd(1000).add(Money.usd(500));
-      expect(result.amount).toBe(1500);
+    it('addMoney sums same-currency values', () => {
+      expect(addMoney(money(1000, 'USD'), money(500, 'USD')).amount).toBe(1500);
     });
 
-    it('should subtract same-currency money', () => {
-      const result = Money.usd(1000).subtract(Money.usd(300));
-      expect(result.amount).toBe(700);
+    it('subtractMoney allows negative results', () => {
+      expect(subtractMoney(money(100, 'USD'), money(500, 'USD')).amount).toBe(-400);
     });
 
-    it('should allow negative results from subtraction', () => {
-      const result = Money.usd(100).subtract(Money.usd(500));
-      expect(result.amount).toBe(-400);
+    it('multiplyMoney rounds half-away-from-zero', () => {
+      expect(multiplyMoney(money(33, 'USD'), 0.1).amount).toBe(3);
+      expect(multiplyMoney(money(1000, 'USD'), 0.1).amount).toBe(100);
     });
 
-    it('should multiply by factor', () => {
-      const result = Money.usd(1000).multiply(0.1);
-      expect(result.amount).toBe(100);
+    it('sumMoney zero-case returns zero in currency', () => {
+      expect(sumMoney([], 'USD')).toEqual({ amount: 0, currency: 'USD' });
     });
 
-    it('should round multiplication correctly', () => {
-      // 33 * 0.1 = 3.3 → rounds to 3
-      const result = Money.usd(33).multiply(0.1);
-      expect(result.amount).toBe(3);
-    });
-
-    it('should divide correctly', () => {
-      const result = Money.usd(1000).divide(3);
-      expect(result.amount).toBe(333);
-    });
-
-    it('should throw on divide by zero', () => {
-      expect(() => Money.usd(100).divide(0)).toThrow('Cannot divide by zero');
-    });
-
-    it('should calculate percentage', () => {
-      const result = Money.usd(10000).percentage(15);
-      expect(result.amount).toBe(1500);
-    });
-
-    it('should throw on cross-currency arithmetic', () => {
-      expect(() => Money.usd(100).add(Money.eur(100))).toThrow('Currency mismatch');
-      expect(() => Money.usd(100).subtract(Money.gbp(50))).toThrow('Currency mismatch');
+    it('cross-currency arithmetic throws CurrencyMismatchError', () => {
+      expect(() => addMoney(money(100, 'USD'), money(100, 'EUR'))).toThrow(CurrencyMismatchError);
+      expect(() => subtractMoney(money(100, 'USD'), money(50, 'GBP'))).toThrow(CurrencyMismatchError);
     });
   });
 
-  describe('Allocation', () => {
-    it('should allocate evenly with no remainder', () => {
-      const parts = Money.usd(300).allocate([1, 1, 1]);
-      expect(parts.map(p => p.amount)).toEqual([100, 100, 100]);
+  describe('Allocation (primitives/split-allocation)', () => {
+    it('allocates evenly with no remainder', () => {
+      const result = allocate(300, [{ id: 'a' }, { id: 'b' }, { id: 'c' }], 'equal');
+      expect(result.parts.map(p => p.amount)).toEqual([100, 100, 100]);
     });
 
-    it('should distribute remainder using largest-remainder method', () => {
-      const parts = Money.usd(100).allocate([1, 1, 1]);
-      const total = parts.reduce((sum, p) => sum + p.amount, 0);
+    it('distributes remainder using largest-remainder method', () => {
+      const result = allocate(100, [{ id: 'a' }, { id: 'b' }, { id: 'c' }], 'equal');
+      const total = result.parts.reduce((sum, p) => sum + p.amount, 0);
       expect(total).toBe(100);
-      // 100/3 = 33 each, 1 remainder → first gets +1
-      expect(parts.map(p => p.amount)).toEqual([34, 33, 33]);
+      expect([...result.parts.map(p => p.amount)].sort()).toEqual([33, 33, 34]);
     });
 
-    it('should handle weighted allocation', () => {
-      const parts = Money.usd(10000).allocate([70, 20, 10]);
-      expect(parts[0].amount).toBe(7000);
-      expect(parts[1].amount).toBe(2000);
-      expect(parts[2].amount).toBe(1000);
+    it('allocates proportionally to weights', () => {
+      const result = allocate(
+        10_000,
+        [
+          { id: 'a', weight: 70 },
+          { id: 'b', weight: 20 },
+          { id: 'c', weight: 10 },
+        ],
+        'by-weight',
+      );
+      expect(result.parts.map(p => p.amount)).toEqual([7000, 2000, 1000]);
     });
 
-    it('should maintain total in allocation', () => {
-      const amount = 9999;
-      const parts = Money.usd(amount).allocate([1, 1, 1, 1, 1, 1, 1]);
-      const total = parts.reduce((sum, p) => sum + p.amount, 0);
-      expect(total).toBe(amount);
-    });
-
-    it('should split evenly', () => {
-      const parts = Money.usd(100).split(3);
-      const total = parts.reduce((sum, p) => sum + p.amount, 0);
-      expect(total).toBe(100);
-      expect(parts).toHaveLength(3);
-    });
-
-    it('should throw on zero-sum ratios', () => {
-      expect(() => Money.usd(100).allocate([0, 0, 0])).toThrow();
+    it('preserves total with uneven input', () => {
+      const result = allocate(
+        9999,
+        Array.from({ length: 7 }, (_, i) => ({ id: `s${i}` })),
+        'equal',
+      );
+      const total = result.parts.reduce((sum, p) => sum + p.amount, 0);
+      expect(total).toBe(9999);
     });
   });
 
-  describe('Comparison', () => {
-    it('should check zero/positive/negative', () => {
-      expect(Money.usd(0).isZero()).toBe(true);
-      expect(Money.usd(100).isPositive()).toBe(true);
-      expect(Money.usd(-50).isNegative()).toBe(true);
-      expect(Money.usd(100).isZero()).toBe(false);
+  describe('Predicates and comparison', () => {
+    it('isZero/isPositive/isNegative', () => {
+      expect(isZeroMoney(money(0, 'USD'))).toBe(true);
+      expect(isPositiveMoney(money(100, 'USD'))).toBe(true);
+      expect(isNegativeMoney(money(-50, 'USD'))).toBe(true);
+      expect(isZeroMoney(money(100, 'USD'))).toBe(false);
     });
 
-    it('should check equality', () => {
-      expect(Money.usd(100).equals(Money.usd(100))).toBe(true);
-      expect(Money.usd(100).equals(Money.usd(200))).toBe(false);
-      expect(Money.usd(100).equals(Money.eur(100))).toBe(false);
+    it('equalsMoney checks amount and currency', () => {
+      expect(equalsMoney(money(100, 'USD'), money(100, 'USD'))).toBe(true);
+      expect(equalsMoney(money(100, 'USD'), money(200, 'USD'))).toBe(false);
+      expect(equalsMoney(money(100, 'USD'), money(100, 'EUR'))).toBe(false);
     });
 
-    it('should compare ordering', () => {
-      expect(Money.usd(200).greaterThan(Money.usd(100))).toBe(true);
-      expect(Money.usd(100).lessThan(Money.usd(200))).toBe(true);
-      expect(Money.usd(100).greaterThanOrEqual(Money.usd(100))).toBe(true);
-      expect(Money.usd(100).lessThanOrEqual(Money.usd(100))).toBe(true);
+    it('compareMoney returns -1 / 0 / 1', () => {
+      expect(compareMoney(money(100, 'USD'), money(200, 'USD'))).toBe(-1);
+      expect(compareMoney(money(200, 'USD'), money(100, 'USD'))).toBe(1);
+      expect(compareMoney(money(100, 'USD'), money(100, 'USD'))).toBe(0);
     });
 
-    it('should throw on cross-currency comparison', () => {
-      expect(() => Money.usd(100).greaterThan(Money.eur(100))).toThrow('Currency mismatch');
-    });
-  });
-
-  describe('Formatting', () => {
-    it('should convert to major unit', () => {
-      expect(Money.usd(1999).toUnit()).toBe(19.99);
-      expect(Money.jpy(500).toUnit()).toBe(500);
-    });
-
-    it('should format with currency symbol', () => {
-      const formatted = Money.usd(1999).format('en-US');
-      expect(formatted).toContain('19.99');
-    });
-
-    it('should format amount without symbol', () => {
-      const formatted = Money.usd(1999).formatAmount('en-US');
-      expect(formatted).toContain('19.99');
-    });
-
-    it('should serialize to JSON and back', () => {
-      const original = Money.usd(1999);
-      const json = original.toJSON();
-      const restored = Money.fromJSON(json);
-      expect(restored.amount).toBe(1999);
-      expect(restored.currency).toBe('USD');
-    });
-
-    it('should toString correctly', () => {
-      expect(Money.usd(1999).toString()).toBe('USD 1999');
+    it('compareMoney throws on cross-currency', () => {
+      expect(() => compareMoney(money(100, 'USD'), money(100, 'EUR'))).toThrow(CurrencyMismatchError);
     });
   });
 
-  describe('Helper Functions', () => {
-    it('toSmallestUnit should convert from major to minor', () => {
+  describe('Legacy minor<->major helpers', () => {
+    it('toSmallestUnit converts major to minor', () => {
       expect(toSmallestUnit(19.99, 'USD')).toBe(1999);
       expect(toSmallestUnit(500, 'JPY')).toBe(500);
     });
 
-    it('fromSmallestUnit should convert from minor to major', () => {
+    it('fromSmallestUnit converts minor to major', () => {
       expect(fromSmallestUnit(1999, 'USD')).toBe(19.99);
       expect(fromSmallestUnit(500, 'JPY')).toBe(500);
     });

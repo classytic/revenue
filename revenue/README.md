@@ -1,805 +1,811 @@
-# @classytic/revenue
+# @classytic/revenue v2
 
-> **Universal financial ledger for SaaS & marketplaces**
+> Payment lifecycle engine — transactions, subscriptions, escrow, settlements, commissions.
 
-Track subscriptions, purchases, refunds, escrow, and commission splits in **ONE Transaction model**. Built for enterprise with state machines, automatic retry logic, and multi-gateway support.
-
-[![npm version](https://badge.fury.io/js/@classytic%2Frevenue.svg)](https://www.npmjs.com/package/@classytic/revenue)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+MongoKit repositories with domain verbs. Arc-compatible event transport. No service layer — repositories ARE the API.
 
 ---
 
-## What Is This?
-
-A TypeScript library that handles **all financial transactions** in one unified model:
-
-```typescript
-// Subscription payment
-{ type: 'subscription', flow: 'inflow', amount: 2999 }
-
-// Product purchase
-{ type: 'product_order', flow: 'inflow', amount: 1500 }
-
-// Refund
-{ type: 'refund', flow: 'outflow', amount: 1500 }
-
-// Operational expense
-{ type: 'rent', flow: 'outflow', amount: 50000 }
-```
-
-**One table. Query by type. Calculate P&L. Track cash flow.**
-
----
-## Unified Cashflow Model (Shared Types)
-
-`@classytic/revenue` re-exports the unified transaction types from `@classytic/shared-types`. If you want a single Transaction model across revenue + payroll, define your schema using the shared types. The shared types are an interface only — you own the schema, enums, and indexes. There is no required “common schema”.
-
-Type safety is provided by `ITransaction` only. Transaction categories (`type`) are app-defined; `flow` (`inflow`/`outflow`) is the only shared enum.
-
-```typescript
-import type { ITransaction } from '@classytic/shared-types';
-// or: import type { ITransaction } from '@classytic/revenue';
-```
-
-
-## Why Use This?
-
-**Instead of:**
-- Separate tables for subscriptions, orders, refunds, invoices
-- Scattered payment logic across your codebase
-- Manual state management and validation
-- Building payment provider integrations from scratch
-
-**You get:**
-- ✅ **ONE Transaction model** = Simpler schema, easier queries
-- ✅ **State machines** = Prevents invalid transitions (can't refund a pending payment)
-- ✅ **Provider abstraction** = Swap Stripe/PayPal/SSLCommerz without code changes
-- ✅ **Production-ready** = Retry, circuit breaker, idempotency built-in
-- ✅ **Plugins** = Optional tax, logging, audit trails
-- ✅ **Type-safe** = Full TypeScript + Zod v4 validation
-- ✅ **Integer money** = No floating-point errors
-
----
-
-## When to Use This
-
-| Use Case | Example |
-|----------|---------|
-| **SaaS billing** | Monthly/annual subscriptions with auto-renewal |
-| **Marketplace payouts** | Creator platforms, affiliate commissions |
-| **E-commerce** | Product purchases with refunds |
-| **Escrow** | Hold funds until delivery/conditions met |
-| **Multi-party splits** | Revenue sharing (70% creator, 20% affiliate, 10% platform) |
-| **Financial reporting** | P&L statements, cash flow tracking |
-
----
-
-## Installation
+## Install
 
 ```bash
-npm install @classytic/revenue @classytic/shared-types mongoose zod
+npm install @classytic/revenue @classytic/mongokit mongoose zod
+npm install @classytic/revenue-manual  # built-in manual provider
 ```
-
-**Peer Dependencies:**
-- `@classytic/shared-types` ^1.0.0
-- `mongoose` ^8.0.0 || ^9.0.0
-- `zod` ^4.0.0
-
-**Provider Packages** (install as needed):
-```bash
-npm install @classytic/revenue-manual  # For cash/bank transfers
-# Coming soon: @classytic/revenue-stripe, @classytic/revenue-sslcommerz
-```
-
----
 
 ## Quick Start
 
-### 1. Define Your Transaction Model
-
-Copy the complete model from [examples/05-transaction-model.ts](./examples/05-transaction-model.ts):
-
 ```typescript
-import mongoose, { Schema } from 'mongoose';
-import type { ITransaction } from '@classytic/shared-types';
-import {
-  TRANSACTION_FLOW_VALUES,
-  TRANSACTION_STATUS_VALUES,
-  gatewaySchema,
-  commissionSchema,
-} from '@classytic/revenue';
-
-// Your business categories
-const CATEGORIES = {
-  PLATFORM_SUBSCRIPTION: 'platform_subscription',
-  COURSE_ENROLLMENT: 'course_enrollment',
-  PRODUCT_ORDER: 'product_order',
-  REFUND: 'refund',
-  RENT: 'rent',
-  SALARY: 'salary',
-};
-
-const transactionSchema = new Schema<ITransaction>({
-  organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true },
-  customerId: { type: Schema.Types.ObjectId, ref: 'Customer' },
-  sourceId: { type: Schema.Types.ObjectId },
-  sourceModel: { type: String }, // your app’s model name
-  type: { type: String, enum: Object.values(CATEGORIES), required: true }, // category
-  flow: { type: String, enum: TRANSACTION_FLOW_VALUES, required: true },
-  status: { type: String, enum: TRANSACTION_STATUS_VALUES, default: 'pending' },
-  amount: { type: Number, required: true },
-  currency: { type: String, default: 'USD' },
-  method: { type: String, required: true },
-  gateway: gatewaySchema,
-  commission: commissionSchema,
-  // ... see full model in examples
-}, { timestamps: true });
-
-export const Transaction = mongoose.model('Transaction', transactionSchema);
-```
-
-When you call `monetization.create`, you can optionally pass `sourceId`/`sourceModel` in the input; revenue stores those as `sourceId`/`sourceModel` on the transaction for unified cashflow queries. If you create transactions yourself, set `sourceId`/`sourceModel` directly.
-
-### 2. Initialize Revenue
-
-```typescript
-import { Revenue } from '@classytic/revenue';
+import { createRevenue } from '@classytic/revenue';
 import { ManualProvider } from '@classytic/revenue-manual';
 
-const revenue = Revenue.create({
-  defaultCurrency: 'USD',
-  commissionRate: 0.10,      // 10% platform fee
-  gatewayFeeRate: 0.029,     // 2.9% payment processor
-})
-  .withModels({ Transaction })
-  .withProvider('manual', new ManualProvider())
-  .build();
-```
+const revenue = await createRevenue({
+  connection: mongoose.connection,
+  defaultCurrency: 'BDT',
+  providers: { manual: new ManualProvider() },
+});
 
-### 3. Create a Payment
-
-```typescript
-// Create subscription payment
-const { transaction, subscription } = await revenue.monetization.create({
-  data: {
-    organizationId: 'org_123',
-    customerId: 'user_456',
-  },
-  planKey: 'monthly',
-  monetizationType: 'subscription',
-  amount: 2999,  // $29.99 in cents
+// Create payment — returns raw mongokit doc
+const txn = await revenue.repositories.transaction.createPaymentIntent({
+  amount: 10000,
   gateway: 'manual',
+  data: { customerId: 'cust_1', sourceId: 'order_1', sourceModel: 'Order' },
 });
+// txn.publicId → 'txn_a7b3xk9m2p1q4d5e6f'
+// txn.gateway.metadata.instructions → 'Payment Amount: 10000 BDT...'
 
-console.log(transaction.status);  // 'pending'
-```
-
-### 4. Verify Payment
-
-```typescript
-await revenue.payments.verify(transaction._id);
-
-// Transaction: 'pending' → 'verified'
-// Subscription: 'pending' → 'active'
-```
-
-### 5. Handle Refunds
-
-```typescript
-// Full refund
-await revenue.payments.refund(transaction._id);
-
-// Partial refund: $10.00
-await revenue.payments.refund(transaction._id, 1000, {
-  reason: 'customer_request',
-});
-```
-
----
-
-## Core Concepts
-
-### 1. Transaction Model (Required)
-
-**The universal ledger.** Every financial event becomes a transaction:
-
-```typescript
-// Query subscriptions
-const subscriptions = await Transaction.find({
-  type: 'platform_subscription',
-  status: 'verified'
-});
-
-// Calculate revenue
-const income = await Transaction.aggregate([
-  { $match: { flow: 'inflow', status: 'verified' } },
-  { $group: { _id: null, total: { $sum: '$amount' } } },
-]);
-
-const expenses = await Transaction.aggregate([
-  { $match: { flow: 'outflow', status: 'verified' } },
-  { $group: { _id: null, total: { $sum: '$amount' } } },
-]);
-
-const netRevenue = income[0].total - expenses[0].total;
-```
-
-### 2. Payment Providers (Required)
-
-**How money flows in.** Providers are swappable:
-
-```typescript
-import { ManualProvider } from '@classytic/revenue-manual';
-// import { StripeProvider } from '@classytic/revenue-stripe'; // Coming soon
-
-revenue
-  .withProvider('manual', new ManualProvider())
-  .withProvider('stripe', new StripeProvider({ apiKey: '...' }));
-
-// Use any provider
-await revenue.monetization.create({
-  gateway: 'manual',  // or 'stripe'
-  // ...
-});
-```
-
-### 3. Plugins (Optional)
-
-**Extend behavior.** Plugins add features without coupling:
-
-```typescript
-import { loggingPlugin, createTaxPlugin } from '@classytic/revenue/plugins';
-
-revenue
-  .withPlugin(loggingPlugin({ level: 'info' }))
-  .withPlugin(createTaxPlugin({
-    getTaxConfig: async (orgId) => ({
-      isRegistered: true,
-      defaultRate: 0.15,  // 15% tax
-      pricesIncludeTax: false,
-    }),
-  }));
-```
-
----
-
-## Common Operations
-
-### Create Subscription
-
-```typescript
-const { subscription, transaction } = await revenue.monetization.create({
-  data: {
-    organizationId: 'org_123',
-    customerId: 'user_456',
-  },
-  planKey: 'monthly_premium',
-  monetizationType: 'subscription',
-  amount: 2999,  // $29.99/month
-  gateway: 'manual',
-});
-
-// Later: Renew
-await revenue.monetization.renew(subscription._id);
-
-// Cancel
-await revenue.monetization.cancel(subscription._id, {
-  reason: 'customer_requested',
-});
-```
-
-### Create One-Time Purchase
-
-```typescript
-const { transaction } = await revenue.monetization.create({
-  data: {
-    organizationId: 'org_123',
-    customerId: 'user_456',
-    sourceId: order._id,     // optional: stored as sourceId
-    sourceModel: 'Order',    // optional: stored as sourceModel
-  },
-  planKey: 'one_time',
-  monetizationType: 'purchase',
-  amount: 10000,  // $100.00
-  gateway: 'manual',
-});
-```
-
-### Query Transactions
-
-```typescript
-// By type (category)
-const subscriptions = await Transaction.find({
-  type: 'platform_subscription',
-  status: 'verified',
-});
-
-// By source (sourceId/sourceModel on the transaction)
-const orderPayments = await Transaction.find({
-  sourceModel: 'Order',
-  sourceId: orderId,
-});
-
-// By customer
-const customerTransactions = await Transaction.find({
-  customerId: userId,
-  flow: 'inflow',
-}).sort({ createdAt: -1 });
-```
-
----
-
-## Advanced Features
-
-### State Machines (Data Integrity)
-
-Prevent invalid transitions automatically:
-
-```typescript
-import { TRANSACTION_STATE_MACHINE } from '@classytic/revenue';
-
-// ✅ Valid
-await revenue.payments.verify(transaction._id);  // pending → verified
-
-// ❌ Invalid (throws InvalidStateTransitionError)
-await revenue.payments.verify(completedTransaction._id);  // completed → verified
-
-// Check if transition is valid
-const canRefund = TRANSACTION_STATE_MACHINE.canTransition(
-  transaction.status,
-  'refunded'
+// Verify (admin approves manual payment)
+const verified = await revenue.repositories.transaction.verify(
+  txn.gateway.paymentIntentId,
+  { verifiedBy: 'admin_1' },
 );
+// verified.status → 'verified'
 
-// Get allowed next states
-const allowed = TRANSACTION_STATE_MACHINE.getAllowedTransitions('verified');
-// ['completed', 'refunded', 'partially_refunded', 'cancelled']
-
-// Check if state is terminal
-const isDone = TRANSACTION_STATE_MACHINE.isTerminalState('refunded');  // true
+// Refund — returns the refund transaction doc
+const refundTxn = await revenue.repositories.transaction.refund(
+  txn._id.toString(), 5000, { reason: 'partial return' },
+);
+// refundTxn.type → 'refund', refundTxn.flow → 'outflow', refundTxn.amount → 5000
 ```
 
-**Available State Machines:**
-- `TRANSACTION_STATE_MACHINE` - Payment lifecycle
-- `SUBSCRIPTION_STATE_MACHINE` - Subscription states
-- `SETTLEMENT_STATE_MACHINE` - Payout tracking
-- `HOLD_STATE_MACHINE` - Escrow holds
-- `SPLIT_STATE_MACHINE` - Revenue splits
+## Architecture
 
-### Audit Trail (Track State Changes)
-
-Every state transition is automatically logged:
-
-```typescript
-import { getAuditTrail } from '@classytic/revenue';
-
-const transaction = await Transaction.findById(txId);
-const history = getAuditTrail(transaction);
-
-console.log(history);
-// [
-//   {
-//     resourceType: 'transaction',
-//     fromState: 'pending',
-//     toState: 'verified',
-//     changedAt: 2025-01-15T10:30:00.000Z,
-//     changedBy: 'admin_123',
-//     reason: 'Payment verified'
-//   }
-// ]
+```
+createRevenue(config) --> RevenueEngine
+  |
+  |-- repositories.transaction       extends mongokit Repository
+  |     getAll, getById, getByQuery, create, update, delete, count  (inherited)
+  |     createPaymentIntent, verify, refund, handleWebhook          (domain verbs)
+  |     hold, release, split                                        (escrow verbs)
+  |
+  |-- repositories.subscription      extends mongokit Repository
+  |     getAll, getById, create, update, delete, count              (inherited)
+  |     activate, cancel, pause, resume                             (domain verbs)
+  |
+  |-- repositories.settlement        extends mongokit Repository
+  |     getAll, getById, create, update, delete, count              (inherited)
+  |     schedule, processPending, complete, fail                    (domain verbs)
+  |
+  |-- providers                      ProviderRegistry
+  |-- events                         RevenueEventTransport (Arc-compatible)
+  |-- models                         Mongoose models (for Arc adapter)
 ```
 
-### Escrow (Marketplaces)
+Repositories extend mongokit `Repository`. CRUD + pagination + query is inherited. Domain verbs contain real business logic (state machine transitions, provider calls, event emission). No service layer. No proxy methods.
 
-Hold funds until conditions met:
-
-```typescript
-// Create & verify transaction
-const { transaction } = await revenue.monetization.create({ amount: 10000, ... });
-await revenue.payments.verify(transaction._id);
-
-// Hold in escrow
-await revenue.escrow.hold(transaction._id, {
-  reason: 'pending_delivery',
-  holdUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-});
-
-// Release to seller after delivery confirmed
-await revenue.escrow.release(transaction._id, {
-  recipientId: 'seller_123',
-  recipientType: 'organization',
-  reason: 'delivery_confirmed',
-});
-```
-
-### Commission Splits (Affiliates)
-
-Split revenue between multiple parties:
+## RevenueConfig
 
 ```typescript
-await revenue.escrow.split(transaction._id, {
-  splits: [
-    { recipientId: 'creator_123', recipientType: 'user', percentage: 70 },
-    { recipientId: 'affiliate_456', recipientType: 'user', percentage: 10 },
-  ],
-  organizationPercentage: 20,  // Platform keeps 20%
-});
+const revenue = await createRevenue({
+  // Required
+  connection: mongoose.connection,
+  defaultCurrency: 'BDT',
 
-// Creates 3 transactions:
-// - Creator: $70.00
-// - Affiliate: $10.00
-// - Platform: $20.00
-```
+  // Providers — register any payment gateway
+  providers: {
+    manual: new ManualProvider(),
+    stripe: new StripeProvider({ apiKey: '...' }),
+    bkash: new BkashProvider({ ... }),
+  },
 
-### Events (React to Changes)
-
-```typescript
-import { EventBus } from '@classytic/revenue/events';
-
-revenue.events.on('payment.verified', async (event) => {
-  // Grant access
-  await grantAccess(event.transaction.customerId);
-
-  // Send email
-  await sendEmail(event.transaction.customerId, 'Payment received!');
-});
-
-revenue.events.on('subscription.cancelled', async (event) => {
-  await removeAccess(event.subscription.customerId);
-});
-
-// Other events:
-// - monetization.created, payment.failed, payment.refunded
-// - subscription.activated, subscription.renewed
-// - escrow.held, escrow.released, settlement.completed
-```
-
-### Tax Plugin (Optional)
-
-Automatically calculate and track tax:
-
-```typescript
-import { createTaxPlugin } from '@classytic/revenue/plugins';
-
-const revenue = Revenue.create()
-  .withModels({ Transaction })
-  .withProvider('manual', new ManualProvider())
-  .withPlugin(createTaxPlugin({
-    getTaxConfig: async (organizationId) => ({
-      isRegistered: true,
-      defaultRate: 0.15,          // 15% tax
-      pricesIncludeTax: false,    // Tax-exclusive pricing
-      exemptCategories: ['education', 'donation'],
-    }),
-  }))
-  .build();
-
-// Tax calculated automatically
-const { transaction } = await revenue.monetization.create({
-  amount: 10000,  // $100.00
-  // ...
-});
-
-console.log(transaction.tax);
-// {
-//   rate: 0.15,
-//   baseAmount: 10000,
-//   taxAmount: 1500,     // $15.00
-//   totalAmount: 11500,  // $115.00
-// }
-
-// Tax automatically reversed on refunds
-await revenue.payments.refund(transaction._id);
-```
-
-### Custom Plugins
-
-```typescript
-import { definePlugin } from '@classytic/revenue/plugins';
-
-const notificationPlugin = definePlugin({
-  name: 'notifications',
-  version: '1.0.0',
-  hooks: {
-    'payment.verify.after': async (ctx, input, next) => {
-      const result = await next();
-
-      // Send notification
-      await sendPushNotification({
-        userId: result.transaction.customerId,
-        message: 'Payment verified!',
-      });
-
-      return result;
+  // Modules — progressive opt-in
+  modules: {
+    subscription: true,          // default: true
+    escrow: true,                // default: false
+    settlement: true,            // default: false
+    commission: {                // commission calculation
+      defaultRate: 0.05,
+      gatewayFeeRate: 0.025,
     },
   },
-});
 
-revenue.withPlugin(notificationPlugin);
-```
+  // Event transport — Arc-compatible, drop-in Redis/Outbox
+  eventTransport: new RedisEventTransport(ioredis),
 
-### Resilience Patterns
-
-Built-in retry, circuit breaker, and idempotency:
-
-```typescript
-// Automatic retry on provider failures
-await revenue.payments.verify(transaction._id);
-// Retries 3x with exponential backoff
-
-// Manual idempotency
-import { IdempotencyManager } from '@classytic/revenue';
-
-const idem = new IdempotencyManager();
-
-const result = await idem.execute(
-  'charge_user_123',
-  { amount: 2999 },
-  () => revenue.monetization.create({ ... })
-);
-
-// Second call returns cached result (no duplicate charge)
-```
-
-### Money Utilities
-
-No floating-point errors. All amounts in smallest currency unit (cents):
-
-```typescript
-import { Money, toSmallestUnit, fromSmallestUnit } from '@classytic/revenue';
-
-// Create Money instances
-const price = Money.usd(1999);           // $19.99
-const euro = Money.of(2999, 'EUR');      // €29.99
-
-// Conversions
-toSmallestUnit(19.99, 'USD');   // 1999 cents
-fromSmallestUnit(1999, 'USD');  // 19.99
-
-// Arithmetic (immutable)
-const total = price.add(Money.usd(500));      // $24.99
-const discounted = price.multiply(0.9);       // $17.99
-
-// Fair allocation (handles rounding)
-const [a, b, c] = Money.usd(100).allocate([1, 1, 1]);
-// [34, 33, 33] cents - total = 100 ✓
-
-// Formatting
-price.format();  // "$19.99"
-```
-
----
-
-## When to Use What
-
-| Feature | Use Case |
-|---------|----------|
-| `monetization.create()` | New payment (subscription, purchase, free item) |
-| `payments.verify()` | Mark payment successful after gateway confirmation |
-| `payments.refund()` | Return money to customer (full or partial) |
-| `escrow.hold()` | Marketplace - hold funds until delivery confirmed |
-| `escrow.split()` | Affiliate/creator revenue sharing |
-| Plugins | Tax calculation, logging, audit trails, metrics |
-| Events | Send emails, grant/revoke access, analytics |
-| State machines | Validate transitions, get allowed next actions |
-
----
-
-## Real-World Example
-
-**Course marketplace with affiliates:**
-
-```typescript
-// 1. Student buys course ($99)
-const { transaction } = await revenue.monetization.create({
-  data: {
-    organizationId: 'org_123',
-    customerId: 'student_456',
-    sourceId: enrollmentId,
-    sourceModel: 'Enrollment',
+  // Bridges — optional external integrations
+  bridges: {
+    ledger: { onPaymentVerified: async (txn, ctx) => { ... } },
+    tax: { computeTax: async (amount, taxClass, ctx) => { ... } },
+    notification: { onPaymentVerified: async (txn, ctx) => { ... } },
+    currency: { convert: async (amount, from, to) => { ... } },
+    customer: { getCustomer: async (id) => { ... } },
+    analytics: { trackEvent: async (name, payload) => { ... } },
   },
-  planKey: 'one_time',
-  monetizationType: 'purchase',
-  entity: 'CourseEnrollment',
-  amount: 9900,
-  gateway: 'stripe',
+
+  // MongoKit plugins — inject per repository
+  repositoryPlugins: {
+    transaction: [cachePlugin({ adapter: redis })],
+  },
+
+  // Schema extensions — add custom fields to models
+  schemaOptions: {
+    transaction: {
+      extraFields: { branch: { type: String }, vatInvoiceNumber: { type: String } },
+      extraIndexes: [{ fields: { branch: 1, createdAt: -1 } }],
+    },
+  },
+
+  multiTenant: true,             // default: true
 });
+```
 
-// 2. Payment verified → Grant course access
-await revenue.payments.verify(transaction._id);
+## RevenueEngine
 
-// 3. Hold in escrow (30-day refund window)
-await revenue.escrow.hold(transaction._id);
+```typescript
+interface RevenueEngine {
+  config: Readonly<RevenueConfig>;
+  models: RevenueModels;              // Mongoose models
+  repositories: RevenueRepositories;  // MongoKit repositories (the API surface)
+  providers: ProviderRegistry;        // Payment providers
+  events: RevenueEventTransport;      // Event transport
+  destroy(): Promise<void>;
+}
+```
 
-// 4. After 30 days, split revenue
-await revenue.escrow.split(transaction._id, {
-  splits: [
-    { recipientId: 'creator_123', percentage: 70 },    // $69.30
-    { recipientId: 'affiliate_456', percentage: 10 },  // $9.90
+---
+
+## Arc Integration
+
+Arc auto-generates CRUD routes from mongokit repositories. State transitions go through Arc's **Action Router** (Stripe pattern) — one endpoint per resource, action name in body.
+
+```typescript
+import { defineResource } from '@classytic/arc';
+import { requireRoles } from '@classytic/arc/permissions';
+import { createAdapter } from '#shared/adapter';
+
+export default defineResource({
+  name: 'transaction',
+  prefix: '/revenue/transactions',
+  adapter: createAdapter(revenue.models.Transaction, revenue.repositories.transaction),
+  presets: ['multiTenant', 'softDelete'],
+
+  // State transitions → unified action endpoint POST /:id/action
+  actions: {
+    verify: {
+      handler: (id, data, req) => revenue.repositories.transaction.verify(id, data, req.scope),
+      permissions: requireRoles('admin', 'finance-manager'),
+      schema: { verifiedBy: { type: 'string' } },
+      description: 'Verify a pending payment',
+    },
+    refund: {
+      handler: (id, data, req) =>
+        revenue.repositories.transaction.refund(id, data.amount, { reason: data.reason }, req.scope),
+      permissions: requireRoles('admin'),
+      schema: {
+        amount: { type: 'number', minimum: 1 },
+        reason: { type: 'string', minLength: 3 },
+      },
+    },
+    hold: {
+      handler: (id, data, req) => revenue.repositories.transaction.hold(id, data, req.scope),
+      permissions: requireRoles('admin', 'marketplace-ops'),
+      schema: { reason: { type: 'string' }, amount: { type: 'number' } },
+    },
+    release: {
+      handler: (id, data, req) => revenue.repositories.transaction.release(id, data, req.scope),
+      permissions: requireRoles('admin', 'marketplace-ops'),
+      schema: {
+        recipientId: { type: 'string' },
+        recipientType: { type: 'string' },
+        amount: { type: 'number' },
+      },
+    },
+    split: {
+      handler: (id, data, req) => revenue.repositories.transaction.split(id, data.rules, req.scope),
+      permissions: requireRoles('admin'),
+      schema: { rules: { type: 'array' } },
+    },
+  },
+
+  // Non-state transitions stay as custom routes (webhooks, queries, batch ops)
+  routes: [
+    {
+      method: 'POST', path: '/webhook/:provider',
+      handler: (req) =>
+        revenue.repositories.transaction.handleWebhook(req.params.provider, req.body, req.headers),
+    },
   ],
-  organizationPercentage: 20,  // $19.80 (platform)
+});
+```
+
+**Generated endpoints:**
+```
+GET    /revenue/transactions                  ← list (QueryParser filters)
+GET    /revenue/transactions/:id              ← get single
+PATCH  /revenue/transactions/:id              ← raw update (gate with permissions)
+DELETE /revenue/transactions/:id              ← soft delete
+POST   /revenue/transactions/:id/action       ← verify | refund | hold | release | split
+POST   /revenue/transactions/webhook/:provider ← provider webhooks
+```
+
+**Frontend usage:**
+```typescript
+// State transition via action endpoint
+await fetch('/revenue/transactions/txn_abc123/action', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'verify', verifiedBy: 'admin_1' }),
 });
 
-// 5. Calculate P&L
-const income = await Transaction.aggregate([
-  { $match: { flow: 'inflow', status: 'verified' } },
-  { $group: { _id: null, total: { $sum: '$amount' } } },
-]);
+await fetch('/revenue/transactions/txn_abc123/action', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'refund', amount: 5000, reason: 'customer request' }),
+});
+
+// Filter list via QueryParser
+await fetch('/revenue/transactions?status=verified&amount_gte=1000&sort=-createdAt&page=1&limit=20');
 ```
 
+**Why actions instead of one endpoint per verb:** ~40% fewer routes, single audit point, self-documenting via OpenAPI action enum, type-safe action validation, per-action permissions and schemas. State machine validation lives inside the repository domain verb — `STATE_MACHINE.validate(from, to, id)` throws `InvalidStateTransitionError` if the transition is illegal.
+
 ---
 
-## Submodule Imports
+## Building a Custom Provider
 
-Tree-shakable imports for smaller bundles:
+Every payment gateway implements the `PaymentProvider` abstract class. See `@classytic/revenue-manual` as the reference implementation.
+
+### PaymentProvider Interface
 
 ```typescript
-// Plugins
-import { loggingPlugin, auditPlugin, createTaxPlugin } from '@classytic/revenue/plugins';
+import { PaymentProvider, PaymentIntent, PaymentResult, RefundResult, WebhookEvent } from '@classytic/revenue';
+import type { CreateIntentParams, ProviderCapabilities } from '@classytic/revenue/providers';
 
-// Enums
-import { TRANSACTION_STATUS, PAYMENT_STATUS } from '@classytic/revenue/enums';
+export class StripeProvider extends PaymentProvider {
+  public override readonly name = 'stripe';
 
-// Events
-import { EventBus } from '@classytic/revenue/events';
+  constructor(config: { apiKey: string }) {
+    super(config);
+  }
 
-// Schemas (Mongoose)
-import { transactionSchema, subscriptionSchema } from '@classytic/revenue/schemas';
+  // 1. Create payment intent — called by createPaymentIntent()
+  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+    const stripe = new Stripe(this.config.apiKey as string);
+    const intent = await stripe.paymentIntents.create({
+      amount: params.amount,
+      currency: params.currency,
+      metadata: params.metadata as Stripe.MetadataParam,
+    });
 
-// Validation (Zod)
-import { CreatePaymentSchema } from '@classytic/revenue/schemas/validation';
+    return new PaymentIntent({
+      id: intent.id,
+      sessionId: null,
+      paymentIntentId: intent.id,
+      provider: 'stripe',
+      status: intent.status,
+      amount: intent.amount,
+      currency: intent.currency,
+      clientSecret: intent.client_secret,      // frontend needs this
+      metadata: params.metadata ?? {},
+      raw: intent,
+    });
+  }
 
-// Utilities
-import { retry, calculateCommission } from '@classytic/revenue/utils';
+  // 2. Verify payment — called by verify()
+  async verifyPayment(intentId: string): Promise<PaymentResult> {
+    const stripe = new Stripe(this.config.apiKey as string);
+    const intent = await stripe.paymentIntents.retrieve(intentId);
 
-// Reconciliation
-import { reconcileSettlement } from '@classytic/revenue/reconciliation';
+    return new PaymentResult({
+      id: intent.id,
+      provider: 'stripe',
+      status: intent.status === 'succeeded' ? 'succeeded'
+        : intent.status === 'requires_action' ? 'requires_action'
+        : intent.status === 'processing' ? 'processing'
+        : 'failed',
+      amount: intent.amount,
+      currency: intent.currency,
+      paidAt: intent.status === 'succeeded' ? new Date() : undefined,
+      metadata: {},
+      raw: intent,
+    });
+  }
 
-// Services (advanced)
-import { MonetizationService } from '@classytic/revenue/services';
-```
+  // 3. Get status — same as verify for most providers
+  async getStatus(intentId: string): Promise<PaymentResult> {
+    return this.verifyPayment(intentId);
+  }
 
----
+  // 4. Refund — called by refund()
+  async refund(paymentId: string, amount?: number | null, options?: { reason?: string }): Promise<RefundResult> {
+    const stripe = new Stripe(this.config.apiKey as string);
+    const refund = await stripe.refunds.create({
+      payment_intent: paymentId,
+      amount: amount ?? undefined,
+      reason: options?.reason as any,
+    });
 
-## API Reference
+    return new RefundResult({
+      id: refund.id,
+      provider: 'stripe',
+      status: refund.status === 'succeeded' ? 'succeeded' : 'processing',
+      amount: refund.amount,
+      currency: refund.currency,
+      refundedAt: new Date(),
+      reason: options?.reason,
+      metadata: {},
+      raw: refund,
+    });
+  }
 
-### Services
+  // 5. Handle webhook — called by handleWebhook()
+  async handleWebhook(payload: unknown, headers?: Record<string, string>): Promise<WebhookEvent> {
+    const stripe = new Stripe(this.config.apiKey as string);
+    const sig = headers?.['stripe-signature'] ?? '';
+    const event = stripe.webhooks.constructEvent(payload as string, sig, this.config.webhookSecret as string);
 
-| Service | Methods |
-|---------|---------|
-| `revenue.monetization` | `create()`, `renew()`, `cancel()`, `pause()`, `resume()` |
-| `revenue.payments` | `verify()`, `refund()`, `getStatus()`, `handleWebhook()` |
-| `revenue.transactions` | `get()`, `list()`, `update()` |
-| `revenue.escrow` | `hold()`, `release()`, `cancel()`, `split()`, `getStatus()` |
-| `revenue.settlement` | `createFromSplits()`, `processPending()`, `complete()`, `fail()`, `getSummary()` |
+    return new WebhookEvent({
+      id: event.id,
+      provider: 'stripe',
+      type: event.type,
+      data: {
+        paymentIntentId: (event.data.object as any).id,
+        sessionId: (event.data.object as any).id,
+      },
+      createdAt: new Date(event.created * 1000),
+      raw: event,
+    });
+  }
 
-### State Machines
-
-All state machines provide:
-- `canTransition(from, to)` - Check if transition is valid
-- `validate(from, to, id)` - Validate or throw error
-- `getAllowedTransitions(state)` - Get next allowed states
-- `isTerminalState(state)` - Check if state is final
-
-### Utilities
-
-| Function | Purpose |
-|----------|---------|
-| `calculateCommission(amount, rate, gatewayFee)` | Calculate platform commission |
-| `calculateCommissionWithSplits(...)` | Commission with affiliate support |
-| `reverseTax(originalTax, refundAmount)` | Proportional tax reversal |
-| `retry(fn, options)` | Retry with exponential backoff |
-| `reconcileSettlement(gatewayData, dbData)` | Gateway reconciliation |
-
----
-
-## Error Handling
-
-```typescript
-import {
-  PaymentIntentCreationError,
-  InvalidStateTransitionError,
-  InvalidAmountError,
-  RefundError,
-} from '@classytic/revenue';
-
-try {
-  await revenue.monetization.create({ amount: -100 });  // Invalid
-} catch (error) {
-  if (error instanceof InvalidAmountError) {
-    console.error('Amount must be positive');
-  } else if (error instanceof PaymentIntentCreationError) {
-    console.error('Payment gateway failed:', error.message);
+  // 6. Capabilities — tells revenue what this provider supports
+  override getCapabilities(): ProviderCapabilities {
+    return {
+      supportsWebhooks: true,
+      supportsRefunds: true,
+      supportsPartialRefunds: true,
+      requiresManualVerification: false,
+    };
   }
 }
+```
 
-// Or use Result type (no exceptions)
-import { Result } from '@classytic/revenue';
+### Required Methods
 
-const result = await revenue.execute(
-  () => revenue.payments.verify(txId),
-  { idempotencyKey: 'verify_123' }
-);
+| Method | Called By | Returns | Purpose |
+|---|---|---|---|
+| `createIntent(params)` | `repo.createPaymentIntent()` | `PaymentIntent` | Initialize payment with gateway |
+| `verifyPayment(intentId)` | `repo.verify()` | `PaymentResult` | Check payment status with gateway |
+| `getStatus(intentId)` | Direct call | `PaymentResult` | Poll payment status |
+| `refund(paymentId, amount?, options?)` | `repo.refund()` | `RefundResult` | Process refund with gateway |
+| `handleWebhook(payload, headers?)` | `repo.handleWebhook()` | `WebhookEvent` | Parse incoming webhook |
+| `getCapabilities()` | Engine | `ProviderCapabilities` | Declare supported features |
 
-if (result.ok) {
-  console.log(result.value);
-} else {
-  console.error(result.error);
+### PaymentResult Status Map
+
+| Provider Status | Maps To | Revenue Action |
+|---|---|---|
+| `'succeeded'` | `TRANSACTION_STATUS.VERIFIED` | Mark verified, call ledger bridge |
+| `'failed'` | `TRANSACTION_STATUS.FAILED` | Mark failed |
+| `'processing'` | `TRANSACTION_STATUS.PROCESSING` | Wait for webhook |
+| `'requires_action'` | `TRANSACTION_STATUS.REQUIRES_ACTION` | Return to frontend for 3DS/OTP |
+
+### Register Provider
+
+```typescript
+const revenue = await createRevenue({
+  connection,
+  defaultCurrency: 'BDT',
+  providers: {
+    manual: new ManualProvider(),
+    stripe: new StripeProvider({ apiKey: process.env.STRIPE_KEY }),
+    bkash: new BkashProvider({ appKey: '...', appSecret: '...' }),
+  },
+});
+
+// Use by gateway name
+const txn = await revenue.repositories.transaction.createPaymentIntent({
+  amount: 5000,
+  gateway: 'bkash',   // matches key in providers map
+});
+```
+
+---
+
+## Event System
+
+Revenue uses `RevenueEventTransport` — a structural superset of Arc's `DomainEvent`. Any Arc transport drops in with zero adapters.
+
+### RevenueDomainEvent
+
+```typescript
+interface RevenueDomainEvent<T = unknown> {
+  type: string;              // 'revenue:payment.verified'
+  payload: T;                // event-specific data
+  meta: {
+    id: string;              // crypto.randomUUID()
+    timestamp: Date;
+    resource?: string;       // 'transaction', 'subscription', 'settlement'
+    resourceId?: string;     // publicId (txn_..., sub_..., stl_...)
+    userId?: string;         // from RevenueContext.actorId
+    organizationId?: string; // from RevenueContext.organizationId
+    correlationId?: string;  // from RevenueContext.traceId
+    aggregate?: string;      // 'revenue'
+    version?: number;
+    causationId?: string;
+    tags?: string[];
+  };
+}
+```
+
+### RevenueEventTransport
+
+```typescript
+interface RevenueEventTransport {
+  publish(event: RevenueDomainEvent): Promise<void>;
+  subscribe?(pattern: string, handler: RevenueEventHandler): Promise<() => void>;
+  close?(): Promise<void>;
+}
+```
+
+### Drop-in Transports
+
+```typescript
+// Arc Redis
+import { RedisEventTransport } from '@classytic/arc/events';
+const revenue = await createRevenue({
+  eventTransport: new RedisEventTransport(ioredis),
+});
+
+// Arc Outbox (guaranteed delivery)
+import { EventOutbox } from '@classytic/arc/events';
+const outbox = new EventOutbox({ store: mongoOutboxStore, transport: redisTransport });
+const revenue = await createRevenue({
+  eventTransport: { publish: (event) => outbox.store(event) },
+});
+
+// No events (testing)
+import { NoopRevenueEventTransport } from '@classytic/revenue';
+const revenue = await createRevenue({
+  eventTransport: new NoopRevenueEventTransport(),
+});
+```
+
+### Pattern Matching
+
+```typescript
+await revenue.events.subscribe?.('revenue:payment.*', handler);   // payment.verified, payment.refunded, ...
+await revenue.events.subscribe?.('revenue:*', handler);            // all revenue events
+await revenue.events.subscribe?.('*', handler);                    // everything
+await revenue.events.subscribe?.('revenue:escrow.held', handler);  // exact match
+```
+
+### Event Reference
+
+| Event | Payload |
+|---|---|
+| `revenue:monetization.created` | `{ monetizationType, transaction }` |
+| `revenue:payment.verified` | `{ transaction, paymentResult, verifiedBy }` |
+| `revenue:payment.failed` | `{ transaction, paymentResult }` |
+| `revenue:payment.refunded` | `{ transaction, refundTransaction, refundAmount, reason }` |
+| `revenue:payment.requires_action` | `{ transaction, paymentResult }` |
+| `revenue:payment.processing` | `{ transaction, paymentResult }` |
+| `revenue:subscription.activated` | `{ subscription, activatedAt }` |
+| `revenue:subscription.cancelled` | `{ subscription, immediate, reason }` |
+| `revenue:subscription.paused` | `{ subscription, reason }` |
+| `revenue:subscription.resumed` | `{ subscription, extendPeriod }` |
+| `revenue:escrow.held` | `{ transaction, heldAmount, reason }` |
+| `revenue:escrow.released` | `{ transaction, releaseAmount, recipientId, isFullRelease }` |
+| `revenue:escrow.split` | `{ transaction, splits, organizationPayout }` |
+| `revenue:settlement.scheduled` | `{ settlement, scheduledAt }` |
+| `revenue:settlement.processing` | `{ settlement, processedAt }` |
+| `revenue:settlement.completed` | `{ settlement, completedAt }` |
+| `revenue:settlement.failed` | `{ settlement, reason, retry }` |
+| `revenue:webhook.processed` | `{ webhookType, provider, transaction }` |
+
+---
+
+## Bridges
+
+All bridges are optional. Every method is optional. Features degrade gracefully when bridge is absent.
+
+```typescript
+interface RevenueBridges {
+  ledger?: LedgerBridge;             // post journal entries on payment events
+  tax?: TaxBridge;                    // compute tax for amounts
+  notification?: NotificationBridge;  // send emails/SMS on lifecycle events
+  currency?: CurrencyBridge;          // multi-currency conversion
+  customer?: CustomerBridge;          // resolve customer details
+  analytics?: AnalyticsBridge;        // track events for BI
+  source?: SourceBridge;              // resolve polymorphic source documents (Order, Invoice, Stripe charge, etc.)
+}
+```
+
+### SourceBridge — Polymorphic Source Resolution
+
+Revenue stores `sourceId` as a `String` so it works with any ID format: ObjectId hex, UUIDs, Stripe IDs, REST API resource IDs. Hosts implement `SourceBridge` to teach revenue how to load source documents — works for any deployment topology.
+
+```typescript
+// Same MongoDB, single connection (most common)
+const revenue = await createRevenue({
+  connection,
+  bridges: {
+    source: {
+      async resolve(sourceId, sourceModel) {
+        const Model = mongoose.connection.models[sourceModel];
+        return Model ? await Model.findById(sourceId).lean() : null;
+      },
+    },
+  },
+});
+
+// Microservices (different DBs / HTTP)
+bridges: {
+  source: {
+    async resolve(sourceId, sourceModel) {
+      if (sourceModel === 'Order') return await fetch(`http://orders-svc/${sourceId}`).then(r => r.json());
+      if (sourceModel === 'Invoice') return await invoiceDb.collection('invoices').findOne({ _id: sourceId });
+      return null;
+    },
+  },
+}
+
+// External systems (Stripe, Postgres)
+bridges: {
+  source: {
+    async resolve(sourceId, sourceModel) {
+      if (sourceModel === 'StripeCharge') return await stripe.charges.retrieve(sourceId);
+      if (sourceModel === 'PostgresOrder') {
+        const { rows } = await pg.query('SELECT * FROM orders WHERE id = $1', [sourceId]);
+        return rows[0];
+      }
+      return null;
+    },
+  },
+}
+```
+
+Use it in custom Arc routes for enrichment:
+```typescript
+{
+  method: 'GET',
+  path: '/:id/with-source',
+  handler: async (req) => {
+    const txn = await revenue.repositories.transaction.getById(req.params.id);
+    const source = txn.sourceId
+      ? await revenue.config.bridges?.source?.resolve?.(txn.sourceId, txn.sourceModel, req.scope)
+      : null;
+    return { ...txn, source };
+  },
+}
+```
+
+For batch/list endpoints, use `resolveMany` to avoid N+1 queries:
+```typescript
+async resolveMany(refs, ctx) {
+  // Group by sourceModel, batch fetch, return Map<sourceId, doc>
+}
+```
+
+### LedgerBridge
+
+```typescript
+interface LedgerBridge {
+  onPaymentVerified?(transaction: Record<string, unknown>, ctx: RevenueContext): Promise<void>;
+  onRefundProcessed?(original: Record<string, unknown>, refund: Record<string, unknown>, ctx: RevenueContext): Promise<void>;
+  onSettlementCompleted?(settlement: Record<string, unknown>, ctx: RevenueContext): Promise<void>;
+}
+```
+
+### TaxBridge
+
+```typescript
+interface TaxBridge {
+  computeTax?(amount: number, taxClass: string, ctx: RevenueContext): Promise<{ rate: number; amount: number; inclusive: boolean }>;
 }
 ```
 
 ---
 
-## TypeScript Support
+## Soft Delete & Force Cleanup
 
-Full type safety with auto-completion:
+All financial repositories use mongokit's `softDeletePlugin` with `ttlDays: 365`. Calling `delete()` sets `deletedAt` instead of removing the document. After 365 days, MongoDB's TTL index automatically removes the document.
+
+### Inherited methods (from softDeletePlugin)
 
 ```typescript
-import type {
-  TransactionDocument,
-  SubscriptionDocument,
-  CommissionInfo,
-  RevenueConfig,
-} from '@classytic/revenue';
+// Soft delete (sets deletedAt)
+await revenue.repositories.transaction.delete(id);
 
-const transaction: TransactionDocument = await revenue.transactions.get(txId);
-const commission: CommissionInfo = transaction.commission;
+// Restore a soft-deleted document
+await revenue.repositories.transaction.restore(id);
+
+// List soft-deleted documents
+const trash = await revenue.repositories.transaction.getDeleted({ page: 1, limit: 50 });
+
+// Read a specific soft-deleted document
+const doc = await revenue.repositories.transaction.getById(id, { includeDeleted: true });
 ```
 
+### Custom retention period
+
+For compliance (US/EU financial records: ~7 years), override the plugin via `repositoryPlugins`:
+
+```typescript
+import { softDeletePlugin } from '@classytic/mongokit';
+
+const revenue = await createRevenue({
+  connection,
+  defaultCurrency: 'USD',
+  repositoryPlugins: {
+    transaction: [softDeletePlugin({ ttlDays: 2555 })],   // 7 years
+    subscription: [softDeletePlugin({ ttlDays: 2555 })],
+  },
+});
+```
+
+### Force-delete (admin / GDPR right-to-be-forgotten)
+
+The repository's `Model` is the underlying Mongoose model — use it for raw operations when needed:
+
+```typescript
+// Custom Arc route for surgical force-delete
+{
+  method: 'DELETE',
+  path: '/:id/force',
+  permissions: requireRoles('superadmin', 'compliance-officer'),
+  handler: async (req) => {
+    const id = req.params.id;
+
+    // Verify it IS soft-deleted first
+    const doc = await revenue.repositories.transaction.getById(id, {
+      includeDeleted: true,
+      throwOnNotFound: false,
+    });
+    if (!doc) return { error: 'Not found' };
+    if (!(doc as any).deletedAt) {
+      return { error: 'Document is not soft-deleted. Soft-delete first.' };
+    }
+
+    // Hard delete via raw Mongoose model
+    await revenue.repositories.transaction.Model.deleteOne({ _id: id });
+
+    // Audit
+    await auditBridge.log({
+      action: 'force_delete',
+      resource: 'transaction',
+      resourceId: doc.publicId,
+      actor: req.user.id,
+      reason: req.body.reason,
+    });
+
+    return { success: true, publicId: doc.publicId };
+  },
+}
+```
+
+### Bulk force-cleanup (admin)
+
+```typescript
+{
+  method: 'POST',
+  path: '/force-cleanup',
+  permissions: requireRoles('superadmin'),
+  handler: async (req) => {
+    const { olderThanDays = 30, dryRun = true } = req.body;
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+    const query = { deletedAt: { $ne: null, $lte: cutoff } };
+
+    if (dryRun) {
+      const count = await revenue.repositories.transaction.Model.countDocuments(query);
+      return { dryRun: true, wouldDelete: count };
+    }
+
+    const result = await revenue.repositories.transaction.Model.deleteMany(query);
+    return { deleted: result.deletedCount };
+  },
+}
+```
+
+### Trash bin endpoint
+
+```typescript
+{
+  method: 'GET',
+  path: '/trash',
+  permissions: requireRoles('admin'),
+  handler: (req) => revenue.repositories.transaction.getDeleted({
+    page: req.query.page ?? 1,
+    limit: req.query.limit ?? 50,
+    sort: { deletedAt: -1 },
+  }),
+}
+```
+
+### Cleanup strategies
+
+| Scenario | Approach |
+|---|---|
+| Default retention | TTL plugin handles it — no code needed |
+| Compliance retention (7yr) | Override `softDeletePlugin({ ttlDays: 2555 })` |
+| Test data cleanup | `Model.deleteMany({ deletedAt: { $ne: null } })` in test teardown |
+| GDPR right-to-be-forgotten | Custom force-delete endpoint with audit log |
+| Database size emergency | Bulk force-cleanup with dry-run support |
+
 ---
 
-## Examples
+## Domain Verbs Reference
 
-- [Quick Start](./examples/01-quick-start.ts) - Basic setup and first payment
-- [Subscriptions](./examples/02-subscriptions.ts) - Recurring billing
-- [Escrow & Splits](./examples/03-escrow-splits.ts) - Marketplace payouts
-- [Events & Plugins](./examples/04-events-plugins.ts) - Extend functionality
-- [Transaction Model](./examples/05-transaction-model.ts) - Complete model setup
-- [Resilience Patterns](./examples/06-resilience.ts) - Retry, circuit breaker
+### TransactionRepository
+
+| Method | Input | Returns | Description |
+|---|---|---|---|
+| `createPaymentIntent(params, ctx?)` | `{ amount, gateway, data?, metadata?, idempotencyKey? }` | `TransactionDocument` | Create transaction + call provider |
+| `verify(intentId, options?, ctx?)` | `intentId, { verifiedBy? }` | `TransactionDocument` | Verify via provider, update status |
+| `refund(txnId, amount?, options?, ctx?)` | `txnId, amount?, { reason? }` | `TransactionDocument` (refund) | Create refund transaction |
+| `handleWebhook(provider, payload, headers?, ctx?)` | provider name + raw payload | `TransactionDocument \| null` | Process webhook, update transaction |
+| `hold(txnId, options?, ctx?)` | `txnId, { amount?, reason?, holdUntil? }` | `TransactionDocument` | Place escrow hold |
+| `release(txnId, options, ctx?)` | `txnId, { recipientId, recipientType, amount? }` | `TransactionDocument` | Release escrow |
+| `split(txnId, rules, ctx?)` | `txnId, [{ type, recipientId, recipientType, rate }]` | `TransactionDocument` | Multi-party split |
+
+### SubscriptionRepository
+
+| Method | Input | Returns | Description |
+|---|---|---|---|
+| `activate(subId, options?, ctx?)` | `subId, { timestamp? }` | `SubscriptionDocument` | Activate, calculate period end |
+| `cancel(subId, options?, ctx?)` | `subId, { immediate?, reason? }` | `SubscriptionDocument` | Cancel immediately or at period end |
+| `pause(subId, options?, ctx?)` | `subId, { reason? }` | `SubscriptionDocument` | Pause subscription |
+| `resume(subId, options?, ctx?)` | `subId, { extendPeriod? }` | `SubscriptionDocument` | Resume, optionally extend |
+
+### SettlementRepository
+
+| Method | Input | Returns | Description |
+|---|---|---|---|
+| `schedule(params, ctx?)` | `{ organizationId, recipientId, amount, payoutMethod, ... }` | `SettlementDocument` | Schedule payout |
+| `processPending(options?, ctx?)` | `{ limit?, organizationId?, dryRun? }` | `{ processed, succeeded, failed, settlements }` | Batch process pending |
+| `complete(stlId, details?, ctx?)` | `stlId, { transferReference?, transactionHash? }` | `SettlementDocument` | Mark completed |
+| `fail(stlId, reason, options?, ctx?)` | `stlId, reason, { retry?, code? }` | `SettlementDocument` | Mark failed or retry |
+
+All inherited mongokit methods also available: `getAll`, `getById`, `getByQuery`, `getOne`, `create`, `update`, `delete`, `count`, `exists`, `distinct`, `aggregate`, `withTransaction`.
 
 ---
 
-## Built-in Plugins
+## Stripe-Style IDs
+
+Via mongokit `customIdPlugin` + `prefixedId`:
+
+```
+Transaction:  txn_a7b3xk9m2p1q4d5e6f
+Subscription: sub_x1y2z3a4b5c6d7e8f9g
+Settlement:   stl_m9n8o7p6q5r4s3t2u1v
+```
+
+Internal `_id` stays as MongoDB ObjectId. `publicId` is the external-facing identifier.
+
+## Zod Schemas
+
+Exported at `@classytic/revenue/schemas` for Arc OpenAPI auto-generation and runtime validation.
 
 ```typescript
 import {
-  loggingPlugin,
-  auditPlugin,
-  metricsPlugin,
-  createTaxPlugin
-} from '@classytic/revenue/plugins';
-
-revenue
-  .withPlugin(loggingPlugin({ level: 'info' }))
-  .withPlugin(auditPlugin({
-    store: async (entry) => {
-      await AuditLog.create(entry);
-    },
-  }))
-  .withPlugin(metricsPlugin({
-    onMetric: (metric) => {
-      statsd.timing(metric.name, metric.duration);
-    },
-  }))
-  .withPlugin(createTaxPlugin({ ... }));
+  transactionCreateSchema, transactionUpdateSchema, transactionListFilterSchema,
+  subscriptionCreateSchema, subscriptionListFilterSchema,
+  settlementCreateSchema, settlementListFilterSchema,
+  paymentIntentSchema, paymentVerifySchema, refundSchema,
+  escrowHoldSchema, escrowReleaseSchema, splitRuleSchema,
+} from '@classytic/revenue/schemas';
 ```
 
----
+## Subpath Exports
 
-## Contributing
+| Import | Contents |
+|---|---|
+| `@classytic/revenue` | Main entry — engine, repos, types, everything |
+| `@classytic/revenue/schemas` | Zod validators |
+| `@classytic/revenue/enums` | Status/flow/type enums |
+| `@classytic/revenue/events` | Event types, constants, transports |
+| `@classytic/revenue/providers` | PaymentProvider base, response classes |
+| `@classytic/revenue/bridges` | Bridge interfaces |
+| `@classytic/revenue/utils` | Calculators (commission, tax, splits), Money class |
+| `@classytic/revenue/core` | State machines, errors, Result type |
 
-Contributions welcome! Open an issue or submit a pull request on [GitHub](https://github.com/classytic/revenue).
+## Peer Dependencies
 
----
+```json
+{
+  "@classytic/mongokit": ">=3.5.6",
+  "mongoose": ">=9.0.0",
+  "zod": ">=4.0.0"
+}
+```
 
 ## License
 
-MIT © [Classytic](https://github.com/classytic)
-
----
-
-## Support
-
-- 📖 [Documentation](https://github.com/classytic/revenue#readme)
-- 🐛 [Issues](https://github.com/classytic/revenue/issues)
-- 💬 [Discussions](https://github.com/classytic/revenue/discussions)
+MIT

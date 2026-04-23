@@ -1,25 +1,14 @@
-/**
- * Provider Exports
- * @classytic/revenue/providers
- */
-
 export {
   PaymentProvider,
   PaymentIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
+  type CreateIntentParams,
+  type PaymentIntentData,
+  type PaymentResultData,
+  type RefundResultData,
+  type WebhookEventData,
+  type ProviderCapabilities,
 } from './base.js';
-
-export type { default as PaymentProviderDefault } from './base.js';
-
-// Export types needed by provider implementations
-export type {
-  CreateIntentParams,
-  ProviderCapabilities,
-  PaymentIntentData,
-  PaymentResultData,
-  RefundResultData,
-  WebhookEventData,
-} from '../shared/types/index.js';
-
+export { ProviderRegistry, createProviderRegistry } from './registry.js';

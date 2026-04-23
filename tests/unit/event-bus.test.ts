@@ -1,229 +1,182 @@
 /**
- * EventBus Tests
- * @classytic/revenue
+ * InProcessRevenueBus tests — exercises the arc-compatible fallback transport
+ * shipped with the package so `createRevenue` works without arc installed.
  *
- * Tests type-safe event bus with async handlers
+ * The bus is a structural match of `@classytic/arc`'s `MemoryEventTransport`:
+ * same publish/subscribe contract, same glob rules (exact / `*` / `prefix.*`),
+ * same fire-and-forget error handling. This suite verifies every branch so a
+ * regression on the fallback doesn't silently break arc-drop-in compatibility.
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { EventBus, createEventBus } from '../../revenue/src/core/events.js';
+import { InProcessRevenueBus } from '../../revenue/src/events/in-process-bus.js';
+import { createEvent } from '../../revenue/src/events/helpers.js';
+import { REVENUE_EVENTS } from '../../revenue/src/events/event-constants.js';
 
-describe('EventBus', () => {
-  describe('on / emit', () => {
-    it('should subscribe and receive events', async () => {
-      const bus = createEventBus();
-      const handler = vi.fn();
+describe('InProcessRevenueBus', () => {
+  it('publishes events to subscribers registered for the exact type', async () => {
+    const bus = new InProcessRevenueBus();
+    const handler = vi.fn();
+    await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, handler);
 
-      bus.on('payment.verified', handler);
-      bus.emit('payment.verified', {
-        transaction: { _id: 'tx_1' } as any,
-        paymentResult: { id: 'pr_1', provider: 'manual', status: 'succeeded' } as any,
-      });
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, { amount: 1000 }));
 
-      // Fire-and-forget, give microtask time
-      await new Promise((r) => setTimeout(r, 10));
-
-      expect(handler).toHaveBeenCalledOnce();
-      const event = handler.mock.calls[0][0];
-      expect(event.type).toBe('payment.verified');
-      expect(event.timestamp).toBeInstanceOf(Date);
-      expect(event.transaction._id).toBe('tx_1');
-    });
-
-    it('should support multiple handlers per event', async () => {
-      const bus = createEventBus();
-      const handler1 = vi.fn();
-      const handler2 = vi.fn();
-
-      bus.on('payment.failed', handler1);
-      bus.on('payment.failed', handler2);
-      bus.emit('payment.failed', {
-        transaction: {} as any,
-        error: 'timeout',
-        provider: 'stripe',
-        paymentIntentId: 'pi_1',
-      });
-
-      await new Promise((r) => setTimeout(r, 10));
-      expect(handler1).toHaveBeenCalledOnce();
-      expect(handler2).toHaveBeenCalledOnce();
-    });
-
-    it('should return unsubscribe function', async () => {
-      const bus = createEventBus();
-      const handler = vi.fn();
-
-      const unsub = bus.on('payment.verified', handler);
-      unsub();
-
-      bus.emit('payment.verified', {
-        transaction: {} as any,
-        paymentResult: {} as any,
-      });
-
-      await new Promise((r) => setTimeout(r, 10));
-      expect(handler).not.toHaveBeenCalled();
-    });
+    expect(handler).toHaveBeenCalledTimes(1);
+    const event = handler.mock.calls[0][0];
+    expect(event.type).toBe('revenue:payment.verified');
+    expect(event.payload.amount).toBe(1000);
+    expect(event.meta.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(event.meta.timestamp).toBeInstanceOf(Date);
   });
 
-  describe('once', () => {
-    it('should fire handler only once', async () => {
-      const bus = createEventBus();
-      const handler = vi.fn();
+  it('delivers to every subscriber for the same event type', async () => {
+    const bus = new InProcessRevenueBus();
+    const a = vi.fn();
+    const b = vi.fn();
+    await bus.subscribe(REVENUE_EVENTS.PAYMENT_REFUNDED, a);
+    await bus.subscribe(REVENUE_EVENTS.PAYMENT_REFUNDED, b);
 
-      bus.once('payment.verified', handler);
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_REFUNDED, { refundAmount: 50 }));
 
-      bus.emit('payment.verified', {
-        transaction: {} as any,
-        paymentResult: {} as any,
-      });
-      bus.emit('payment.verified', {
-        transaction: {} as any,
-        paymentResult: {} as any,
-      });
-
-      await new Promise((r) => setTimeout(r, 10));
-      expect(handler).toHaveBeenCalledOnce();
-    });
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
   });
 
-  describe('off', () => {
-    it('should unsubscribe handler', async () => {
-      const bus = createEventBus();
-      const handler = vi.fn();
+  // ── Glob matching (arc-compatible) ──
 
-      bus.on('payment.verified', handler);
-      bus.off('payment.verified', handler);
+  it('supports `*` wildcard for every event', async () => {
+    const bus = new InProcessRevenueBus();
+    const handler = vi.fn();
+    await bus.subscribe('*', handler);
 
-      bus.emit('payment.verified', {
-        transaction: {} as any,
-        paymentResult: {} as any,
-      });
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    await bus.publish(createEvent(REVENUE_EVENTS.SUBSCRIPTION_ACTIVATED, {}));
 
-      await new Promise((r) => setTimeout(r, 10));
-      expect(handler).not.toHaveBeenCalled();
-    });
+    expect(handler).toHaveBeenCalledTimes(2);
   });
 
-  describe('Wildcard', () => {
-    it('should catch all events with * handler', async () => {
-      const bus = createEventBus();
-      const handler = vi.fn();
+  it('supports `prefix.*` glob — matches `prefix.<anything-after-dot>`', async () => {
+    // revenue:payment.* should match payment.verified / payment.refunded but
+    // NOT subscription.activated (different resource) or payment (no dot).
+    const bus = new InProcessRevenueBus();
+    const handler = vi.fn();
+    await bus.subscribe('revenue:payment.*', handler);
 
-      bus.on('*', handler);
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_REFUNDED, {}));
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_FAILED, {}));
+    await bus.publish(createEvent(REVENUE_EVENTS.SUBSCRIPTION_ACTIVATED, {}));
 
-      bus.emit('payment.verified', {
-        transaction: {} as any,
-        paymentResult: {} as any,
-      });
-      bus.emit('payment.failed', {
-        transaction: {} as any,
-        error: 'x',
-        provider: 'y',
-        paymentIntentId: 'z',
-      });
-
-      await new Promise((r) => setTimeout(r, 10));
-      expect(handler).toHaveBeenCalledTimes(2);
-    });
+    expect(handler).toHaveBeenCalledTimes(3);
   });
 
-  describe('emitAsync', () => {
-    it('should wait for all handlers to complete', async () => {
-      const bus = createEventBus();
-      const order: number[] = [];
+  // ── Unsubscribe contract ──
 
-      bus.on('payment.verified', async () => {
-        await new Promise((r) => setTimeout(r, 20));
-        order.push(1);
-      });
+  it('`subscribe` returns an unsubscribe function that removes the listener', async () => {
+    const bus = new InProcessRevenueBus();
+    const handler = vi.fn();
+    const off = await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, handler);
 
-      bus.on('payment.verified', async () => {
-        await new Promise((r) => setTimeout(r, 10));
-        order.push(2);
-      });
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    expect(handler).toHaveBeenCalledTimes(1);
 
-      await bus.emitAsync('payment.verified', {
-        transaction: {} as any,
-        paymentResult: {} as any,
-      });
-
-      // Both handlers should complete
-      expect(order).toHaveLength(2);
-      expect(order).toContain(1);
-      expect(order).toContain(2);
-    });
+    off();
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    expect(handler).toHaveBeenCalledTimes(1); // still 1
   });
 
-  describe('Error Handling', () => {
-    it('should catch async handler errors and log them', async () => {
-      const bus = createEventBus();
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('unsubscribing one listener does not affect siblings on the same event', async () => {
+    const bus = new InProcessRevenueBus();
+    const a = vi.fn();
+    const b = vi.fn();
+    const offA = await bus.subscribe(REVENUE_EVENTS.ESCROW_HELD, a);
+    await bus.subscribe(REVENUE_EVENTS.ESCROW_HELD, b);
 
-      bus.on('payment.verified', async () => {
-        throw new Error('async handler crash');
-      });
+    offA();
+    await bus.publish(createEvent(REVENUE_EVENTS.ESCROW_HELD, {}));
 
-      // Should not throw — error is caught internally
-      bus.emit('payment.verified', {
-        transaction: {} as any,
-        paymentResult: {} as any,
-      });
-
-      await new Promise((r) => setTimeout(r, 10));
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('payment.verified'),
-        expect.any(Error)
-      );
-      consoleSpy.mockRestore();
-    });
+    expect(a).not.toHaveBeenCalled();
+    expect(b).toHaveBeenCalledTimes(1);
   });
 
-  describe('clear / listenerCount', () => {
-    it('should clear all handlers', () => {
-      const bus = createEventBus();
-      bus.on('payment.verified', () => {});
-      bus.on('payment.failed', () => {});
-      bus.once('payment.refunded', () => {});
+  // ── Error isolation ──
 
-      bus.clear();
+  it('a throwing handler does not block other handlers on the same event', async () => {
+    const bus = new InProcessRevenueBus({ logger: { error: vi.fn() } });
+    const bad = vi.fn().mockRejectedValue(new Error('boom'));
+    const good = vi.fn();
 
-      expect(bus.listenerCount('payment.verified')).toBe(0);
-      expect(bus.listenerCount('payment.failed')).toBe(0);
-      expect(bus.listenerCount('payment.refunded')).toBe(0);
-    });
+    await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, bad);
+    await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, good);
 
-    it('should count listeners correctly', () => {
-      const bus = createEventBus();
-      bus.on('payment.verified', () => {});
-      bus.on('payment.verified', () => {});
-      bus.once('payment.verified', () => {});
+    await expect(
+      bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {})),
+    ).resolves.not.toThrow();
 
-      expect(bus.listenerCount('payment.verified')).toBe(3);
-      expect(bus.listenerCount('payment.failed')).toBe(0);
-    });
+    expect(bad).toHaveBeenCalledTimes(1);
+    expect(good).toHaveBeenCalledTimes(1);
   });
 
-  describe('Auto-injected Fields', () => {
-    it('should inject type and timestamp on emit', async () => {
-      const bus = createEventBus();
-      let receivedEvent: any;
+  it('publish with no subscribers resolves without throwing', async () => {
+    const bus = new InProcessRevenueBus();
+    await expect(
+      bus.publish(createEvent(REVENUE_EVENTS.WEBHOOK_PROCESSED, {})),
+    ).resolves.not.toThrow();
+  });
 
-      bus.on('escrow.held', (event) => {
-        receivedEvent = event;
-      });
+  it('`close()` clears every subscription', async () => {
+    const bus = new InProcessRevenueBus();
+    const handler = vi.fn();
+    await bus.subscribe('*', handler);
 
-      bus.emit('escrow.held', {
-        transaction: {} as any,
-        heldAmount: 5000,
-        reason: 'pending_delivery',
-      });
+    await bus.close();
+    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
 
-      await new Promise((r) => setTimeout(r, 10));
-      expect(receivedEvent.type).toBe('escrow.held');
-      expect(receivedEvent.timestamp).toBeInstanceOf(Date);
-      expect(receivedEvent.heldAmount).toBe(5000);
-      expect(receivedEvent.reason).toBe('pending_delivery');
-    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // ── Transport shape (arc contract) ──
+
+  it('exposes a readonly `name` field for transport identification', () => {
+    const bus = new InProcessRevenueBus();
+    expect(bus.name).toBe('in-process-revenue');
+  });
+});
+
+describe('createEvent', () => {
+  it('fills in meta.id (uuid) and meta.timestamp (now)', () => {
+    const before = Date.now();
+    const event = createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, { amount: 10 });
+    const after = Date.now();
+
+    expect(event.type).toBe('revenue:payment.verified');
+    expect(event.payload.amount).toBe(10);
+    expect(event.meta.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(event.meta.timestamp.getTime()).toBeGreaterThanOrEqual(before);
+    expect(event.meta.timestamp.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it('pulls userId / organizationId / correlationId from a RevenueContext', () => {
+    const event = createEvent(
+      REVENUE_EVENTS.PAYMENT_VERIFIED,
+      { amount: 10 },
+      { actorId: 'user_1', organizationId: 'org_1', traceId: 'trace_abc' },
+    );
+
+    expect(event.meta.userId).toBe('user_1');
+    expect(event.meta.organizationId).toBe('org_1');
+    expect(event.meta.correlationId).toBe('trace_abc');
+  });
+
+  it('accepts meta overrides (resource / resourceId)', () => {
+    const event = createEvent(
+      REVENUE_EVENTS.PAYMENT_VERIFIED,
+      { amount: 10 },
+      undefined,
+      { resource: 'transaction', resourceId: 'txn_abc' },
+    );
+
+    expect(event.meta.resource).toBe('transaction');
+    expect(event.meta.resourceId).toBe('txn_abc');
   });
 });

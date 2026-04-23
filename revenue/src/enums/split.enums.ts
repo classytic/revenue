@@ -1,10 +1,3 @@
-/**
- * Split Payment Enums
- * @classytic/revenue
- *
- * Enums for multi-party commission splits
- */
-
 export const SPLIT_TYPE = {
   PLATFORM_COMMISSION: 'platform_commission',
   AFFILIATE_COMMISSION: 'affiliate_commission',
@@ -27,9 +20,7 @@ export const SPLIT_STATUS = {
 
 export type SplitStatus = typeof SPLIT_STATUS;
 export type SplitStatusValue = SplitStatus[keyof SplitStatus];
-export const SPLIT_STATUS_VALUES = Object.values(
-  SPLIT_STATUS,
-) as SplitStatusValue[];
+export const SPLIT_STATUS_VALUES = Object.values(SPLIT_STATUS) as SplitStatusValue[];
 
 export const PAYOUT_METHOD = {
   BANK_TRANSFER: 'bank_transfer',
@@ -53,15 +44,9 @@ export function isSplitType(value: unknown): value is SplitTypeValue {
 }
 
 export function isSplitStatus(value: unknown): value is SplitStatusValue {
-  return (
-    typeof value === 'string' &&
-    splitStatusSet.has(value as SplitStatusValue)
-  );
+  return typeof value === 'string' && splitStatusSet.has(value as SplitStatusValue);
 }
 
 export function isPayoutMethod(value: unknown): value is PayoutMethodValue {
-  return (
-    typeof value === 'string' &&
-    payoutMethodSet.has(value as PayoutMethodValue)
-  );
+  return typeof value === 'string' && payoutMethodSet.has(value as PayoutMethodValue);
 }

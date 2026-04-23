@@ -13,16 +13,17 @@ import {
   SETTLEMENT_STATE_MACHINE,
   HOLD_STATE_MACHINE,
   SPLIT_STATE_MACHINE,
-} from '../../revenue/src/core/state-machine/index.js';
+} from '../../revenue/src/core/state-machines.js';
 import { InvalidStateTransitionError } from '../../revenue/src/core/errors.js';
 
 describe('StateMachine', () => {
-  const simpleMachine = new StateMachine<'a' | 'b' | 'c' | 'd'>(
-    new Map([
-      ['a', new Set(['b', 'c'] as const)],
-      ['b', new Set(['c', 'd'] as const)],
-      ['c', new Set(['d'] as const)],
-      ['d', new Set([] as const)], // terminal
+  type TestState = 'a' | 'b' | 'c' | 'd';
+  const simpleMachine = new StateMachine<TestState>(
+    new Map<TestState, Set<TestState>>([
+      ['a', new Set(['b', 'c'])],
+      ['b', new Set(['c', 'd'])],
+      ['c', new Set(['d'])],
+      ['d', new Set()], // terminal
     ]),
     'test'
   );

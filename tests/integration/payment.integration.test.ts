@@ -1,40 +1,39 @@
 /**
- * Integration Tests - Payment Flow
- * @classytic/revenue
+ * Integration Tests - @classytic/revenue v2
  *
- * Industry best practices:
- * - Real MongoDB (localhost)
- * - Proper TypeScript types
+ * Tests the v2 factory API (createRevenue) with domain verbs on repositories.
+ * No service layer — repositories ARE the domain layer.
+ *
+ * - Real MongoDB (localhost or in-memory fallback)
  * - Arrange-Act-Assert pattern
- * - Descriptive test names
- * - Isolated tests (fresh DB each time)
+ * - Isolated tests (clearCollections each time)
  * - Graceful skip if MongoDB unavailable
  */
 
-import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from 'vitest';
-import mongoose, { Schema, type Model, type Document } from 'mongoose';
+import { beforeAll, afterAll, beforeEach, describe, it, expect } from 'vitest';
+import mongoose from 'mongoose';
 import { connectToMongoDB, disconnectFromMongoDB, clearCollections } from '../helpers/mongodb-memory.js';
+import { warmModels } from '../helpers/warm-models.js';
 import {
-  Revenue,
+  createRevenue,
   PaymentProvider,
   PaymentIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
   type CreateIntentParams,
-  type ProviderCapabilities,
+  TRANSACTION_STATUS,
+  SUBSCRIPTION_STATUS,
+  HOLD_STATUS,
+  SETTLEMENT_STATUS,
 } from '../../revenue/src/index.js';
 
-// ============ CONFIG ============
-const TEST_TIMEOUT = 10000;
+const TEST_TIMEOUT = 15000;
 
 // ============ FAKE PROVIDER ============
-/**
- * In-memory fake provider for testing
- * Tracks payment intents and simulates verification/refund
- */
+
 class FakeProvider extends PaymentProvider {
-  public override readonly name: string = 'fake';
+  public override readonly name = 'fake';
   private store = new Map<string, { amount: number; currency: string; status: string }>();
 
   constructor() {
@@ -51,836 +50,534 @@ class FakeProvider extends PaymentProvider {
 
     return new PaymentIntent({
       id,
-      sessionId: null,
+      sessionId: id,
       paymentIntentId: id,
-      provider: this.name,
+      provider: 'fake',
       status: 'pending',
       amount: params.amount,
-      currency: params.currency ?? 'USD',
-      metadata: params.metadata ?? {},
-    });
-  }
-
-  async verifyPayment(intentId: string): Promise<PaymentResult> {
-    const data = this.store.get(intentId);
-    if (!data) {
-      return new PaymentResult({
-        id: intentId,
-        provider: this.name,
-        status: 'failed',
-        metadata: { error: 'Not found' },
-      });
-    }
-
-    data.status = 'succeeded';
-    return new PaymentResult({
-      id: intentId,
-      provider: this.name,
-      status: 'succeeded',
-      amount: data.amount,
-      currency: data.currency,
-      paidAt: new Date(),
-      metadata: { verified: true },
-    });
-  }
-
-  async getStatus(intentId: string): Promise<PaymentResult> {
-    const data = this.store.get(intentId);
-    return new PaymentResult({
-      id: intentId,
-      provider: this.name,
-      status: data?.status === 'succeeded' ? 'succeeded' : 'processing',
-      amount: data?.amount,
-      currency: data?.currency,
+      currency: params.currency,
       metadata: {},
     });
   }
 
-  async refund(
-    paymentId: string,
-    amount?: number | null,
-    _options?: { reason?: string }
-  ): Promise<RefundResult> {
-    const data = this.store.get(paymentId);
-    const refundAmount = amount ?? data?.amount ?? 0;
-
-    return new RefundResult({
-      id: `refund_${paymentId}_${Date.now()}`,
-      provider: this.name,
-      status: 'succeeded',
-      amount: refundAmount,
-      currency: data?.currency ?? 'USD',
-      refundedAt: new Date(),
-      reason: _options?.reason,
-      metadata: { originalPaymentId: paymentId },
-    });
-  }
-
-  async handleWebhook(
-    payload: unknown,
-    _headers?: Record<string, string>
-  ): Promise<WebhookEvent> {
-    // Parse webhook payload
-    const data = payload as {
-      eventId: string;
-      eventType: string;
-      sessionId?: string;
-      paymentIntentId?: string;
-      createdAt?: Date;
-    };
-
-    // Validate required fields
-    if (!data.eventId || !data.eventType) {
-      throw new Error('Invalid webhook payload: missing eventId or eventType');
+  async verifyPayment(intentId: string): Promise<PaymentResult> {
+    const record = this.store.get(intentId);
+    if (!record) {
+      return new PaymentResult({
+        id: intentId,
+        provider: 'fake',
+        status: 'failed',
+        metadata: {},
+      });
     }
-
-    return new WebhookEvent({
-      id: data.eventId,
-      provider: this.name,
-      type: data.eventType,
-      data: {
-        sessionId: data.sessionId,
-        paymentIntentId: data.paymentIntentId,
-      },
-      createdAt: data.createdAt ?? new Date(),
-      raw: payload,
+    record.status = 'succeeded';
+    return new PaymentResult({
+      id: intentId,
+      provider: 'fake',
+      status: 'succeeded',
+      amount: record.amount,
+      currency: record.currency,
+      paidAt: new Date(),
+      metadata: {},
     });
   }
 
-  override getCapabilities(): ProviderCapabilities {
+  async getStatus(intentId: string): Promise<PaymentResult> {
+    return this.verifyPayment(intentId);
+  }
+
+  async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
+    return new RefundResult({
+      id: `ref_${paymentId}`,
+      provider: 'fake',
+      status: 'succeeded',
+      amount: amount ?? 0,
+      refundedAt: new Date(),
+      metadata: {},
+    });
+  }
+
+  async handleWebhook(payload: unknown): Promise<WebhookEvent> {
+    const p = payload as any;
+    return new WebhookEvent({
+      id: `wh_${Date.now()}`,
+      provider: 'fake',
+      type: p?.type ?? 'payment.succeeded',
+      data: p ?? {},
+      createdAt: new Date(),
+    });
+  }
+
+  override getCapabilities() {
     return {
-      supportsWebhooks: true,  // ✅ Enable webhook support
+      supportsWebhooks: true,
       supportsRefunds: true,
       supportsPartialRefunds: true,
       requiresManualVerification: false,
     };
   }
-
-  // Test helper: manually add a payment intent
-  _addIntent(id: string, amount: number, currency = 'USD', status = 'pending'): void {
-    this.store.set(id, { amount, currency, status });
-  }
-
-  // Test helper: clear all intents
-  _clear(): void {
-    this.store.clear();
-  }
 }
-
-// ============ MONGOOSE SCHEMAS ============
-interface ITransaction extends Document {
-  organizationId?: mongoose.Types.ObjectId;
-  customerId?: mongoose.Types.ObjectId;
-  sourceId?: mongoose.Types.ObjectId;
-  sourceModel?: string;
-  sourceId?: mongoose.Types.ObjectId;
-  sourceModel?: string;
-  category?: string;
-  type: string;
-  flow?: 'inflow' | 'outflow';
-  method?: string;
-  monetizationType?: string;
-  amount: number;
-  currency: string;
-  status: string;
-  gateway?: {
-    type?: string;
-    sessionId?: string | null;
-    paymentIntentId?: string | null;
-    provider?: string;
-    metadata?: Record<string, unknown>;
-    verificationData?: Record<string, unknown>;
-  };
-  commission?: Record<string, unknown>;
-  refundedAmount?: number;
-  refundedAt?: Date;
-  verifiedAt?: Date;
-  verifiedBy?: string | null;
-  failedAt?: Date;
-  failureReason?: string | null;
-  paymentDetails?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  idempotencyKey?: string;
-  webhook?: {
-    eventId?: string;
-    eventType?: string;
-    receivedAt?: Date;
-    processedAt?: Date;
-    data?: Record<string, unknown>;
-  };
-}
-
-interface ISubscription extends Document {
-  customerId?: mongoose.Types.ObjectId;
-  organizationId?: mongoose.Types.ObjectId;
-  planKey?: string;
-  status: string;
-  currentPeriodStart?: Date;
-  currentPeriodEnd?: Date;
-}
-
-const TransactionSchema = new Schema<ITransaction>(
-  {
-    organizationId: { type: Schema.Types.ObjectId, ref: 'Org' },
-    customerId: { type: Schema.Types.ObjectId, ref: 'User' },
-    sourceId: { type: Schema.Types.ObjectId },
-    sourceModel: String,
-    category: String,
-    type: { type: String, default: 'payment' },  // ✅ Type = category
-    flow: { type: String, default: 'inflow' },  // ✅ Flow = direction
-    method: { type: String, default: 'manual' },
-    monetizationType: String,
-    amount: { type: Number, required: true },
-    currency: { type: String, default: 'USD' },
-    status: { type: String, default: 'pending' },
-    gateway: {
-      type: { type: String },
-      sessionId: String,
-      paymentIntentId: String,
-      provider: String,
-      metadata: Schema.Types.Mixed,
-      verificationData: Schema.Types.Mixed,
-    },
-    commission: Schema.Types.Mixed,
-    refundedAmount: Number,
-    refundedAt: Date,
-    verifiedAt: Date,
-    verifiedBy: String,
-    failedAt: Date,
-    failureReason: String,
-    paymentDetails: Schema.Types.Mixed,
-    metadata: Schema.Types.Mixed,
-    idempotencyKey: String,
-    webhook: {
-      eventId: String,
-      eventType: String,
-      receivedAt: Date,
-      processedAt: Date,
-      data: Schema.Types.Mixed,
-    },
-  },
-  { timestamps: true }
-);
-
-const SubscriptionSchema = new Schema<ISubscription>(
-  {
-    customerId: Schema.Types.ObjectId,
-    organizationId: Schema.Types.ObjectId,
-    planKey: String,
-    status: { type: String, default: 'pending' },
-    currentPeriodStart: Date,
-    currentPeriodEnd: Date,
-  },
-  { timestamps: true }
-);
 
 // ============ TEST SETUP ============
-let TransactionModel: Model<ITransaction>;
-let SubscriptionModel: Model<ISubscription>;
-let revenue: Revenue;
-let fakeProvider: FakeProvider;
+
+let engine: Awaited<ReturnType<typeof createRevenue>>;
+let mongoAvailable = false;
 
 beforeAll(async () => {
-  await connectToMongoDB();
+  mongoAvailable = await connectToMongoDB();
+  if (!mongoAvailable) return;
 
-  // Clear existing models to avoid OverwriteModelError
-  if (mongoose.models.Transaction) {
-    delete mongoose.models.Transaction;
-  }
-  if (mongoose.models.Subscription) {
-    delete mongoose.models.Subscription;
-  }
-
-  TransactionModel = mongoose.model<ITransaction>('Transaction', TransactionSchema);
-  SubscriptionModel = mongoose.model<ISubscription>('Subscription', SubscriptionSchema);
+  engine = await createRevenue({
+    connection: mongoose.connection,
+    defaultCurrency: 'USD',
+    providers: { fake: new FakeProvider() },
+    modules: { subscription: true, escrow: true, settlement: true },
+    scope: { enabled: false, fieldType: 'string' },
+  });
+  await warmModels(engine);
 }, TEST_TIMEOUT);
 
 afterAll(async () => {
+  if (engine) await engine.destroy();
   await disconnectFromMongoDB();
 });
 
 beforeEach(async () => {
-  // Clear all collections
-  await clearCollections();
-
-  // Fresh provider instance
-  fakeProvider = new FakeProvider();
-
-  // Build Revenue instance
-  revenue = Revenue
-    .create({ defaultCurrency: 'USD' })
-    .withModels({
-      Transaction: TransactionModel as any,
-      Subscription: SubscriptionModel as any,
-    })
-    .withProvider('fake', fakeProvider)
-    .withDebug(false)
-    .build();
+  if (mongoAvailable) await clearCollections();
 });
 
-// ============ TEST SUITES ============
+// ============ PAYMENT FLOW ============
 
-describe('Integration: Payment Verification', () => {
-  it('should verify a pending payment and update transaction status', async () => {
+describe('Payment Flow', () => {
+  it('should create payment intent and transaction', async () => {
+    if (!mongoAvailable) return;
 
-    // Arrange
-    const paymentIntentId = 'fake_pi_verify_test';
-    fakeProvider._addIntent(paymentIntentId, 1500, 'USD');
-    
-    await TransactionModel.create({
-      amount: 1500,
-      currency: 'USD',
-      status: 'payment_initiated',
-      type: 'payment',
-      flow: 'inflow',
-      gateway: {
-        type: 'fake',
-        paymentIntentId,
-      },
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 10000,
+      gateway: 'fake',
+      data: { customerId: 'cust_1', sourceId: 'order_1', sourceModel: 'Order' },
     });
 
-    // Act
-    const result = await revenue.payments.verify(paymentIntentId);
-
-    // Assert
-    expect(result.status).toBe('verified');
-    expect(result.paymentResult).not.toBeNull();
-    expect(result.paymentResult?.status).toBe('succeeded');
-    expect(result.paymentResult?.amount).toBe(1500);
-
-    // Verify DB state
-    const tx = await TransactionModel.findOne({ 'gateway.paymentIntentId': paymentIntentId });
-    expect(tx).not.toBeNull();
-    expect(tx?.status).toBe('verified');
-    expect(tx?.verifiedAt).toBeInstanceOf(Date);
+    expect(txn).toBeDefined();
+    expect(txn.amount).toBe(10000);
+    expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
+    expect(txn.publicId).toMatch(/^txn_/);
+    expect(txn.gateway?.paymentIntentId).toBeDefined();
   }, TEST_TIMEOUT);
 
-  it('should throw error when verifying non-existent transaction', async () => {
+  it('should verify payment', async () => {
+    if (!mongoAvailable) return;
 
-    // Use a valid-looking payment intent ID that doesn't exist
-    const fakeId = 'fake_pi_does_not_exist_123';
-
-    // Act & Assert - will throw either "not found" or cast error
-    await expect(revenue.payments.verify(fakeId))
-      .rejects.toThrow();
-  }, TEST_TIMEOUT);
-
-  it('should throw error when verifying already verified transaction', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_already_verified';
-    await TransactionModel.create({
-      amount: 1000,
-      currency: 'USD',
-      status: 'verified',
-      gateway: { type: 'fake', paymentIntentId },
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 5000,
+      gateway: 'fake',
     });
 
-    // Act & Assert
-    await expect(revenue.payments.verify(paymentIntentId))
-      .rejects.toThrow(/already verified/i);
+    const verified = await engine.repositories.transaction.verify(
+      txn.gateway!.paymentIntentId as string,
+      { verifiedBy: 'admin_1' },
+    );
+
+    expect(verified.status).toBe(TRANSACTION_STATUS.VERIFIED);
+    expect(verified.verifiedBy).toBe('admin_1');
+    expect(verified.verifiedAt).toBeDefined();
+  }, TEST_TIMEOUT);
+
+  it('should process full refund', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 8000,
+      gateway: 'fake',
+    });
+    await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+
+    const refundTxn = await engine.repositories.transaction.refund(
+      txn._id.toString(),
+      null,
+      { reason: 'customer request' },
+    );
+
+    expect(refundTxn.amount).toBe(8000);
+    expect(refundTxn.type).toBe('refund');
+    expect(refundTxn.flow).toBe('outflow');
+    // Check original was updated
+    const original = await engine.repositories.transaction.getById(txn._id.toString());
+    expect((original as any).status).toBe(TRANSACTION_STATUS.REFUNDED);
+  }, TEST_TIMEOUT);
+
+  it('should process partial refund', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 10000,
+      gateway: 'fake',
+    });
+    await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+
+    const refundTxn = await engine.repositories.transaction.refund(
+      txn._id.toString(),
+      3000,
+      { reason: 'partial' },
+    );
+
+    expect(refundTxn.amount).toBe(3000);
+    const original = await engine.repositories.transaction.getById(txn._id.toString());
+    expect((original as any).status).toBe(TRANSACTION_STATUS.PARTIALLY_REFUNDED);
+  }, TEST_TIMEOUT);
+
+  it('should handle idempotency', async () => {
+    if (!mongoAvailable) return;
+
+    const first = await engine.repositories.transaction.createPaymentIntent({
+      amount: 5000,
+      gateway: 'fake',
+      idempotencyKey: 'idem_123',
+    });
+
+    const second = await engine.repositories.transaction.createPaymentIntent({
+      amount: 5000,
+      gateway: 'fake',
+      idempotencyKey: 'idem_123',
+    });
+
+    expect(first._id.toString()).toBe(second._id.toString());
+  }, TEST_TIMEOUT);
+
+  it('should handle free (zero amount) transactions', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 0,
+      gateway: 'fake',
+      monetizationType: 'free',
+    });
+
+    expect(txn.status).toBe(TRANSACTION_STATUS.VERIFIED);
+    // No payment intent for free — gateway metadata empty
+    expect(txn.gateway?.paymentIntentId).toBeUndefined();
   }, TEST_TIMEOUT);
 });
 
-describe('Integration: Payment Refunds', () => {
-  it('should process a full refund', async () => {
+// ============ ESCROW FLOW ============
 
-    // Arrange
-    const paymentIntentId = 'fake_pi_full_refund';
-    fakeProvider._addIntent(paymentIntentId, 2000, 'USD', 'succeeded');
-    
-    await TransactionModel.create({
-      amount: 2000,
-      currency: 'USD',
-      status: 'verified',
-      type: 'payment',
-      flow: 'inflow',
-      gateway: { type: 'fake', paymentIntentId },
+describe('Escrow Flow', () => {
+  it('should hold and release', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 20000, gateway: 'fake',
     });
+    await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
-    // Act
-    const result = await revenue.payments.refund(paymentIntentId);
+    // Hold — returns updated doc
+    const held = await engine.repositories.transaction.hold(txn._id.toString(), { reason: 'marketplace' });
+    expect(held.hold!.status).toBe(HOLD_STATUS.HELD);
+    expect(held.hold!.heldAmount).toBe(20000);
 
-    // Assert
-    expect(result.transaction.status).toBe('refunded');
-    expect(result.transaction.refundedAmount).toBe(2000);
-    expect(result.refundResult.status).toBe('succeeded');
-    expect(result.refundTransaction).toBeDefined();
-    expect(result.refundTransaction.type).toBe('refund');  // ✅ Type = category
-    expect(result.refundTransaction.flow).toBe('outflow');  // ✅ Flow = direction
-    expect(result.refundTransaction.amount).toBe(2000);
+    // Release — returns updated doc
+    const released = await engine.repositories.transaction.release(
+      txn._id.toString(), { recipientId: 'seller_1', recipientType: 'user' },
+    );
+    expect(released.hold!.status).toBe(HOLD_STATUS.RELEASED);
   }, TEST_TIMEOUT);
 
-  it('should process a partial refund', async () => {
+  it('should split payments', async () => {
+    if (!mongoAvailable) return;
 
-    // Arrange
-    const paymentIntentId = 'fake_pi_partial_refund';
-    fakeProvider._addIntent(paymentIntentId, 3000, 'USD', 'succeeded');
-    
-    await TransactionModel.create({
-      amount: 3000,
-      currency: 'USD',
-      status: 'verified',
-      type: 'payment',
-      flow: 'inflow',
-      gateway: { type: 'fake', paymentIntentId },
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 10000, gateway: 'fake',
+    });
+    await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+
+    // Split — returns updated transaction doc with splits stored on it
+    const updated = await engine.repositories.transaction.split(txn._id.toString(), [
+      { type: 'vendor_payout', recipientId: 'vendor_1', recipientType: 'user', rate: 0.8 },
+      { type: 'platform_commission', recipientId: 'platform', recipientType: 'platform', rate: 0.1 },
+    ]);
+
+    expect(updated.splits).toHaveLength(2);
+    expect((updated.metadata as any)?.organizationPayout).toBe(1000);
+  }, TEST_TIMEOUT);
+});
+
+// ============ SUBSCRIPTION FLOW ============
+
+describe('Subscription Flow', () => {
+  it('should create and activate subscription', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 2999,
+      gateway: 'fake',
+      monetizationType: 'subscription',
+      planKey: 'monthly',
     });
 
-    // Act
-    const result = await revenue.payments.refund(paymentIntentId, 1000);
+    // Create subscription via repository
+    const sub = await engine.repositories.subscription!.create({
+      customerId: 'cust_1',
+      planKey: 'monthly',
+      amount: 2999,
+      status: SUBSCRIPTION_STATUS.PENDING,
+      isActive: false,
+      transactionId: txn._id,
+      startDate: new Date(),
+    } as any);
 
-    // Assert
-    expect(result.transaction.status).toBe('partially_refunded');
-    expect(result.transaction.refundedAmount).toBe(1000);
-    expect(result.refundTransaction.amount).toBe(1000);
+    expect(sub.publicId).toMatch(/^sub_/);
+
+    // Activate
+    const activated = await engine.repositories.subscription!.activate(sub._id.toString());
+    expect(activated.status).toBe(SUBSCRIPTION_STATUS.ACTIVE);
+    expect(activated.isActive).toBe(true);
+    expect(activated.endDate).toBeDefined();
   }, TEST_TIMEOUT);
 
-  it('should process multiple partial refunds on completed transaction', async () => {
+  it('should pause and resume subscription', async () => {
+    if (!mongoAvailable) return;
 
-    // Arrange - Note: Service only allows refunds on 'verified' or 'completed' status
-    // After first partial refund, status becomes 'partially_refunded'
-    // To continue refunding, we need status to stay in allowed state
-    const paymentIntentId = 'fake_pi_multi_refund';
-    fakeProvider._addIntent(paymentIntentId, 5000, 'USD', 'succeeded');
-    
-    const tx = await TransactionModel.create({
+    const sub = await engine.repositories.subscription!.create({
+      customerId: 'cust_1',
+      planKey: 'monthly',
+      amount: 2999,
+      status: SUBSCRIPTION_STATUS.PENDING,
+      isActive: false,
+      startDate: new Date(),
+    } as any);
+
+    await engine.repositories.subscription!.activate(sub._id.toString());
+
+    const paused = await engine.repositories.subscription!.pause(sub._id.toString(), { reason: 'vacation' });
+    expect(paused.status).toBe(SUBSCRIPTION_STATUS.PAUSED);
+
+    const resumed = await engine.repositories.subscription!.resume(sub._id.toString());
+    expect(resumed.status).toBe(SUBSCRIPTION_STATUS.ACTIVE);
+    expect(resumed.isActive).toBe(true);
+  }, TEST_TIMEOUT);
+
+  it('should cancel subscription', async () => {
+    if (!mongoAvailable) return;
+
+    const sub = await engine.repositories.subscription!.create({
+      customerId: 'cust_1',
+      planKey: 'yearly',
+      amount: 29999,
+      status: SUBSCRIPTION_STATUS.PENDING,
+      isActive: false,
+      startDate: new Date(),
+    } as any);
+
+    await engine.repositories.subscription!.activate(sub._id.toString());
+
+    const cancelled = await engine.repositories.subscription!.cancel(sub._id.toString(), {
+      immediate: true,
+      reason: 'no longer needed',
+    });
+    expect(cancelled.status).toBe(SUBSCRIPTION_STATUS.CANCELLED);
+    expect(cancelled.isActive).toBe(false);
+  }, TEST_TIMEOUT);
+});
+
+// ============ SETTLEMENT FLOW ============
+
+describe('Settlement Flow', () => {
+  it('should schedule and complete settlement', async () => {
+    if (!mongoAvailable) return;
+
+    const settlement = await engine.repositories.settlement!.schedule({
+      organizationId: 'org_1',
+      recipientId: 'vendor_1',
+      recipientType: 'user',
+      type: 'split_payout',
+      amount: 8000,
+      currency: 'USD',
+      payoutMethod: 'bank_transfer',
+    });
+
+    expect(settlement.publicId).toMatch(/^stl_/);
+    expect(settlement.status).toBe(SETTLEMENT_STATUS.PENDING);
+
+    // Process pending
+    const processResult = await engine.repositories.settlement!.processPending({ limit: 10 });
+    expect(processResult.succeeded).toBe(1);
+
+    // Complete
+    const completed = await engine.repositories.settlement!.complete(
+      settlement._id.toString(),
+      { transferReference: 'bank_ref_123' },
+    );
+    expect(completed.status).toBe(SETTLEMENT_STATUS.COMPLETED);
+  }, TEST_TIMEOUT);
+
+  it('should handle settlement failure with retry', async () => {
+    if (!mongoAvailable) return;
+
+    const settlement = await engine.repositories.settlement!.schedule({
+      organizationId: 'org_1',
+      recipientId: 'vendor_2',
+      recipientType: 'user',
+      type: 'manual_payout',
       amount: 5000,
       currency: 'USD',
-      status: 'completed', // Using 'completed' for this test
-      type: 'payment',
-      flow: 'inflow',
-      gateway: { type: 'fake', paymentIntentId },
+      payoutMethod: 'manual',
     });
 
-    // Act - First refund
-    const firstRefund = await revenue.payments.refund(paymentIntentId, 1500);
-    expect(firstRefund.transaction.status).toBe('partially_refunded');
-    expect(firstRefund.transaction.refundedAmount).toBe(1500);
+    await engine.repositories.settlement!.processPending();
 
-    // To allow second refund, manually set status back to 'completed' 
-    // (simulating a business workflow where partial refunds don't lock the transaction)
-    await TransactionModel.findByIdAndUpdate(tx._id, { status: 'completed' });
-
-    // Act - Second refund
-    const result = await revenue.payments.refund(paymentIntentId, 2000);
-
-    // Assert
-    expect(result.transaction.refundedAmount).toBe(3500); // 1500 + 2000
-
-    // Verify refund transaction count
-    const refundTxs = await TransactionModel.find({
-      type: 'refund',  // ✅ Type = 'refund', not 'outflow'
-      'metadata.isRefund': true,
-    });
-    expect(refundTxs).toHaveLength(2);
-  }, TEST_TIMEOUT);
-
-  it('should reject refund exceeding refundable amount', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_over_refund';
-    fakeProvider._addIntent(paymentIntentId, 1000, 'USD', 'succeeded');
-    
-    await TransactionModel.create({
-      amount: 1000,
-      currency: 'USD',
-      status: 'verified',
-      type: 'payment',
-      flow: 'inflow',
-      gateway: { type: 'fake', paymentIntentId },
-    });
-
-    // Act & Assert
-    await expect(revenue.payments.refund(paymentIntentId, 1500))
-      .rejects.toThrow(/exceeds/i);
-  }, TEST_TIMEOUT);
-
-  it('should reject refund on pending transaction', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_pending';
-    await TransactionModel.create({
-      amount: 1000,
-      currency: 'USD',
-      status: 'pending',
-      type: 'payment',
-      flow: 'inflow',
-      gateway: { type: 'fake', paymentIntentId },
-    });
-
-    // Act & Assert
-    await expect(revenue.payments.refund(paymentIntentId))
-      .rejects.toThrow(/verified|completed/i);
+    const failed = await engine.repositories.settlement!.fail(
+      settlement._id.toString(),
+      'bank timeout',
+      { retry: true },
+    );
+    expect(failed.status).toBe(SETTLEMENT_STATUS.PENDING); // retried
+    expect(failed.retryCount).toBe(1);
   }, TEST_TIMEOUT);
 });
 
-describe('Integration: Payment Status', () => {
-  it('should get payment status for existing transaction', async () => {
+// ============ REPOSITORY CRUD (inherited from mongokit) ============
 
-    // Arrange
-    const paymentIntentId = 'fake_pi_status';
-    fakeProvider._addIntent(paymentIntentId, 1200, 'USD', 'succeeded');
-    
-    await TransactionModel.create({
-      amount: 1200,
-      currency: 'USD',
-      status: 'verified',
-      type: 'payment',
-      flow: 'inflow',
-      gateway: { type: 'fake', paymentIntentId },
-    });
+describe('Repository CRUD (inherited from mongokit)', () => {
+  it('should getAll with pagination', async () => {
+    if (!mongoAvailable) return;
 
-    // Act
-    const result = await revenue.payments.getStatus(paymentIntentId);
-
-    // Assert
-    expect(result.status).toBe('succeeded');
-    expect(result.provider).toBe('fake');
-    expect(result.transaction).toBeDefined();
-  }, TEST_TIMEOUT);
-});
-
-describe('Integration: Event System', () => {
-  it('should emit events on payment verification', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_events';
-    fakeProvider._addIntent(paymentIntentId, 999, 'USD');
-    
-    await TransactionModel.create({
-      amount: 999,
-      currency: 'USD',
-      status: 'payment_initiated',
-      type: 'payment',
-      flow: 'inflow',
-      gateway: { type: 'fake', paymentIntentId },
-    });
-
-    const eventSpy = vi.fn();
-    revenue.on('*', eventSpy);
-
-    // Act
-    await revenue.payments.verify(paymentIntentId);
-
-    // Assert - give time for async event handlers
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Note: The actual event emission depends on service implementation
-    // This test ensures the event system is wired up
-    expect(revenue.events).toBeDefined();
-  }, TEST_TIMEOUT);
-});
-
-describe('Integration: Revenue Builder', () => {
-  it('should create revenue instance with fluent API', () => {
-
-    // Assert instance properties
-    expect(revenue).toBeDefined();
-    expect(revenue.defaultCurrency).toBe('USD');
-    expect(revenue.hasProvider('fake')).toBe(true);
-    expect(revenue.getProviderNames()).toContain('fake');
-  });
-
-  it('should throw when building without models', () => {
-    expect(() => {
-      Revenue.create()
-        .withProvider('fake', new FakeProvider())
-        .build();
-    }).toThrow(/models/i);
-  });
-
-  it('should throw when building without providers', () => {
-
-    expect(() => {
-      Revenue.create()
-        .withModels({
-          Transaction: TransactionModel as any,
-          Subscription: SubscriptionModel as any,
-        })
-        .build();
-    }).toThrow(/provider/i);
-  });
-});
-
-describe('Integration: Webhook Processing', () => {
-  it('should process payment.succeeded webhook', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_webhook_success';
-    fakeProvider._addIntent(paymentIntentId, 5000, 'USD', 'succeeded');
-
-    const tx = await TransactionModel.create({
-      amount: 5000,
-      currency: 'USD',
-      status: 'payment_initiated',
-      type: 'subscription',
-      flow: 'inflow',
-      gateway: {
-        type: 'fake',
-        paymentIntentId,
-      },
-    });
-
-    // Act
-    const result = await revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_001',
-      eventType: 'payment.succeeded',
-      paymentIntentId,
-      createdAt: new Date(),
-    });
-
-    // Assert
-    expect(result.status).toBe('processed');
-    expect(result.event.type).toBe('payment.succeeded');
-    expect(result.transaction).toBeDefined();
-
-    // Verify DB state
-    const updated = await TransactionModel.findById(tx._id);
-    expect(updated?.status).toBe('verified');
-    expect(updated?.verifiedAt).toBeInstanceOf(Date);
-    expect(updated?.webhook?.eventId).toBe('evt_webhook_001');
-    expect(updated?.webhook?.eventType).toBe('payment.succeeded');
-    expect(updated?.webhook?.processedAt).toBeInstanceOf(Date);
-  }, TEST_TIMEOUT);
-
-  it('should process payment.failed webhook', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_webhook_failed';
-    fakeProvider._addIntent(paymentIntentId, 3000, 'USD', 'failed');
-
-    const tx = await TransactionModel.create({
-      amount: 3000,
-      currency: 'USD',
-      status: 'processing',
-      type: 'subscription',
-      flow: 'inflow',
-      gateway: {
-        type: 'fake',
-        paymentIntentId,
-      },
-    });
-
-    // Act
-    const result = await revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_002',
-      eventType: 'payment.failed',
-      paymentIntentId,
-      createdAt: new Date(),
-    });
-
-    // Assert
-    expect(result.status).toBe('processed');
-    expect(result.event.type).toBe('payment.failed');
-
-    // Verify DB state
-    const updated = await TransactionModel.findById(tx._id);
-    expect(updated?.status).toBe('failed');
-    expect(updated?.failedAt).toBeInstanceOf(Date);
-    expect(updated?.webhook?.eventId).toBe('evt_webhook_002');
-  }, TEST_TIMEOUT);
-
-  it('should process refund.succeeded webhook', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_webhook_refund';
-    fakeProvider._addIntent(paymentIntentId, 4000, 'USD', 'succeeded');
-
-    const tx = await TransactionModel.create({
-      amount: 4000,
-      currency: 'USD',
-      status: 'verified',
-      type: 'subscription',
-      flow: 'inflow',
-      gateway: {
-        type: 'fake',
-        paymentIntentId,
-      },
-    });
-
-    // Act
-    const result = await revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_003',
-      eventType: 'refund.succeeded',
-      paymentIntentId,
-      createdAt: new Date(),
-    });
-
-    // Assert
-    expect(result.status).toBe('processed');
-    expect(result.event.type).toBe('refund.succeeded');
-
-    // Verify DB state
-    const updated = await TransactionModel.findById(tx._id);
-    expect(updated?.status).toBe('refunded');
-    expect(updated?.refundedAt).toBeInstanceOf(Date);
-  }, TEST_TIMEOUT);
-
-  it('should handle duplicate webhook (idempotency)', async () => {
-
-    // Arrange
-    const paymentIntentId = 'fake_pi_webhook_duplicate';
-    fakeProvider._addIntent(paymentIntentId, 2000, 'USD', 'succeeded');
-
-    const tx = await TransactionModel.create({
-      amount: 2000,
-      currency: 'USD',
-      status: 'payment_initiated',
-      type: 'subscription',
-      flow: 'inflow',
-      gateway: {
-        type: 'fake',
-        paymentIntentId,
-      },
-    });
-
-    // Act - First webhook
-    const firstResult = await revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_duplicate',
-      eventType: 'payment.succeeded',
-      paymentIntentId,
-      createdAt: new Date(),
-    });
-
-    expect(firstResult.status).toBe('processed');
-
-    // Act - Duplicate webhook (same eventId)
-    const secondResult = await revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_duplicate',  // Same event ID
-      eventType: 'payment.succeeded',
-      paymentIntentId,
-      createdAt: new Date(),
-    });
-
-    // Assert
-    expect(secondResult.status).toBe('already_processed');
-    expect(secondResult.event.id).toBe('evt_webhook_duplicate');
-
-    // Verify DB state - status should still be verified (not changed)
-    const updated = await TransactionModel.findById(tx._id);
-    expect(updated?.status).toBe('verified');
-  }, TEST_TIMEOUT);
-
-  it('should throw error for webhook with non-existent transaction', async () => {
-
-    // Act & Assert
-    await expect(revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_404',
-      eventType: 'payment.succeeded',
-      paymentIntentId: 'fake_pi_does_not_exist',
-      createdAt: new Date(),
-    })).rejects.toThrow(/not found/i);
-  }, TEST_TIMEOUT);
-
-  it('should throw error for provider without webhook support', async () => {
-
-    // Arrange - Create a provider that doesn't support webhooks
-    class NoWebhookProvider extends FakeProvider {
-      override getCapabilities() {
-        return {
-          ...super.getCapabilities(),
-          supportsWebhooks: false,  // Disable webhooks
-        };
-      }
+    // Create 3 transactions
+    for (let i = 0; i < 3; i++) {
+      await engine.repositories.transaction.createPaymentIntent({
+        amount: 1000 * (i + 1),
+        gateway: 'fake',
+      });
     }
 
-    const noWebhookProvider = new NoWebhookProvider();
-    const revenueWithNoWebhook = Revenue
-      .create({ defaultCurrency: 'USD' })
-      .withModels({
-        Transaction: TransactionModel as any,
-        Subscription: SubscriptionModel as any,
-      })
-      .withProvider('no-webhook', noWebhookProvider)
-      .withDebug(false)
-      .build();
-
-    // Act & Assert
-    await expect(revenueWithNoWebhook.payments.handleWebhook('no-webhook', {
-      eventId: 'evt_webhook_unsupported',
-      eventType: 'payment.succeeded',
-      paymentIntentId: 'fake_pi_test',
-      createdAt: new Date(),
-    })).rejects.toThrow(/webhook/i);
+    const result = await engine.repositories.transaction.getAll({ page: 1, limit: 2 });
+    expect((result as any).docs).toHaveLength(2);
+    expect((result as any).total).toBe(3);
+    expect((result as any).pages).toBe(2);
   }, TEST_TIMEOUT);
 
-  it('should emit webhook.processed event', async () => {
+  it('should getById', async () => {
+    if (!mongoAvailable) return;
 
-    // Arrange
-    const paymentIntentId = 'fake_pi_webhook_event';
-    fakeProvider._addIntent(paymentIntentId, 1500, 'USD', 'succeeded');
-
-    await TransactionModel.create({
-      amount: 1500,
-      currency: 'USD',
-      status: 'payment_initiated',
-      type: 'subscription',
-      flow: 'inflow',
-      gateway: {
-        type: 'fake',
-        paymentIntentId,
-      },
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 7777,
+      gateway: 'fake',
     });
 
-    const eventSpy = vi.fn();
-    revenue.on('webhook.processed', eventSpy);
+    const found = await engine.repositories.transaction.getById(txn._id.toString());
+    expect(found).toBeDefined();
+    expect((found as any).amount).toBe(7777);
+  }, TEST_TIMEOUT);
 
-    // Act
-    await revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_event_test',
-      eventType: 'payment.succeeded',
-      paymentIntentId,
-      createdAt: new Date(),
+  it('should count documents', async () => {
+    if (!mongoAvailable) return;
+
+    await engine.repositories.transaction.createPaymentIntent({ amount: 100, gateway: 'fake' });
+    await engine.repositories.transaction.createPaymentIntent({ amount: 200, gateway: 'fake' });
+
+    const count = await engine.repositories.transaction.count({});
+    expect(count).toBe(2);
+  }, TEST_TIMEOUT);
+});
+
+// ============ MANUAL PROVIDER INTEGRATION ============
+
+describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
+  let manualEngine: Awaited<ReturnType<typeof createRevenue>>;
+
+  beforeAll(async () => {
+    if (!mongoAvailable) return;
+    // Dynamic import — revenue-manual is a sibling package
+    const { ManualProvider } = await import('../../revenue-manual/src/index.js');
+
+    manualEngine = await createRevenue({
+      connection: mongoose.connection,
+      defaultCurrency: 'BDT',
+      providers: { manual: new ManualProvider() as any },
+      modules: { subscription: false, escrow: false, settlement: false },
+      scope: { enabled: false, fieldType: 'string' },
+      forceRecreate: true,
+    });
+    await warmModels(manualEngine);
+  }, TEST_TIMEOUT);
+
+  afterAll(async () => {
+    if (manualEngine) await manualEngine.destroy();
+  });
+
+  it('should create manual payment intent with instructions', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await manualEngine.repositories.transaction.createPaymentIntent({
+      amount: 50000,
+      gateway: 'manual',
+      data: { customerId: 'cust_bd_1', sourceId: 'order_99', sourceModel: 'Order' },
+      metadata: { paymentInstructions: 'Send bKash to 01700000000' },
     });
 
-    // Assert - give time for async event handlers
-    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(txn).toBeDefined();
+    expect(txn.amount).toBe(50000);
+    expect(txn.currency).toBe('BDT');
+    expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
+    expect(txn.publicId).toMatch(/^txn_/);
+    // Payment instructions stored in gateway.metadata
+    expect((txn.gateway as any)?.metadata?.instructions).toContain('bKash');
+  }, TEST_TIMEOUT);
 
-    expect(eventSpy).toHaveBeenCalled();
-    expect(eventSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        webhookType: 'payment.succeeded',
-        provider: 'fake',
-        event: expect.objectContaining({
-          id: 'evt_webhook_event_test',
-          type: 'payment.succeeded',
-        }),
-        transaction: expect.any(Object),
-      })
+  it('should verify manual payment (admin approval)', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await manualEngine.repositories.transaction.createPaymentIntent({
+      amount: 25000, gateway: 'manual',
+    });
+
+    const verified = await manualEngine.repositories.transaction.verify(
+      txn.gateway!.paymentIntentId as string,
+      { verifiedBy: 'admin_bd' },
     );
+
+    expect(verified.status).toBe(TRANSACTION_STATUS.VERIFIED);
+    expect(verified.verifiedBy).toBe('admin_bd');
+    expect(verified.verifiedAt).toBeDefined();
   }, TEST_TIMEOUT);
 
-  it('should find transaction by sessionId if paymentIntentId not available', async () => {
+  it('should refund manual payment', async () => {
+    if (!mongoAvailable) return;
 
-    // Arrange
-    const sessionId = 'fake_session_webhook';
-
-    const tx = await TransactionModel.create({
-      amount: 3500,
-      currency: 'USD',
-      status: 'payment_initiated',
-      type: 'subscription',
-      flow: 'inflow',
-      gateway: {
-        type: 'fake',
-        sessionId,  // Only sessionId, no paymentIntentId
-      },
+    const txn = await manualEngine.repositories.transaction.createPaymentIntent({
+      amount: 30000, gateway: 'manual',
     });
+    await manualEngine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
-    // Act
-    const result = await revenue.payments.handleWebhook('fake', {
-      eventId: 'evt_webhook_session',
-      eventType: 'payment.succeeded',
-      sessionId,  // Webhook includes sessionId
-      createdAt: new Date(),
+    const refundTxn = await manualEngine.repositories.transaction.refund(
+      txn._id.toString(), null, { reason: 'customer cancellation' },
+    );
+
+    expect(refundTxn.amount).toBe(30000);
+    expect(refundTxn.flow).toBe('outflow');
+    expect(refundTxn.type).toBe('refund');
+  }, TEST_TIMEOUT);
+
+  it('should handle full payment lifecycle (create -> verify -> partial refund)', async () => {
+    if (!mongoAvailable) return;
+
+    // Create
+    const txn = await manualEngine.repositories.transaction.createPaymentIntent({
+      amount: 100000, gateway: 'manual',
+      data: { customerId: 'cust_lifecycle', sourceId: 'order_lifecycle', sourceModel: 'Order' },
     });
+    expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
 
-    // Assert
-    expect(result.status).toBe('processed');
-    expect(result.transaction._id.toString()).toBe(tx._id.toString());
+    // Verify
+    const verified = await manualEngine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+    expect(verified.status).toBe(TRANSACTION_STATUS.VERIFIED);
 
-    // Verify DB state
-    const updated = await TransactionModel.findById(tx._id);
-    expect(updated?.status).toBe('verified');
+    // Partial refund — returns the refund doc
+    const refundTxn = await manualEngine.repositories.transaction.refund(txn._id.toString(), 40000, { reason: 'partial return' });
+    expect(refundTxn.amount).toBe(40000);
+
+    // Check original transaction updated
+    const updated = await manualEngine.repositories.transaction.getById(txn._id.toString());
+    expect((updated as any).status).toBe(TRANSACTION_STATUS.PARTIALLY_REFUNDED);
+    expect((updated as any).refundedAmount).toBe(40000);
   }, TEST_TIMEOUT);
 });

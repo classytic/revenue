@@ -1,7 +1,7 @@
 {
   "name": "@classytic/revenue",
-  "version": "1.1.3",
-  "description": "Enterprise revenue management system with subscriptions, payments, escrow, splits - Modern, Type-safe, Resilient",
+  "version": "2.0.0",
+  "description": "Payment lifecycle engine — transactions, subscriptions, escrow, settlements, commissions. MongoKit-powered, Arc-compatible, framework-agnostic.",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.mjs",
@@ -14,7 +14,6 @@
     "payment",
     "saas",
     "billing",
-    "proration",
     "recurring",
     "gateway",
     "webhook",
@@ -22,7 +21,6 @@
     "sslcommerz",
     "bkash",
     "transaction",
-    "invoice",
     "escrow",
     "hold",
     "release",
@@ -30,6 +28,8 @@
     "affiliate",
     "commission",
     "marketplace",
+    "mongokit",
+    "arc",
     "typescript"
   ],
   "author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
@@ -49,7 +49,7 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "tsdown",
     "test": "cd .. && vitest run"
   },
   "exports": {
@@ -57,67 +57,63 @@
       "types": "./dist/index.d.mts",
       "default": "./dist/index.mjs"
     },
-    "./core": {
-      "types": "./dist/core/index.d.mts",
-      "default": "./dist/core/index.mjs"
+    "./schemas": {
+      "types": "./dist/validators/index.d.mts",
+      "default": "./dist/validators/index.mjs"
     },
     "./enums": {
       "types": "./dist/enums/index.d.mts",
       "default": "./dist/enums/index.mjs"
     },
     "./events": {
-      "types": "./dist/core/events.d.mts",
-      "default": "./dist/core/events.mjs"
-    },
-    "./plugins": {
-      "types": "./dist/infrastructure/plugins/index.d.mts",
-      "default": "./dist/infrastructure/plugins/index.mjs"
+      "types": "./dist/events/index.d.mts",
+      "default": "./dist/events/index.mjs"
     },
     "./providers": {
       "types": "./dist/providers/index.d.mts",
       "default": "./dist/providers/index.mjs"
     },
-    "./reconciliation": {
-      "types": "./dist/reconciliation/index.d.mts",
-      "default": "./dist/reconciliation/index.mjs"
+    "./bridges": {
+      "types": "./dist/bridges/index.d.mts",
+      "default": "./dist/bridges/index.mjs"
     },
-    "./schemas": {
-      "types": "./dist/schemas/index.d.mts",
-      "default": "./dist/schemas/index.mjs"
-    },
-    "./schemas/validation": {
-      "types": "./dist/schemas/validation.d.mts",
-      "default": "./dist/schemas/validation.mjs"
-    },
-    "./services": {
-      "types": "./dist/application/services/index.d.mts",
-      "default": "./dist/application/services/index.mjs"
+    "./repositories": {
+      "types": "./dist/repositories/create-repositories.d.mts",
+      "default": "./dist/repositories/create-repositories.mjs"
     },
     "./utils": {
-      "types": "./dist/utils/index.d.mts",
-      "default": "./dist/utils/index.mjs"
+      "types": "./dist/shared/index.d.mts",
+      "default": "./dist/shared/index.mjs"
+    },
+    "./core": {
+      "types": "./dist/core/state-machines.d.mts",
+      "default": "./dist/core/state-machines.mjs"
     }
   },
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "peerDependencies": {
-    "@classytic/shared-types": "^1.0.0",
-    "mongoose": "^8.0.0 || ^9.0.0",
-    "zod": "^4.0.0"
+    "@classytic/mongokit": ">=3.11.0",
+    "@classytic/repo-core": ">=0.2.0",
+    "@classytic/primitives": ">=0.1.0",
+    "mongoose": ">=9.4.1",
+    "zod": ">=4.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "@classytic/mongokit": ">=3.11.0",
+    "@classytic/repo-core": ">=0.2.0",
+    "@classytic/primitives": ">=0.1.0",
     "@types/node": "^22.8.7",
+    "mongoose": "^9.4.1",
     "tsdown": "^0.20.3",
     "typescript": "^5.6.3",
     "zod": "^4.1.13"
-  },
-  "dependencies": {
-    "nanoid": "^5.1.6"
   }
 }

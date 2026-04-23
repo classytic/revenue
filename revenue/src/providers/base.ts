@@ -1,23 +1,66 @@
-/**
- * Payment Provider Base Class
- * @classytic/revenue
- *
- * Abstract base class for all payment providers
- * Inspired by: Vercel AI SDK, Stripe SDK
- */
+export interface CreateIntentParams {
+  amount: number;
+  currency: string;
+  metadata?: Record<string, unknown>;
+  customerId?: string;
+  returnUrl?: string;
+  [key: string]: unknown;
+}
 
-import type {
-  CreateIntentParams,
-  PaymentIntentData,
-  PaymentResultData,
-  RefundResultData,
-  WebhookEventData,
-  ProviderCapabilities,
-} from '../shared/types/index.js';
+export interface PaymentIntentData {
+  id: string;
+  sessionId?: string | null;
+  paymentIntentId?: string | null;
+  provider: string;
+  status: string;
+  amount: number;
+  currency?: string;
+  metadata?: Record<string, unknown>;
+  clientSecret?: string;
+  paymentUrl?: string;
+  instructions?: string;
+  raw?: unknown;
+}
 
-/**
- * Payment Intent - standardized response from createIntent
- */
+export interface PaymentResultData {
+  id: string;
+  provider: string;
+  status: 'succeeded' | 'failed' | 'processing' | 'requires_action';
+  amount?: number;
+  currency?: string;
+  paidAt?: Date;
+  metadata?: Record<string, unknown>;
+  raw?: unknown;
+}
+
+export interface RefundResultData {
+  id: string;
+  provider: string;
+  status: 'succeeded' | 'failed' | 'processing';
+  amount?: number;
+  currency?: string;
+  refundedAt?: Date;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  raw?: unknown;
+}
+
+export interface WebhookEventData {
+  id: string;
+  provider: string;
+  type: string;
+  data: { sessionId?: string; paymentIntentId?: string; [key: string]: unknown };
+  createdAt?: Date;
+  raw?: unknown;
+}
+
+export interface ProviderCapabilities {
+  supportsWebhooks: boolean;
+  supportsRefunds: boolean;
+  supportsPartialRefunds: boolean;
+  requiresManualVerification: boolean;
+}
+
 export class PaymentIntent implements PaymentIntentData {
   public readonly id: string;
   public readonly sessionId: string | null;
@@ -39,7 +82,7 @@ export class PaymentIntent implements PaymentIntentData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency; // Don't default - use app's defaultCurrency config
+    this.currency = data.currency;
     this.metadata = data.metadata ?? {};
     this.clientSecret = data.clientSecret;
     this.paymentUrl = data.paymentUrl;
@@ -48,9 +91,6 @@ export class PaymentIntent implements PaymentIntentData {
   }
 }
 
-/**
- * Payment Result - standardized response from verifyPayment
- */
 export class PaymentResult implements PaymentResultData {
   public readonly id: string;
   public readonly provider: string;
@@ -66,16 +106,13 @@ export class PaymentResult implements PaymentResultData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency; // Don't default - let transaction's currency be used
+    this.currency = data.currency;
     this.paidAt = data.paidAt;
     this.metadata = data.metadata ?? {};
     this.raw = data.raw;
   }
 }
 
-/**
- * Refund Result - standardized response from refund
- */
 export class RefundResult implements RefundResultData {
   public readonly id: string;
   public readonly provider: string;
@@ -92,7 +129,7 @@ export class RefundResult implements RefundResultData {
     this.provider = data.provider;
     this.status = data.status;
     this.amount = data.amount;
-    this.currency = data.currency; // Don't default - let transaction's currency be used
+    this.currency = data.currency;
     this.refundedAt = data.refundedAt;
     this.reason = data.reason;
     this.metadata = data.metadata ?? {};
@@ -100,9 +137,6 @@ export class RefundResult implements RefundResultData {
   }
 }
 
-/**
- * Webhook Event - standardized webhook event
- */
 export class WebhookEvent implements WebhookEventData {
   public readonly id: string;
   public readonly provider: string;
@@ -121,112 +155,33 @@ export class WebhookEvent implements WebhookEventData {
   }
 }
 
-/**
- * Base Payment Provider
- * All payment providers must extend this class
- */
 export abstract class PaymentProvider {
   public readonly config: Record<string, unknown>;
   public readonly name: string;
-
-  /** Default currency - injected by Revenue when provider is registered */
   private _defaultCurrency: string = 'USD';
 
   constructor(config: Record<string, unknown> = {}) {
     this.config = config;
-    this.name = 'base'; // Override in subclass
-
-    // Allow defaultCurrency to be passed via config
+    this.name = 'base';
     if (config.defaultCurrency && typeof config.defaultCurrency === 'string') {
       this._defaultCurrency = config.defaultCurrency;
     }
   }
 
-  /**
-   * Get the default currency for this provider
-   * Used when creating PaymentIntent, PaymentResult, RefundResult without explicit currency
-   */
-  get defaultCurrency(): string {
-    return this._defaultCurrency;
-  }
+  get defaultCurrency(): string { return this._defaultCurrency; }
+  setDefaultCurrency(currency: string): void { this._defaultCurrency = currency; }
 
-  /**
-   * Set the default currency (called by Revenue when registering provider)
-   * @internal
-   */
-  setDefaultCurrency(currency: string): void {
-    this._defaultCurrency = currency;
-  }
-
-  /**
-   * Create a payment intent
-   * @param params - Payment parameters
-   * @returns Promise<PaymentIntent>
-   */
   abstract createIntent(params: CreateIntentParams): Promise<PaymentIntent>;
-
-  /**
-   * Verify a payment
-   * @param intentId - Payment intent ID
-   * @returns Promise<PaymentResult>
-   */
   abstract verifyPayment(intentId: string): Promise<PaymentResult>;
-
-  /**
-   * Get payment status
-   * @param intentId - Payment intent ID
-   * @returns Promise<PaymentResult>
-   */
   abstract getStatus(intentId: string): Promise<PaymentResult>;
+  abstract refund(paymentId: string, amount?: number | null, options?: { reason?: string }): Promise<RefundResult>;
+  abstract handleWebhook(payload: unknown, headers?: Record<string, string>): Promise<WebhookEvent>;
 
-  /**
-   * Refund a payment
-   * @param paymentId - Payment ID
-   * @param amount - Amount to refund (optional, full refund if not provided)
-   * @param options - Refund options
-   * @returns Promise<RefundResult>
-   */
-  abstract refund(
-    paymentId: string,
-    amount?: number | null,
-    options?: { reason?: string }
-  ): Promise<RefundResult>;
+  verifyWebhookSignature(_payload: unknown, _signature: string): boolean { return true; }
 
-  /**
-   * Handle webhook from provider
-   * @param payload - Webhook payload
-   * @param headers - Request headers (for signature verification)
-   * @returns Promise<WebhookEvent>
-   */
-  abstract handleWebhook(
-    payload: unknown,
-    headers?: Record<string, string>
-  ): Promise<WebhookEvent>;
-
-  /**
-   * Verify webhook signature (optional)
-   * @param payload - Webhook payload
-   * @param signature - Webhook signature
-   * @returns boolean
-   */
-  verifyWebhookSignature(_payload: unknown, _signature: string): boolean {
-    // Override in subclass if provider supports webhook signatures
-    return true;
-  }
-
-  /**
-   * Get provider capabilities
-   * @returns ProviderCapabilities
-   */
   getCapabilities(): ProviderCapabilities {
-    return {
-      supportsWebhooks: false,
-      supportsRefunds: false,
-      supportsPartialRefunds: false,
-      requiresManualVerification: true,
-    };
+    return { supportsWebhooks: false, supportsRefunds: false, supportsPartialRefunds: false, requiresManualVerification: true };
   }
 }
 
 export default PaymentProvider;
-
