@@ -24,7 +24,8 @@
     "publish:revenue": "npm publish --workspace=@classytic/revenue --access public",
     "publish:revenue-manual": "npm publish --workspace=@classytic/revenue-manual --access public",
     "publish:all": "npm run publish:revenue && npm run publish:revenue-manual",
-    "prepublish:check": "echo '⚠️  Remember to: 1) Unlink packages 2) Test with npm pack 3) Git commit version changes'"
+    "prepublish:check": "echo '⚠️  Remember to: 1) Unlink packages 2) Test with npm pack 3) Git commit version changes'",
+    "push": "classytic-push"
   },
   "publishConfig": {
     "access": "public",
@@ -46,7 +47,9 @@
     "url": "git+https://github.com/classytic/revenue.git"
   },
   "devDependencies": {
+    "@classytic/dev-tools": "^0.2.0",
     "@classytic/mongokit": ">=3.11.0",
+    "@classytic/primitives": "^0.2.0",
     "@classytic/repo-core": ">=0.2.0",
     "@vitest/coverage-v8": "^3.2.4",
     "mongodb-memory-server": "^11.0.1",

@@ -2,6 +2,8 @@
 
 @classytic/revenue implements enterprise-grade state machines for all entities to ensure data integrity and prevent invalid state transitions.
 
+The `StateMachine<T>` class is a thin wrapper over [`defineStateMachine`](https://www.npmjs.com/package/@classytic/primitives) from `@classytic/primitives/state-machine` (>=0.2.0). Primitives owns the transition table + `assertTransition` / `canTransition` / `isTerminal` semantics; revenue's wrapper preserves the existing public API (`validate`, `getAllowedTransitions`, `validateAndCreateAuditEvent`) and wires `InvalidStateTransitionError` through the primitive's `errorFactory` so thrown types are unchanged. New revenue-domain state machines can be defined with `new StateMachine<TStatus>(transitionsMap, name)` exactly as before.
+
 ## Transaction State Machine
 
 ```mermaid

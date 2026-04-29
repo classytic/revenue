@@ -1,25 +1,35 @@
-import { InvalidStateTransitionError } from './errors.js';
 import {
-  TRANSACTION_STATUS,
-  type TransactionStatusValue,
-} from '../enums/transaction.enums.js';
-import {
-  SUBSCRIPTION_STATUS,
-  type SubscriptionStatusValue,
-} from '../enums/subscription.enums.js';
-import {
-  SETTLEMENT_STATUS,
-  type SettlementStatusValue,
-} from '../enums/settlement.enums.js';
+  defineStateMachine,
+  type StateMachine as PrimitiveStateMachine,
+} from '@classytic/primitives/state-machine';
 import {
   HOLD_STATUS,
   type HoldStatusValue,
 } from '../enums/escrow.enums.js';
 import {
+  SETTLEMENT_STATUS,
+  type SettlementStatusValue,
+} from '../enums/settlement.enums.js';
+import {
   SPLIT_STATUS,
   type SplitStatusValue,
 } from '../enums/split.enums.js';
+import {
+  SUBSCRIPTION_STATUS,
+  type SubscriptionStatusValue,
+} from '../enums/subscription.enums.js';
+import {
+  TRANSACTION_STATUS,
+  type TransactionStatusValue,
+} from '../enums/transaction.enums.js';
+import { InvalidStateTransitionError } from './errors.js';
 
+/**
+ * Audit-trail event emitted by `validateAndCreateAuditEvent`.
+ *
+ * Revenue-specific shape — primitives' state-machine is intentionally
+ * ledger-agnostic, so the audit envelope stays here next to the consumers.
+ */
 export interface StateChangeEvent<TState extends string = string> {
   resourceType: string;
   resourceId: string;
@@ -31,34 +41,53 @@ export interface StateChangeEvent<TState extends string = string> {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Revenue's typed state machine.
+ *
+ * Thin facade over `@classytic/primitives/state-machine`'s
+ * `defineStateMachine` — primitives owns the transition logic, revenue
+ * owns the API shape (`validate`, `getAllowedTransitions`,
+ * `validateAndCreateAuditEvent`) that the existing repos and tests
+ * depend on. Wires `InvalidStateTransitionError` through the primitive's
+ * `errorFactory` so thrown types are unchanged.
+ *
+ * The constructor still accepts `Map<TState, Set<TState>>` so existing
+ * instance definitions don't need to be rewritten.
+ */
 export class StateMachine<TState extends string> {
-  constructor(
-    private readonly transitions: Map<TState, Set<TState>>,
-    private readonly resourceType: string,
-  ) {}
+  private readonly inner: PrimitiveStateMachine<TState>;
+
+  constructor(transitions: Map<TState, Set<TState>>, resourceType: string) {
+    const record = {} as Record<TState, readonly TState[]>;
+    for (const [from, toSet] of transitions.entries()) {
+      record[from] = Array.from(toSet);
+    }
+    this.inner = defineStateMachine<TState>({
+      name: resourceType,
+      transitions: record,
+      errorFactory: ({ entityId, from, to }) =>
+        new InvalidStateTransitionError(resourceType, entityId, from, to),
+    });
+  }
 
   validate(from: TState, to: TState, resourceId: string): void {
-    const allowed = this.transitions.get(from);
-    if (!allowed?.has(to)) {
-      throw new InvalidStateTransitionError(this.resourceType, resourceId, from, to);
-    }
+    this.inner.assertTransition(resourceId, from, to);
   }
 
   canTransition(from: TState, to: TState): boolean {
-    return this.transitions.get(from)?.has(to) ?? false;
+    return this.inner.canTransition(from, to);
   }
 
   getAllowedTransitions(from: TState): TState[] {
-    return Array.from(this.transitions.get(from) ?? []);
+    return [...(this.inner.transitions[from] ?? [])];
   }
 
   isTerminalState(state: TState): boolean {
-    const t = this.transitions.get(state);
-    return !t || t.size === 0;
+    return this.inner.isTerminal(state);
   }
 
   getResourceType(): string {
-    return this.resourceType;
+    return this.inner.name;
   }
 
   validateAndCreateAuditEvent(
@@ -69,7 +98,7 @@ export class StateMachine<TState extends string> {
   ): StateChangeEvent<TState> {
     this.validate(from, to, resourceId);
     return {
-      resourceType: this.resourceType,
+      resourceType: this.inner.name,
       resourceId,
       fromState: from,
       toState: to,
