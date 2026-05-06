@@ -1,21 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import {
-  PaymentProvider, PaymentIntent, PaymentResult, RefundResult, WebhookEvent,
-  type CreateIntentParams,
-} from '../../revenue/src/providers/base.js';
+import { PaymentProvider } from '../../revenue/src/providers/base.js';
+import type {
+  CreateIntentParams,
+  PaymentIntent,
+  PaymentResult,
+  RefundResult,
+  WebhookEvent,
+} from '@classytic/primitives/payment-gateway';
 import { ProviderRegistry, createProviderRegistry } from '../../revenue/src/providers/registry.js';
 import { ProviderNotFoundError } from '../../revenue/src/core/errors.js';
 
 class StubProvider extends PaymentProvider {
   public override readonly name = 'stub';
   constructor() { super({}); }
-  async createIntent(params: CreateIntentParams) {
-    return new PaymentIntent({ id: 's1', sessionId: 's1', paymentIntentId: 's1', provider: 'stub', status: 'pending', amount: params.amount, currency: params.currency, metadata: {} });
+  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+    const amount = params.amount.amount;
+    const currency = params.amount.currency ?? 'USD';
+    return { id: 's1', sessionId: 's1', paymentIntentId: 's1', provider: 'stub', status: 'pending', amount: { amount, currency }, metadata: {} };
   }
-  async verifyPayment(id: string) { return new PaymentResult({ id, provider: 'stub', status: 'succeeded', metadata: {} }); }
-  async getStatus(id: string) { return this.verifyPayment(id); }
-  async refund(id: string, amt?: number | null) { return new RefundResult({ id, provider: 'stub', status: 'succeeded', amount: amt ?? 0, refundedAt: new Date(), metadata: {} }); }
-  async handleWebhook(payload: unknown) { return new WebhookEvent({ id: 'wh1', provider: 'stub', type: 'test', data: payload as Record<string, unknown>, createdAt: new Date() }); }
+  async verifyPayment(id: string): Promise<PaymentResult> { return { id, provider: 'stub', status: 'succeeded', metadata: {} }; }
+  async getStatus(id: string): Promise<PaymentResult> { return this.verifyPayment(id); }
+  async refund(id: string, amt?: number | null): Promise<RefundResult> { return { id, provider: 'stub', status: 'succeeded', amount: { amount: amt ?? 0, currency: 'USD' }, refundedAt: new Date(), metadata: {} }; }
+  async handleWebhook(payload: unknown): Promise<WebhookEvent> { return { id: 'wh1', provider: 'stub', type: 'test', data: payload as Record<string, unknown>, createdAt: new Date() }; }
   override getCapabilities() { return { supportsWebhooks: false, supportsRefunds: true, supportsPartialRefunds: false, requiresManualVerification: true }; }
 }
 
@@ -68,27 +74,29 @@ describe('createProviderRegistry', () => {
 });
 
 describe('PaymentProvider contract', () => {
-  it('createIntent returns PaymentIntent', async () => {
+  it('createIntent returns a PaymentIntent shape', async () => {
     const p = new StubProvider();
-    const intent = await p.createIntent({ amount: 1000, currency: 'USD' });
-    expect(intent).toBeInstanceOf(PaymentIntent);
+    const intent = await p.createIntent({ amount: { amount: 1000, currency: 'USD' } });
     expect(intent.sessionId).toBe('s1');
+    expect(intent.amount).toEqual({ amount: 1000, currency: 'USD' });
   });
 
-  it('verifyPayment returns PaymentResult', async () => {
+  it('verifyPayment returns a PaymentResult shape', async () => {
     const result = await new StubProvider().verifyPayment('s1');
-    expect(result).toBeInstanceOf(PaymentResult);
     expect(result.status).toBe('succeeded');
+    expect(result.id).toBe('s1');
   });
 
-  it('refund returns RefundResult', async () => {
+  it('refund returns a RefundResult shape', async () => {
     const result = await new StubProvider().refund('s1', 500);
-    expect(result).toBeInstanceOf(RefundResult);
+    expect(result.status).toBe('succeeded');
+    expect(result.amount).toEqual({ amount: 500, currency: 'USD' });
   });
 
-  it('handleWebhook returns WebhookEvent', async () => {
+  it('handleWebhook returns a WebhookEvent shape', async () => {
     const result = await new StubProvider().handleWebhook({ type: 'test' });
-    expect(result).toBeInstanceOf(WebhookEvent);
+    expect(result.id).toBe('wh1');
+    expect(result.type).toBe('test');
   });
 
   it('getCapabilities returns capability flags', () => {

@@ -7,14 +7,14 @@
  * sandboxes.
  */
 
-import {
-  PaymentProvider,
+import { PaymentProvider } from '../../revenue/src/index.js';
+import type {
+  CreateIntentParams,
   PaymentIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
-  type CreateIntentParams,
-} from '../../revenue/src/index.js';
+} from '@classytic/primitives/payment-gateway';
 
 type Outcome = 'succeeded' | 'failed' | 'requires_action';
 
@@ -51,21 +51,22 @@ export class FakeProvider extends PaymentProvider {
       throw err;
     }
     const id = `fake_pi_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const amount = params.amount.amount;
+    const currency = params.amount.currency ?? 'USD';
     this.store.set(id, {
-      amount: params.amount,
-      currency: params.currency ?? 'USD',
+      amount,
+      currency,
       status: 'succeeded',
     });
-    return new PaymentIntent({
+    return {
       id,
       sessionId: id,
       paymentIntentId: id,
       provider: 'fake',
       status: 'pending',
-      amount: params.amount,
-      currency: params.currency,
+      amount: { amount, currency },
       metadata: {},
-    });
+    };
   }
 
   async verifyPayment(intentId: string): Promise<PaymentResult> {
@@ -73,23 +74,22 @@ export class FakeProvider extends PaymentProvider {
     const outcome = this.nextOutcome;
     this.nextOutcome = 'succeeded';
     if (!record) {
-      return new PaymentResult({
+      return {
         id: intentId,
         provider: 'fake',
         status: 'failed',
         metadata: {},
-      });
+      };
     }
     record.status = outcome;
-    return new PaymentResult({
+    return {
       id: intentId,
       provider: 'fake',
       status: outcome,
-      amount: record.amount,
-      currency: record.currency,
+      amount: { amount: record.amount, currency: record.currency },
       paidAt: outcome === 'succeeded' ? new Date() : undefined,
       metadata: {},
-    });
+    };
   }
 
   async getStatus(intentId: string): Promise<PaymentResult> {
@@ -97,25 +97,25 @@ export class FakeProvider extends PaymentProvider {
   }
 
   async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
-    return new RefundResult({
+    return {
       id: `ref_${paymentId}_${Date.now()}`,
       provider: 'fake',
       status: 'succeeded',
-      amount: amount ?? 0,
+      amount: { amount: amount ?? 0, currency: 'USD' },
       refundedAt: new Date(),
       metadata: {},
-    });
+    };
   }
 
   async handleWebhook(payload: unknown): Promise<WebhookEvent> {
     const p = payload as { type?: string; [k: string]: unknown } | null;
-    return new WebhookEvent({
+    return {
       id: `wh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       provider: 'fake',
       type: p?.type ?? 'payment.succeeded',
       data: (p as Record<string, unknown>) ?? {},
       createdAt: new Date(),
-    });
+    };
   }
 
   override getCapabilities() {

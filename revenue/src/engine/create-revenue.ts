@@ -3,13 +3,16 @@ import {
   softDeletePlugin,
   customIdPlugin,
   prefixedId,
+  methodRegistryPlugin,
+  batchOperationsPlugin,
   type PluginType,
 } from '@classytic/mongokit';
-import { resolveTenantConfig } from '@classytic/primitives/tenant';
+import { resolveTenantConfig } from '@classytic/repo-core/tenant';
 import type { RevenueConfig, RevenueEngine } from './engine-types.js';
 import { createRevenueModels } from '../models/create-models.js';
 import { createRevenueRepositories } from '../repositories/create-repositories.js';
 import { createProviderRegistry } from '../providers/registry.js';
+import { createBankFeedProviderRegistry } from '../providers/bank-feed.js';
 import { InProcessRevenueBus } from '../events/in-process-bus.js';
 import type { EventTransport } from '@classytic/primitives/events';
 
@@ -29,10 +32,31 @@ import type { EventTransport } from '@classytic/primitives/events';
  */
 export async function createRevenue(config: RevenueConfig): Promise<RevenueEngine> {
   // Phase 1: Resolve config defaults
+  const bankFeedRaw = config.modules?.bankFeed;
+  const bankFeedEnabled =
+    bankFeedRaw === false
+      ? false
+      : typeof bankFeedRaw === 'object' && bankFeedRaw !== null
+      ? bankFeedRaw.enabled !== false
+      : true; // `true` | `undefined` → on
+
+  // Per-index defaults — required indexes on, dashboard indexes on,
+  // heavy reconciliation indexes off (host enables explicitly).
+  const userIndexCfg =
+    typeof bankFeedRaw === 'object' && bankFeedRaw !== null ? bankFeedRaw.indexes : undefined;
+  const bankFeedIndexes = bankFeedEnabled
+    ? {
+        idempotentImport: userIndexCfg?.idempotentImport ?? true,
+        byAccount: userIndexCfg?.byAccount ?? true,
+        matchCandidates: userIndexCfg?.matchCandidates ?? false,
+      }
+    : { idempotentImport: false, byAccount: false, matchCandidates: false };
+
   const modules = {
     subscription: config.modules?.subscription !== false,
     escrow: config.modules?.escrow ?? false,
     settlement: config.modules?.settlement ?? false,
+    bankFeed: bankFeedEnabled,
   };
   const scope = resolveTenantConfig(config.scope);
 
@@ -46,6 +70,7 @@ export async function createRevenue(config: RevenueConfig): Promise<RevenueEngin
     scope,
     schemaOptions: config.schemaOptions,
     modules,
+    bankFeedIndexes,
     ...(config.collectionPrefix !== undefined
       ? { collectionPrefix: config.collectionPrefix }
       : {}),
@@ -87,8 +112,17 @@ export async function createRevenue(config: RevenueConfig): Promise<RevenueEngin
     return plugins;
   };
 
+  // Transaction repo gets the batch-operations plugin so `bulkWrite` is
+  // available — the bank-feed `import()` verb depends on it. Wired
+  // unconditionally (also benefits payment-flow batching, e.g. mass
+  // refund jobs). `methodRegistryPlugin` is the prerequisite for
+  // `batchOperationsPlugin.registerMethod`.
+  const transactionExtraPlugins: PluginType[] = modules.bankFeed
+    ? [methodRegistryPlugin(), batchOperationsPlugin()]
+    : [];
+
   const builtInPlugins = {
-    transaction: buildPlugins('txn'),
+    transaction: buildPlugins('txn', transactionExtraPlugins),
     subscription: buildPlugins('sub'),
     settlement: buildPlugins('stl'),
   };
@@ -96,8 +130,9 @@ export async function createRevenue(config: RevenueConfig): Promise<RevenueEngin
   // Phase 5: Create repositories
   const repositories = createRevenueRepositories(models, builtInPlugins, config.repositoryPlugins);
 
-  // Phase 6: Create provider registry
+  // Phase 6: Create provider registries (gateway + bank-feed)
   const providers = createProviderRegistry(config.providers ?? {}, config.defaultCurrency);
+  const bankFeedProviders = createBankFeedProviderRegistry(config.bankFeedProviders ?? {});
 
   // Phase 7: Resolve commission config
   const commission =
@@ -108,6 +143,7 @@ export async function createRevenue(config: RevenueConfig): Promise<RevenueEngin
     events,
     outbox: config.outbox,
     providers,
+    bankFeedProviders,
     bridges: config.bridges ?? {},
     commission,
     defaultCurrency: config.defaultCurrency,
@@ -151,6 +187,7 @@ export async function createRevenue(config: RevenueConfig): Promise<RevenueEngin
     models,
     repositories,
     providers,
+    bankFeedProviders,
     events,
     async syncIndexes() {
       await Promise.all(

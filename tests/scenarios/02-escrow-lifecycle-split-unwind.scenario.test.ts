@@ -135,7 +135,7 @@ describe('Scenario 02 — Escrow lifecycle with partial release, split, late ref
     const all = await engine.repositories.transaction.getAll({
       filters: { relatedTransactionId: txn._id, type: 'commission' },
     });
-    const commissions = ((all as any).docs as any[])
+    const commissions = ((all as any).data as any[])
       .reduce((sum, d) => sum + d.amount, 0);
     expect(commissions).toBe(10000);
 

@@ -93,8 +93,8 @@ describe('Scenario: Metered / Usage-Based Billing', () => {
     const charges = await engine.repositories.transaction.getAll({
       filters: { customerId, status: TRANSACTION_STATUS.VERIFIED },
     });
-    expect(((charges as any).docs as any[]).length).toBe(3);
-    const total = ((charges as any).docs as any[]).reduce((s, t) => s + t.amount, 0);
+    expect(((charges as any).data as any[]).length).toBe(3);
+    const total = ((charges as any).data as any[]).reduce((s, t) => s + t.amount, 0);
     expect(total).toBe(1250 + 3700 + 2150);
   }, TIMEOUT);
 
@@ -125,13 +125,13 @@ describe('Scenario: Metered / Usage-Based Billing', () => {
     const allForCustomer = await engine.repositories.transaction.getAll({
       filters: { customerId },
     });
-    const revenue = ((allForCustomer as any).docs as any[])
+    const revenue = ((allForCustomer as any).data as any[])
       .filter((t) => t.status === TRANSACTION_STATUS.VERIFIED)
       .reduce((s, t) => s + t.amount, 0);
     expect(revenue).toBe(5000);
 
     // Failure remains visible for ops
-    const failed = ((allForCustomer as any).docs as any[]).filter(
+    const failed = ((allForCustomer as any).data as any[]).filter(
       (t) => t.status === TRANSACTION_STATUS.FAILED,
     );
     expect(failed).toHaveLength(1);
@@ -187,8 +187,8 @@ describe('Scenario: Metered / Usage-Based Billing', () => {
       filters: { customerId, status: TRANSACTION_STATUS.VERIFIED },
       limit: 100,
     });
-    expect(((charges as any).docs as any[]).length).toBe(12);
-    const total = ((charges as any).docs as any[]).reduce((s, t) => s + t.amount, 0);
+    expect(((charges as any).data as any[]).length).toBe(12);
+    const total = ((charges as any).data as any[]).reduce((s, t) => s + t.amount, 0);
     expect(total).toBe(expectedTotal);
   }, TIMEOUT);
 });

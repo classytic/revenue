@@ -277,6 +277,55 @@ const webhookProcessedSchema = z.object({
   transaction: transactionRef.optional(),
 });
 
+// ─── Bank feed / accounting feed (3.0) ───────────────────────────────────
+
+const transactionImportedSchema = z.object({
+  transaction: transactionRef,
+  source: z.string(),
+  bankAccountId: z.string(),
+  externalId: z.string(),
+});
+
+const transactionMatchedSchema = z.object({
+  transaction: transactionRef,
+  mapping: z.object({
+    debitAccount: z.string().optional(),
+    creditAccount: z.string().optional(),
+    notes: z.string().optional(),
+  }).passthrough(),
+  relatedTransactionId: z.string().optional(),
+  matchedBy: z.string().optional(),
+});
+
+const transactionUnmatchedSchema = z.object({
+  transaction: transactionRef,
+  unmatchedBy: z.string().optional(),
+});
+
+const transactionJournalizedSchema = z.object({
+  transaction: transactionRef,
+  journalEntryRef: z.object({
+    type: z.string(),
+    id: z.string(),
+  }),
+  journalizedBy: z.string().optional(),
+});
+
+const transactionRejectedSchema = z.object({
+  transaction: transactionRef,
+  reason: z.string().min(1),
+  rejectedBy: z.string().optional(),
+});
+
+// Plaid `removed[]` array — entries the upstream feed has retracted.
+// We soft-delete and emit one of these per row so subscribers can
+// reconcile downstream materialized views.
+const transactionRemovedByFeedSchema = z.object({
+  transaction: transactionRef,
+  source: z.string(),
+  externalId: z.string(),
+});
+
 // ─── Inferred payload types (exported for host subscribers) ──────────────
 
 export type PaymentVerifiedPayload = z.infer<typeof paymentVerifiedSchema>;
@@ -304,6 +353,12 @@ export type SettlementProcessingPayload = z.infer<typeof settlementProcessingSch
 export type SettlementCompletedPayload = z.infer<typeof settlementCompletedSchema>;
 export type SettlementFailedPayload = z.infer<typeof settlementFailedSchema>;
 export type WebhookProcessedPayload = z.infer<typeof webhookProcessedSchema>;
+export type TransactionImportedPayload = z.infer<typeof transactionImportedSchema>;
+export type TransactionMatchedPayload = z.infer<typeof transactionMatchedSchema>;
+export type TransactionUnmatchedPayload = z.infer<typeof transactionUnmatchedSchema>;
+export type TransactionJournalizedPayload = z.infer<typeof transactionJournalizedSchema>;
+export type TransactionRejectedPayload = z.infer<typeof transactionRejectedSchema>;
+export type TransactionRemovedByFeedPayload = z.infer<typeof transactionRemovedByFeedSchema>;
 
 // ─── Event definitions ────────────────────────────────────────────────────
 
@@ -457,6 +512,44 @@ export const WebhookProcessed = defineRevenueEvent({
   zodSchema: webhookProcessedSchema,
 });
 
+// ─── Bank feed / accounting feed (3.0) ──────────────────────────────────
+
+export const TransactionImported = defineRevenueEvent({
+  name: REVENUE_EVENTS.TRANSACTION_IMPORTED,
+  description: 'A bank-feed / accounting-feed row was imported.',
+  zodSchema: transactionImportedSchema,
+});
+
+export const TransactionMatched = defineRevenueEvent({
+  name: REVENUE_EVENTS.TRANSACTION_MATCHED,
+  description: 'A bank-feed / manual transaction was matched to GL accounts (and optionally to an upstream payment-flow row).',
+  zodSchema: transactionMatchedSchema,
+});
+
+export const TransactionUnmatched = defineRevenueEvent({
+  name: REVENUE_EVENTS.TRANSACTION_UNMATCHED,
+  description: 'A previously-matched bank-feed transaction was reverted to the imported state.',
+  zodSchema: transactionUnmatchedSchema,
+});
+
+export const TransactionJournalized = defineRevenueEvent({
+  name: REVENUE_EVENTS.TRANSACTION_JOURNALIZED,
+  description: 'A bank-feed / manual transaction was journalized — the host LedgerBridge produced a journal entry.',
+  zodSchema: transactionJournalizedSchema,
+});
+
+export const TransactionRejected = defineRevenueEvent({
+  name: REVENUE_EVENTS.TRANSACTION_REJECTED,
+  description: 'A bank-feed / manual transaction was rejected (operator skip — typically a duplicate / non-cash entry).',
+  zodSchema: transactionRejectedSchema,
+});
+
+export const TransactionRemovedByFeed = defineRevenueEvent({
+  name: REVENUE_EVENTS.TRANSACTION_REMOVED_BY_FEED,
+  description: 'The upstream feed retracted a previously-imported row (Plaid `removed[]`, OFX correction). The row is soft-deleted.',
+  zodSchema: transactionRemovedByFeedSchema,
+});
+
 // ─── Aggregate catalog ────────────────────────────────────────────────────
 
 /**
@@ -491,4 +584,11 @@ export const revenueEventDefinitions: ReadonlyArray<RevenueEventDefinition> = [
   SettlementCompleted,
   SettlementFailed,
   WebhookProcessed,
+  // Bank feed / accounting feed (3.0)
+  TransactionImported,
+  TransactionMatched,
+  TransactionUnmatched,
+  TransactionJournalized,
+  TransactionRejected,
+  TransactionRemovedByFeed,
 ];

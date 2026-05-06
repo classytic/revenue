@@ -83,7 +83,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
     const topups = await engine.repositories.transaction.getAll({
       filters: { customerId: 'user_42', status: TRANSACTION_STATUS.VERIFIED, flow: 'inflow' },
     });
-    const balance = ((topups as any).docs as any[]).reduce((sum, t) => sum + (t.net ?? 0), 0);
+    const balance = ((topups as any).data as any[]).reduce((sum, t) => sum + (t.net ?? 0), 0);
     expect(balance).toBe(25000);
   }, TIMEOUT);
 
@@ -135,7 +135,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
     const all = await engine.repositories.transaction.getAll({
       filters: { customerId: 'user_cb' },
     });
-    const net = ((all as any).docs as any[]).reduce((sum, t) => {
+    const net = ((all as any).data as any[]).reduce((sum, t) => {
       return sum + (t.flow === 'inflow' ? t.net : -t.net);
     }, 0);
     expect(net).toBe(0);

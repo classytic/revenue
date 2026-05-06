@@ -1,4 +1,5 @@
 import mongoose, { type Connection, type Model, Schema } from 'mongoose';
+import type { ApprovalChain } from '@classytic/primitives/approval';
 import type { RevenueSchemaConfig } from './transaction.schema.js';
 
 export interface SubscriptionDocument {
@@ -21,6 +22,19 @@ export interface SubscriptionDocument {
   canceledAt?: Date;
   cancelAt?: Date;
   cancellationReason?: string;
+  /**
+   * Optional embedded approval chain — P7. Hosts that gate high-value
+   * subscription transitions on a maker-checker review attach a chain via
+   * `createChain()` from `@classytic/primitives/approval`; the host's
+   * approval action checks `isApproved(doc.approvals)` before applying
+   * the change. Routine renewals/auto-pause flows leave it undefined.
+   *
+   * Use cases:
+   *   - Cancel-with-refund (manager sign-off before issuing credit)
+   *   - Plan change with credit note (finance verifies proration)
+   *   - Manual reactivation after dunning failure
+   */
+  approvals?: ApprovalChain;
   renewalTransactionId?: mongoose.Types.ObjectId;
   renewalCount: number;
   metadata?: Record<string, unknown>;
@@ -49,6 +63,11 @@ export function buildSubscriptionSchema(config: RevenueSchemaConfig): Schema<Sub
     canceledAt: { type: Date },
     cancelAt: { type: Date },
     cancellationReason: { type: String },
+    // P7 — embedded ApprovalChain VO (primitives owns the shape). Hosts
+    // running a maker-checker workflow on cancel-with-refund or plan-change
+    // transitions attach a chain via `createChain()` and gate the action on
+    // `isApproved(doc.approvals)`. Routine flows leave it undefined.
+    approvals: { type: Schema.Types.Mixed, default: null },
     renewalTransactionId: { type: Schema.Types.ObjectId, ref: txnRef },
     renewalCount: { type: Number, default: 0 },
     metadata: { type: Schema.Types.Mixed },

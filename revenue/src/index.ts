@@ -1,6 +1,14 @@
 // ─── Engine ───
 export { createRevenue } from './engine/create-revenue.js';
-export type { RevenueConfig, RevenueEngine, RevenueContext, CommissionConfig, RetryConfig } from './engine/engine-types.js';
+export type {
+  RevenueConfig,
+  RevenueEngine,
+  RevenueContext,
+  CommissionConfig,
+  RetryConfig,
+  BankFeedIndexConfig,
+  BankFeedModuleConfig,
+} from './engine/engine-types.js';
 
 // ─── Events ───
 // Transport shapes are plain `DomainEvent` / `EventTransport` / `EventHandler`,
@@ -53,6 +61,7 @@ export * from './enums/monetization.enums.js';
 export * from './enums/escrow.enums.js';
 export * from './enums/split.enums.js';
 export * from './enums/settlement.enums.js';
+export * from './enums/bank-feed.enums.js';
 
 // ─── Models ───
 export type { RevenueModels, RevenueSchemaOptions } from './models/create-models.js';
@@ -67,9 +76,43 @@ export { SettlementRepository } from './repositories/settlement.repository.js';
 export type { RevenueRepositories, RepositoryPluginBundle } from './repositories/create-repositories.js';
 
 // ─── Providers ───
-export { PaymentProvider, PaymentIntent, PaymentResult, RefundResult, WebhookEvent } from './providers/base.js';
-export type { CreateIntentParams, PaymentIntentData, PaymentResultData, RefundResultData, WebhookEventData, ProviderCapabilities } from './providers/base.js';
+// Revenue owns only the abstract `PaymentProvider` contract + the registry.
+// All payment-gateway data shapes (`CreateIntentParams`, `PaymentIntent`,
+// `PaymentResult`, `RefundResult`, `WebhookEvent`, `ProviderCapabilities`)
+// live in `@classytic/primitives/payment-gateway`. Hosts and provider
+// packages MUST import them from primitives directly — no re-exports
+// here per PACKAGE_RULES P2 (subpath imports only, barrels hurt
+// tree-shaking and the dep graph).
+//
+//   import type {
+//     CreateIntentParams, PaymentIntent, PaymentResult,
+//     RefundResult, WebhookEvent, ProviderCapabilities,
+//   } from '@classytic/primitives/payment-gateway';
+export { PaymentProvider } from './providers/base.js';
 export { ProviderRegistry, createProviderRegistry } from './providers/registry.js';
+
+// ─── Bank-feed providers (3.0) ───
+export {
+  BankFeedProvider,
+  BankFeedProviderRegistry,
+  createBankFeedProviderRegistry,
+} from './providers/bank-feed.js';
+export type {
+  BankFeedProviderCapabilities,
+  FetchTransactionsParams,
+  FetchTransactionsResult,
+  ParseUploadParams,
+  ParseUploadResult,
+} from './providers/bank-feed.js';
+
+// Canonical bank-transaction shapes (3.0) — owned by primitives, not
+// revenue. Hosts that need these types import directly from primitives:
+//
+//   import type { BankTransaction, BankStatement, BankCounterparty } from '@classytic/primitives/bank-transaction';
+//   import type { Money } from '@classytic/primitives/money';
+//
+// We intentionally don't re-export them here — barrels hurt tree-shaking
+// (PACKAGE_RULES P2). Subpath imports keep the dep graph honest.
 
 // ─── Bridges ───
 export type { RevenueBridges } from './bridges/revenue-bridges.js';
@@ -88,7 +131,18 @@ export * from './validators/payment.schema.js';
 export * from './validators/escrow.schema.js';
 
 // ─── Core ───
-export { StateMachine, TRANSACTION_STATE_MACHINE, SUBSCRIPTION_STATE_MACHINE, SETTLEMENT_STATE_MACHINE, HOLD_STATE_MACHINE, SPLIT_STATE_MACHINE } from './core/state-machines.js';
+export {
+  StateMachine,
+  TRANSACTION_STATE_MACHINE,
+  PAYMENT_FLOW_STATE_MACHINE,
+  BANK_FEED_STATE_MACHINE,
+  MANUAL_STATE_MACHINE,
+  SUBSCRIPTION_STATE_MACHINE,
+  SETTLEMENT_STATE_MACHINE,
+  HOLD_STATE_MACHINE,
+  SPLIT_STATE_MACHINE,
+  smFor,
+} from './core/state-machines.js';
 export type { StateChangeEvent } from './core/state-machines.js';
 export * from './core/errors.js';
 export { ok, err, isOk, isErr, type Result } from '@classytic/primitives/result';

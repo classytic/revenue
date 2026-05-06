@@ -1,8 +1,13 @@
 import type { Connection, Model } from 'mongoose';
-import { buildTransactionSchema, type TransactionDocument, type RevenueSchemaConfig } from './transaction.schema.js';
+import {
+  buildTransactionSchema,
+  type TransactionDocument,
+  type RevenueSchemaConfig,
+  type ResolvedBankFeedIndexes,
+} from './transaction.schema.js';
 import { buildSubscriptionSchema, type SubscriptionDocument } from './subscription.schema.js';
 import { buildSettlementSchema, type SettlementDocument } from './settlement.schema.js';
-import type { ResolvedTenantConfig } from '@classytic/primitives/tenant';
+import type { ResolvedTenantConfig } from '@classytic/repo-core/tenant';
 import { injectTenantField } from './inject-tenant.js';
 
 export interface RevenueModels {
@@ -33,6 +38,13 @@ export interface CreateModelsOptions {
   connection: Connection;
   scope: ResolvedTenantConfig;
   schemaOptions?: RevenueSchemaOptions;
+  /**
+   * Resolved bank-feed index flags. Forwarded into `RevenueSchemaConfig`
+   * so opt-in indexes (treasurer dashboard, match-candidates compound)
+   * are only built when the host enables them. Engine factory resolves
+   * `modules.bankFeed.indexes` into this shape.
+   */
+  bankFeedIndexes?: ResolvedBankFeedIndexes;
   modules?: {
     subscription?: boolean;
     settlement?: boolean;
@@ -66,7 +78,7 @@ export class RevenueModelCollisionError extends Error {
 }
 
 export function createRevenueModels(options: CreateModelsOptions): RevenueModels {
-  const { connection, scope, schemaOptions = {}, modules = {}, collectionPrefix, forceRecreate } = options;
+  const { connection, scope, schemaOptions = {}, modules = {}, collectionPrefix, forceRecreate, bankFeedIndexes } = options;
   const prefix = collectionPrefix ?? '';
 
   // Collision gate — throw by default, `forceRecreate: true` for
@@ -85,6 +97,7 @@ export function createRevenueModels(options: CreateModelsOptions): RevenueModels
     scoped: scope.enabled,
     extraFields: schemaOptions.transaction?.extraFields,
     extraIndexes: schemaOptions.transaction?.extraIndexes,
+    ...(bankFeedIndexes ? { bankFeedIndexes } : {}),
   };
 
   const txnSchema = buildTransactionSchema(txnConfig);
@@ -102,6 +115,38 @@ export function createRevenueModels(options: CreateModelsOptions): RevenueModels
     { publicId: 1 },
     { unique: true, partialFilterExpression: { deletedAt: null, publicId: { $type: 'string' } } },
   );
+
+  // 3.0: idempotent bank-feed re-import — gated by
+  // `modules.bankFeed.indexes.idempotentImport` (default true when
+  // `modules.bankFeed` is enabled). The tenant prefix is added by
+  // `injectTenantField`'s pass-through over schema indexes when scoped —
+  // this index is declared AFTER injection so we explicitly prepend it
+  // for scoped configs to keep behavior identical.
+  if (bankFeedIndexes?.idempotentImport) {
+    if (scope.enabled && scope.strategy === 'field') {
+      txnSchema.index(
+        {
+          [scope.tenantField]: 1,
+          bankAccountId: 1,
+          externalId: 1,
+        } as Record<string, 1>,
+        {
+          unique: true,
+          partialFilterExpression: { externalId: { $type: 'string' } },
+          name: 'bank_feed_idempotent_import',
+        },
+      );
+    } else {
+      txnSchema.index(
+        { bankAccountId: 1, externalId: 1 },
+        {
+          unique: true,
+          partialFilterExpression: { externalId: { $type: 'string' } },
+          name: 'bank_feed_idempotent_import',
+        },
+      );
+    }
+  }
 
   const models: RevenueModels = {
     Transaction: connection.model<TransactionDocument>('Transaction', txnSchema, prefix + DEFAULT_COLLECTIONS.Transaction),

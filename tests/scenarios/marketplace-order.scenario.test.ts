@@ -111,10 +111,10 @@ describe('Scenario: Marketplace Order — Escrow + Split', () => {
       filters: { relatedTransactionId: payment._id, type: { $in: ['commission', 'platform_revenue'] } },
     });
     // 3 split children + 1 platform_revenue + 1 escrow_release from the release step = 5
-    expect(((children as any).docs as any[]).length).toBeGreaterThanOrEqual(4);
+    expect(((children as any).data as any[]).length).toBeGreaterThanOrEqual(4);
 
     // Sum of commission outflows equals original gross
-    const commissions = ((children as any).docs as any[])
+    const commissions = ((children as any).data as any[])
       .filter((d) => d.type === 'commission')
       .reduce((sum, d) => sum + d.amount, 0);
     expect(commissions).toBe(100000);

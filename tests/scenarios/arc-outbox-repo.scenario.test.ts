@@ -73,7 +73,7 @@ function buildRepoOutboxStore(repo: Repository<OutboxDoc>): OutboxStore {
     },
     async getPending(limit: number): Promise<DomainEvent[]> {
       const docs = await repo.getAll({ filters: { status: 'pending' }, limit });
-      return ((docs as { docs: OutboxDoc[] }).docs ?? []).map((d) => d.event);
+      return ((docs as { data: OutboxDoc[] }).data ?? []).map((d) => d.event);
     },
     async acknowledge(eventId: string): Promise<void> {
       await repo.update(eventId, { status: 'delivered' } as Partial<OutboxDoc>);

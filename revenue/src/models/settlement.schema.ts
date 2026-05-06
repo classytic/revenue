@@ -1,4 +1,5 @@
 import mongoose, { type Connection, type Model, Schema } from 'mongoose';
+import type { ApprovalChain } from '@classytic/primitives/approval';
 import type { RevenueSchemaConfig } from './transaction.schema.js';
 
 export interface SettlementDocument {
@@ -9,6 +10,19 @@ export interface SettlementDocument {
   recipientType: string;
   type: string;
   status: string;
+  /**
+   * Optional embedded approval chain — P7. Hosts that gate payout release
+   * on a maker-checker review attach a chain via `createChain()` from
+   * `@classytic/primitives/approval`; the host's approval action checks
+   * `isApproved(doc.approvals)` before transitioning the settlement to
+   * `processed`/`completed`. Auto-disbursement flows leave it undefined.
+   *
+   * Use cases:
+   *   - Vendor payout sign-off (finance verifies before funds release)
+   *   - High-value mobile-wallet / crypto disbursement review
+   *   - Manual bank-transfer payouts to recipients
+   */
+  approvals?: ApprovalChain;
   payoutMethod: string;
   amount: number;
   currency: string;
@@ -40,6 +54,11 @@ export function buildSettlementSchema(config: RevenueSchemaConfig): Schema<Settl
     recipientType: { type: String, required: true },
     type: { type: String, required: true },
     status: { type: String, default: 'pending' },
+    // P7 — embedded ApprovalChain VO (primitives owns the shape). Hosts
+    // running a maker-checker workflow on payout release attach a chain
+    // via `createChain()` and gate the release action on
+    // `isApproved(doc.approvals)`. Auto-disbursement flows leave it undefined.
+    approvals: { type: Schema.Types.Mixed, default: null },
     payoutMethod: { type: String, required: true },
     amount: { type: Number, required: true },
     currency: { type: String, required: true },

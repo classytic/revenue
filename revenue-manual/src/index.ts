@@ -12,17 +12,15 @@
  * - Your custom provider
  */
 
-import {
-  PaymentProvider,
-  PaymentIntent,
-  PaymentResult,
-  RefundResult,
-  WebhookEvent,
-} from '@classytic/revenue';
+import { PaymentProvider } from '@classytic/revenue';
 import type {
   CreateIntentParams,
+  PaymentIntent,
+  PaymentResult,
   ProviderCapabilities,
-} from '@classytic/revenue/providers';
+  RefundResult,
+  WebhookEvent,
+} from '@classytic/primitives/payment-gateway';
 import { nanoid } from 'nanoid';
 
 /**
@@ -66,20 +64,20 @@ export class ManualProvider extends PaymentProvider {
    */
   async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
     const intentId = `manual_${nanoid(16)}`;
-    const currency = params.currency ?? this.defaultCurrency;
+    const amountValue = params.amount.amount;
+    const currency = params.amount.currency ?? this.defaultCurrency;
 
-    return new PaymentIntent({
+    return {
       id: intentId,
       sessionId: null,
       paymentIntentId: null,
       provider: 'manual',
       status: 'pending',
-      amount: params.amount,
-      currency,
+      amount: { amount: amountValue, currency },
       metadata: params.metadata ?? {},
       instructions: this._getPaymentInstructions(params, currency),
       raw: params,
-    });
+    };
   }
 
   /**
@@ -88,17 +86,17 @@ export class ManualProvider extends PaymentProvider {
    * When admin calls revenue.payments.verify(), this confirms the payment
    */
   async verifyPayment(intentId: string): Promise<PaymentResult> {
-    return new PaymentResult({
+    return {
       id: intentId,
       provider: 'manual',
       status: 'succeeded', // Admin has verified, mark as succeeded
-      amount: 0, // Amount will be filled by transaction
-      // Don't hardcode currency - let the transaction's currency be used
+      // amount is optional now — engine fills in from the transaction's
+      // currency. Don't hardcode a placeholder.
       paidAt: new Date(),
       metadata: {
         manuallyVerified: true,
       },
-    });
+    };
   }
 
   /**
@@ -117,17 +115,17 @@ export class ManualProvider extends PaymentProvider {
     options: ManualRefundOptions = {}
   ): Promise<RefundResult> {
     const refundId = `refund_${nanoid(16)}`;
+    const currency = options.currency ?? this.defaultCurrency;
 
-    return new RefundResult({
+    return {
       id: refundId,
       provider: 'manual',
       status: 'succeeded', // Manual refunds are immediately marked as succeeded
-      amount: amount ?? 0,
-      currency: options.currency ?? this.defaultCurrency,
+      amount: { amount: amount ?? 0, currency },
       refundedAt: new Date(),
       reason: options.reason ?? 'Manual refund',
       metadata: options.metadata ?? {},
-    });
+    };
   }
 
   /**
@@ -166,13 +164,15 @@ export class ManualProvider extends PaymentProvider {
       return paymentInstructions;
     }
 
+    const amountValue = params.amount.amount;
+
     // Generic fallback
     if (!paymentInfo) {
-      return `Payment Amount: ${params.amount} ${currency}\n\nPlease contact the organization for payment details.`;
+      return `Payment Amount: ${amountValue} ${currency}\n\nPlease contact the organization for payment details.`;
     }
 
     // Build instructions from paymentInfo
-    const lines: string[] = [`Payment Amount: ${params.amount} ${currency}`, ''];
+    const lines: string[] = [`Payment Amount: ${amountValue} ${currency}`, ''];
 
     // Add all payment info fields generically
     Object.entries(paymentInfo).forEach(([key, value]) => {
@@ -191,4 +191,3 @@ export class ManualProvider extends PaymentProvider {
 }
 
 export default ManualProvider;
-

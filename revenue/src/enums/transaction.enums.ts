@@ -8,6 +8,7 @@ export type TransactionFlowValue = TransactionFlow[keyof TransactionFlow];
 export const TRANSACTION_FLOW_VALUES = Object.values(TRANSACTION_FLOW) as TransactionFlowValue[];
 
 export const TRANSACTION_STATUS = {
+  // Payment-flow lifecycle (original)
   PENDING: 'pending',
   PAYMENT_INITIATED: 'payment_initiated',
   PROCESSING: 'processing',
@@ -19,6 +20,11 @@ export const TRANSACTION_STATUS = {
   EXPIRED: 'expired',
   REFUNDED: 'refunded',
   PARTIALLY_REFUNDED: 'partially_refunded',
+  // Bank-feed / accounting lifecycle (added in 3.0 — see enums/bank-feed.enums.ts)
+  IMPORTED: 'imported',
+  MATCHED: 'matched',
+  JOURNALIZED: 'journalized',
+  REJECTED: 'rejected',
 } as const;
 
 export type TransactionStatus = typeof TRANSACTION_STATUS;

@@ -5,3 +5,4 @@ export * from './monetization.enums.js';
 export * from './escrow.enums.js';
 export * from './split.enums.js';
 export * from './settlement.enums.js';
+export * from './bank-feed.enums.js';

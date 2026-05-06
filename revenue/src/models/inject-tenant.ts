@@ -1,6 +1,6 @@
 import type { Schema } from 'mongoose';
 import mongoose from 'mongoose';
-import type { ResolvedTenantConfig } from '@classytic/primitives/tenant';
+import type { ResolvedTenantConfig } from '@classytic/repo-core/tenant';
 
 /**
  * Inject the tenant field into a schema and (when `enabled`) prepend it
@@ -13,7 +13,7 @@ import type { ResolvedTenantConfig } from '@classytic/primitives/tenant';
  * The field storage type follows `scope.fieldType` (`'objectId'` →
  * `Schema.Types.ObjectId` + `ref`, `'string'` → `String`). No hardcoding
  * here — callers must pass a `ResolvedTenantConfig` from
- * `@classytic/primitives/tenant` via `resolveTenantConfig(...)`.
+ * `@classytic/repo-core/tenant` via `resolveTenantConfig(...)`.
  */
 export function injectTenantField(schema: Schema, scope: ResolvedTenantConfig): void {
   schema.add({

@@ -33,15 +33,17 @@ import {
 import { warmModels } from '../helpers/warm-models.js';
 import {
   createRevenue,
-  PaymentIntent,
   PaymentProvider,
-  PaymentResult,
-  RefundResult,
   REVENUE_EVENTS,
-  WebhookEvent,
-  type CreateIntentParams,
   type DomainEvent,
 } from '../../revenue/src/index.js';
+import type {
+  CreateIntentParams,
+  PaymentIntent,
+  PaymentResult,
+  RefundResult,
+  WebhookEvent,
+} from '@classytic/primitives/payment-gateway';
 
 const TIMEOUT = 30000;
 
@@ -62,30 +64,33 @@ class FlakyPrimary extends PaymentProvider {
       throw new Error('stripe gateway 503 service unavailable');
     }
     const id = `stripe_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    this.store.set(id, { amount: params.amount });
-    return new PaymentIntent({
+    const amount = params.amount.amount;
+    const currency = params.amount.currency ?? 'USD';
+    this.store.set(id, { amount });
+    return {
       id, sessionId: id, paymentIntentId: id,
       provider: 'stripe', status: 'pending',
-      amount: params.amount, currency: params.currency, metadata: {},
-    });
+      amount: { amount, currency }, metadata: {},
+    };
   }
 
   async verifyPayment(id: string): Promise<PaymentResult> {
-    return new PaymentResult({
+    const r = this.store.get(id);
+    return {
       id, provider: 'stripe', status: this.store.has(id) ? 'succeeded' : 'failed',
-      amount: this.store.get(id)?.amount, metadata: {},
-    });
+      amount: r ? { amount: r.amount, currency: 'USD' } : undefined, metadata: {},
+    };
   }
   async getStatus(id: string): Promise<PaymentResult> { return this.verifyPayment(id); }
   async refund(id: string, amount?: number | null): Promise<RefundResult> {
-    return new RefundResult({ id: `r_${id}`, provider: 'stripe', status: 'succeeded', amount: amount ?? 0, metadata: {} });
+    return { id: `r_${id}`, provider: 'stripe', status: 'succeeded', amount: { amount: amount ?? 0, currency: 'USD' }, metadata: {} };
   }
   async handleWebhook(payload: unknown): Promise<WebhookEvent> {
     const p = payload as { id: string; type: string; sessionId: string };
-    return new WebhookEvent({
+    return {
       id: p.id, provider: 'stripe', type: p.type,
       data: { sessionId: p.sessionId }, createdAt: new Date(),
-    });
+    };
   }
 }
 
@@ -99,29 +104,32 @@ class FallbackSslcz extends PaymentProvider {
   async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
     this.intentAttempts += 1;
     const id = `sslcz_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    this.store.set(id, { amount: params.amount });
-    return new PaymentIntent({
+    const amount = params.amount.amount;
+    const currency = params.amount.currency ?? 'USD';
+    this.store.set(id, { amount });
+    return {
       id, sessionId: id, paymentIntentId: id,
       provider: 'sslcommerz', status: 'pending',
-      amount: params.amount, currency: params.currency, metadata: {},
-    });
+      amount: { amount, currency }, metadata: {},
+    };
   }
   async verifyPayment(id: string): Promise<PaymentResult> {
-    return new PaymentResult({
+    const r = this.store.get(id);
+    return {
       id, provider: 'sslcommerz', status: this.store.has(id) ? 'succeeded' : 'failed',
-      amount: this.store.get(id)?.amount, metadata: {},
-    });
+      amount: r ? { amount: r.amount, currency: 'BDT' } : undefined, metadata: {},
+    };
   }
   async getStatus(id: string): Promise<PaymentResult> { return this.verifyPayment(id); }
   async refund(id: string, amount?: number | null): Promise<RefundResult> {
-    return new RefundResult({ id: `r_${id}`, provider: 'sslcommerz', status: 'succeeded', amount: amount ?? 0, metadata: {} });
+    return { id: `r_${id}`, provider: 'sslcommerz', status: 'succeeded', amount: { amount: amount ?? 0, currency: 'BDT' }, metadata: {} };
   }
   async handleWebhook(payload: unknown): Promise<WebhookEvent> {
     const p = payload as { id: string; type: string; sessionId: string };
-    return new WebhookEvent({
+    return {
       id: p.id, provider: 'sslcommerz', type: p.type,
       data: { sessionId: p.sessionId }, createdAt: new Date(),
-    });
+    };
   }
 }
 

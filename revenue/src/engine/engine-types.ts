@@ -2,12 +2,16 @@ import type { Connection } from 'mongoose';
 import type { RevenueContext } from '../core/context.js';
 import type { RevenueBridges } from '../bridges/revenue-bridges.js';
 import type { PaymentProvider } from '../providers/base.js';
+import type {
+  BankFeedProvider,
+  BankFeedProviderRegistry,
+} from '../providers/bank-feed.js';
 import type { RevenueModels, RevenueSchemaOptions } from '../models/create-models.js';
 import type { RevenueRepositories, RepositoryPluginBundle } from '../repositories/create-repositories.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { EventTransport } from '@classytic/primitives/events';
 import type { OutboxStore } from '@classytic/primitives/outbox';
-import type { TenantConfig } from '@classytic/primitives/tenant';
+import type { TenantConfig } from '@classytic/repo-core/tenant';
 
 export type { RevenueContext };
 
@@ -21,6 +25,55 @@ export interface CommissionConfig {
 export interface RetryConfig {
   maxAttempts?: number | undefined;
   baseDelay?: number | undefined;
+}
+
+/**
+ * Per-index opt-in for the bank-feed lifecycle. Each flag controls one
+ * MongoDB index on the `Transaction` collection. Defaults are tuned for
+ * "moderate use" — required indexes are on, dashboard indexes are on,
+ * heavy reconciliation indexes are off.
+ *
+ * Toggle these to match real usage. Index builds are non-trivial on a
+ * collection with millions of rows; turning unused ones off saves disk +
+ * write amplification.
+ */
+export interface BankFeedIndexConfig {
+  /**
+   * `(orgId, bankAccountId, externalId)` partial unique index. Required
+   * for `import()` to enforce idempotent re-import — turning this off
+   * means a Plaid drain that retries can produce duplicate rows.
+   *
+   * Default: `true`. Disable only if you don't use `import()` /
+   * `drainSync()` / `parseAndImport()`.
+   */
+  idempotentImport?: boolean | undefined;
+
+  /**
+   * `(bankAccountId, postedDate -1)` partial — drives the treasurer
+   * dashboard ("show me last 30 days of transactions for account X").
+   * Cheap; on by default.
+   */
+  byAccount?: boolean | undefined;
+
+  /**
+   * `(kind, amount, postedDate)` and `(kind, amount, createdAt)` —
+   * back the cross-reference query in `findMatchCandidates`. Two
+   * compound indexes; turn on when you actively reconcile bank
+   * deposits to gateway charges.
+   *
+   * Default: `false`. Enable when running a recon dashboard.
+   */
+  matchCandidates?: boolean | undefined;
+}
+
+/**
+ * Bank-feed module configuration. Pass `true` for defaults, `false` to
+ * disable the module (skips the bulkWrite plugin + every bank-feed
+ * index), or an object to fine-tune indexes.
+ */
+export interface BankFeedModuleConfig {
+  enabled?: boolean | undefined;
+  indexes?: BankFeedIndexConfig | undefined;
 }
 
 export interface RevenueConfig {
@@ -101,8 +154,44 @@ export interface RevenueConfig {
     escrow?: boolean | undefined;
     settlement?: boolean | undefined;
     commission?: CommissionConfig | boolean | undefined;
+    /**
+     * Bank-feed / accounting-feed module (3.0). Default: enabled (the
+     * schema fields are always present so the discriminator works
+     * uniformly). Disabling this suppresses the auto-wiring of
+     * `bankFeedProviders`, the bulk-write plugin, AND every bank-feed
+     * index — set to `false` for hosts that purely use the payment-
+     * flow lifecycle and want to omit those costs.
+     *
+     * Pass an object to fine-tune which bank-feed indexes are built.
+     * Examples:
+     *   `{ bankFeed: { indexes: { matchCandidates: true } } }`
+     *     — turn on cross-ref indexes for an active recon dashboard.
+     *   `{ bankFeed: { indexes: { idempotentImport: false, byAccount: false } } }`
+     *     — host doesn't use `import()` and doesn't need treasurer dashboards.
+     */
+    bankFeed?: boolean | BankFeedModuleConfig | undefined;
   } | undefined;
   providers?: Record<string, PaymentProvider> | undefined;
+  /**
+   * Bank-feed providers — Plaid, fin-io OFX/CAMT/MT940/CSV, QBO/Xero CDC
+   * adapters. Wired into `engine.bankFeedProviders` and consumed by
+   * `transactionRepository.drainSync()` and `parseAndImport()`.
+   *
+   * @example
+   * ```ts
+   * import { PlaidBankFeedProvider } from '@classytic/revenue-plaid';
+   * import { FinIoBankFeedProvider } from '@classytic/revenue-fin-io';
+   *
+   * const engine = await createRevenue({
+   *   ...,
+   *   bankFeedProviders: {
+   *     plaid: new PlaidBankFeedProvider({ clientId, secret }),
+   *     ofx:   new FinIoBankFeedProvider(),
+   *   },
+   * });
+   * ```
+   */
+  bankFeedProviders?: Record<string, BankFeedProvider> | undefined;
   bridges?: RevenueBridges | undefined;
   repositoryPlugins?: RepositoryPluginBundle | undefined;
   schemaOptions?: RevenueSchemaOptions | undefined;
@@ -165,6 +254,14 @@ export interface RevenueEngine {
   models: RevenueModels;
   repositories: RevenueRepositories;
   providers: ProviderRegistry;
+  /**
+   * Bank-feed providers registry (3.0). Populated when `bankFeed`
+   * module is enabled and `bankFeedProviders` config is non-empty.
+   * Used by `transactionRepository.drainSync()` and
+   * `parseAndImport()`. Hosts can `register` providers at runtime too
+   * (e.g. after the engine boots, to add a per-tenant Plaid client).
+   */
+  bankFeedProviders: BankFeedProviderRegistry;
   events: EventTransport;
   /** Explicitly build all schema-declared indexes. Non-destructive. */
   syncIndexes(): Promise<void>;

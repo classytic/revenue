@@ -123,8 +123,8 @@ describe('Scenario: Multi-tenant isolation', () => {
       organizationId: orgB,
     } as unknown as Record<string, unknown>);
 
-    const docsA = (listA as { docs: Array<{ organizationId: unknown }> }).docs;
-    const docsB = (listB as { docs: Array<{ organizationId: unknown }> }).docs;
+    const docsA = (listA as { data: Array<{ organizationId: unknown }> }).data;
+    const docsB = (listB as { data: Array<{ organizationId: unknown }> }).data;
     expect(docsA).toHaveLength(2);
     expect(docsB).toHaveLength(1);
     expect(docsA.every(d => String(d.organizationId) === orgA)).toBe(true);

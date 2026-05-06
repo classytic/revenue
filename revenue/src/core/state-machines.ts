@@ -22,6 +22,10 @@ import {
   TRANSACTION_STATUS,
   type TransactionStatusValue,
 } from '../enums/transaction.enums.js';
+import {
+  TRANSACTION_KIND,
+  type TransactionKindValue,
+} from '../enums/bank-feed.enums.js';
 import { InvalidStateTransitionError } from './errors.js';
 
 /**
@@ -110,7 +114,11 @@ export class StateMachine<TState extends string> {
   }
 }
 
-// ─── Transaction State Machine ───
+// ─── Transaction State Machine — kind: 'payment_flow' (original) ───
+//
+// Aliased as `PAYMENT_FLOW_STATE_MACHINE` for clarity at call sites that
+// branch on `kind`. `TRANSACTION_STATE_MACHINE` is preserved as the
+// canonical export so existing imports keep working.
 export const TRANSACTION_STATE_MACHINE = new StateMachine<TransactionStatusValue>(
   new Map<TransactionStatusValue, Set<TransactionStatusValue>>([
     [TRANSACTION_STATUS.PENDING, new Set([
@@ -203,3 +211,87 @@ export const SPLIT_STATE_MACHINE = new StateMachine<SplitStatusValue>(
   ]),
   'split',
 );
+
+// ─── Payment Flow alias (3.0) ───
+//
+// Same instance as TRANSACTION_STATE_MACHINE; the alias makes it explicit
+// at call sites that branch on `kind` which graph applies.
+export const PAYMENT_FLOW_STATE_MACHINE = TRANSACTION_STATE_MACHINE;
+
+// ─── Bank Feed State Machine — kind: 'bank_feed' (3.0) ───
+//
+//   imported  → matched | rejected
+//   matched   → imported (un-match) | journalized
+//   journalized, rejected — terminal
+//
+// Designed to be sparse: a bank-feed row never enters the payment-flow
+// graph and vice versa. The repo verbs gate by `kind` via the `where:`
+// clause on `claim()` so cross-kind state corruption is impossible.
+export const BANK_FEED_STATE_MACHINE = new StateMachine<TransactionStatusValue>(
+  new Map<TransactionStatusValue, Set<TransactionStatusValue>>([
+    [TRANSACTION_STATUS.IMPORTED, new Set([
+      TRANSACTION_STATUS.MATCHED,
+      TRANSACTION_STATUS.REJECTED,
+    ])],
+    [TRANSACTION_STATUS.MATCHED, new Set([
+      TRANSACTION_STATUS.IMPORTED, // un-match
+      TRANSACTION_STATUS.JOURNALIZED,
+    ])],
+    [TRANSACTION_STATUS.JOURNALIZED, new Set([])],
+    [TRANSACTION_STATUS.REJECTED, new Set([])],
+  ]),
+  'transaction.bank_feed',
+);
+
+// ─── Manual Transaction State Machine — kind: 'manual' (3.0) ───
+//
+//   pending → matched | rejected
+//   matched → journalized
+//   journalized, rejected — terminal
+//
+// Cleaner two-step lifecycle for hand-keyed entries (treasurer logs a
+// cash deposit, owner injects capital). No provider, no webhook.
+export const MANUAL_STATE_MACHINE = new StateMachine<TransactionStatusValue>(
+  new Map<TransactionStatusValue, Set<TransactionStatusValue>>([
+    [TRANSACTION_STATUS.PENDING, new Set([
+      TRANSACTION_STATUS.MATCHED,
+      TRANSACTION_STATUS.REJECTED,
+    ])],
+    [TRANSACTION_STATUS.MATCHED, new Set([
+      TRANSACTION_STATUS.JOURNALIZED,
+    ])],
+    [TRANSACTION_STATUS.JOURNALIZED, new Set([])],
+    [TRANSACTION_STATUS.REJECTED, new Set([])],
+  ]),
+  'transaction.manual',
+);
+
+/**
+ * Select the state machine that governs a transaction row, given its
+ * `kind`. Repo verbs call this at the start of every state transition
+ * so the same `from → to` rules apply on both the in-memory check
+ * (state machine) and the atomic CAS (mongokit `claim()` with the
+ * `where: { kind }` predicate).
+ *
+ * @example
+ * ```ts
+ * const machine = smFor(transaction.kind);
+ * machine.validate(transaction.status, 'matched', String(transaction._id));
+ * await this.claim(id, {
+ *   from: ['imported', 'matched'],
+ *   to: 'matched',
+ *   where: { kind: transaction.kind },
+ * }, patch, opts);
+ * ```
+ */
+export function smFor(kind: TransactionKindValue): StateMachine<TransactionStatusValue> {
+  switch (kind) {
+    case TRANSACTION_KIND.BANK_FEED:
+      return BANK_FEED_STATE_MACHINE;
+    case TRANSACTION_KIND.MANUAL:
+      return MANUAL_STATE_MACHINE;
+    case TRANSACTION_KIND.PAYMENT_FLOW:
+    default:
+      return PAYMENT_FLOW_STATE_MACHINE;
+  }
+}

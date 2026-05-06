@@ -92,9 +92,9 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
         status: TRANSACTION_STATUS.VERIFIED,
       },
     });
-    expect(((paid as any).docs as any[]).length).toBe(4);
+    expect(((paid as any).data as any[]).length).toBe(4);
 
-    const total = ((paid as any).docs as any[]).reduce((s, t) => s + t.amount, 0);
+    const total = ((paid as any).data as any[]).reduce((s, t) => s + t.amount, 0);
     expect(total).toBe(12000);
   }, TIMEOUT);
 
@@ -152,8 +152,8 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
     const all = await engine.repositories.transaction.getAll({
       filters: { customerId: studentId, sourceId: enrollmentId },
     });
-    expect(((all as any).docs as any[]).length).toBe(4);
-    const actuallyPaid = ((all as any).docs as any[])
+    expect(((all as any).data as any[]).length).toBe(4);
+    const actuallyPaid = ((all as any).data as any[])
       .filter((t) => t.amount > 0)
       .reduce((s, t) => s + t.amount, 0);
     expect(actuallyPaid).toBe(9000);
@@ -187,7 +187,7 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
     const all = await engine.repositories.transaction.getAll({
       filters: { customerId: studentId },
     });
-    const net = ((all as any).docs as any[]).reduce(
+    const net = ((all as any).data as any[]).reduce(
       (s, t) => s + (t.flow === 'inflow' ? t.amount : -t.amount),
       0,
     );

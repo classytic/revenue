@@ -186,7 +186,7 @@ describe('Large amounts and rounding', () => {
       filters: { relatedTransactionId: txn._id, type: 'commission' },
       limit: 100,
     });
-    expect(((children as any).docs as any[]).length).toBe(10);
+    expect(((children as any).data as any[]).length).toBe(10);
   }, TIMEOUT);
 });
 
@@ -202,11 +202,11 @@ describe('Pagination under load', () => {
     await Promise.all(promises);
 
     const page1 = await engine.repositories.transaction.getAll({ page: 1, limit: 25 });
-    expect(((page1 as any).docs as any[]).length).toBe(25);
+    expect(((page1 as any).data as any[]).length).toBe(25);
     expect((page1 as any).total).toBe(100);
     expect((page1 as any).pages).toBe(4);
 
     const page4 = await engine.repositories.transaction.getAll({ page: 4, limit: 25 });
-    expect(((page4 as any).docs as any[]).length).toBe(25);
+    expect(((page4 as any).data as any[]).length).toBe(25);
   }, TIMEOUT);
 });

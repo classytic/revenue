@@ -211,8 +211,8 @@ describe('Scenario: SaaS Subscription Lifecycle', () => {
     const renewals = await engine.repositories.transaction.getAll({
       filters: { 'metadata.subscriptionId': String(sub._id), status: TRANSACTION_STATUS.VERIFIED },
     });
-    expect(((renewals as any).docs as any[]).length).toBe(2);
-    const totalPaid = ((renewals as any).docs as any[]).reduce((s, t) => s + t.amount, 0);
+    expect(((renewals as any).data as any[]).length).toBe(2);
+    const totalPaid = ((renewals as any).data as any[]).reduce((s, t) => s + t.amount, 0);
     expect(totalPaid).toBe(5998);
   }, TIMEOUT);
 });

@@ -51,6 +51,13 @@ export {
   SettlementCompleted,
   SettlementFailed,
   WebhookProcessed,
+  // Bank feed / accounting feed (3.0)
+  TransactionImported,
+  TransactionMatched,
+  TransactionUnmatched,
+  TransactionJournalized,
+  TransactionRejected,
+  TransactionRemovedByFeed,
 } from './revenue-event-catalog.js';
 export type {
   RevenueEventDefinition,
@@ -81,4 +88,10 @@ export type {
   SettlementCompletedPayload,
   SettlementFailedPayload,
   WebhookProcessedPayload,
+  TransactionImportedPayload,
+  TransactionMatchedPayload,
+  TransactionUnmatchedPayload,
+  TransactionJournalizedPayload,
+  TransactionRejectedPayload,
+  TransactionRemovedByFeedPayload,
 } from './revenue-event-catalog.js';

@@ -97,7 +97,7 @@ export class SettlementRepository extends Repository<SettlementDocument> {
     if (options.organizationId) query.organizationId = options.organizationId;
     if (options.payoutMethod) query.payoutMethod = options.payoutMethod;
     const result = await this.getAll({ filters: query, limit: options.limit ?? 50, sort: { scheduledAt: 1 } });
-    const pending = (result as any).docs ?? [];
+    const pending = (result as any).data ?? [];
 
     if (options.dryRun) return { processed: pending.length, succeeded: 0, failed: 0, settlements: pending, errors: [] };
 

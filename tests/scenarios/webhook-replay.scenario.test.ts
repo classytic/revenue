@@ -21,15 +21,17 @@ import {
 import { warmModels } from '../helpers/warm-models.js';
 import {
   createRevenue,
-  PaymentIntent,
   PaymentProvider,
-  PaymentResult,
-  RefundResult,
   REVENUE_EVENTS,
-  WebhookEvent,
-  type CreateIntentParams,
   type DomainEvent,
 } from '../../revenue/src/index.js';
+import type {
+  CreateIntentParams,
+  PaymentIntent,
+  PaymentResult,
+  RefundResult,
+  WebhookEvent,
+} from '@classytic/primitives/payment-gateway';
 
 const TIMEOUT = 15000;
 
@@ -45,22 +47,24 @@ class DeterministicProvider extends PaymentProvider {
 
   async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
     const id = `det_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    this.store.set(id, { amount: params.amount, currency: params.currency ?? 'USD' });
-    return new PaymentIntent({
+    const amount = params.amount.amount;
+    const currency = params.amount.currency ?? 'USD';
+    this.store.set(id, { amount, currency });
+    return {
       id, sessionId: id, paymentIntentId: id,
       provider: 'det', status: 'pending',
-      amount: params.amount, currency: params.currency, metadata: {},
-    });
+      amount: { amount, currency }, metadata: {},
+    };
   }
 
   async verifyPayment(intentId: string): Promise<PaymentResult> {
     const record = this.store.get(intentId);
-    return new PaymentResult({
+    return {
       id: intentId, provider: 'det',
       status: record ? 'succeeded' : 'failed',
-      amount: record?.amount, currency: record?.currency,
+      amount: record ? { amount: record.amount, currency: record.currency } : undefined,
       paidAt: record ? new Date() : undefined, metadata: {},
-    });
+    };
   }
 
   async getStatus(intentId: string): Promise<PaymentResult> {
@@ -68,21 +72,21 @@ class DeterministicProvider extends PaymentProvider {
   }
 
   async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
-    return new RefundResult({
+    return {
       id: `ref_${paymentId}`, provider: 'det', status: 'succeeded',
-      amount: amount ?? 0, refundedAt: new Date(), metadata: {},
-    });
+      amount: { amount: amount ?? 0, currency: 'USD' }, refundedAt: new Date(), metadata: {},
+    };
   }
 
   async handleWebhook(payload: unknown): Promise<WebhookEvent> {
     const p = payload as { id: string; type: string; sessionId: string };
-    return new WebhookEvent({
+    return {
       id: p.id,
       provider: 'det',
       type: p.type,
       data: { sessionId: p.sessionId },
       createdAt: new Date(),
-    });
+    };
   }
 }
 

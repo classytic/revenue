@@ -96,3 +96,34 @@ export class PaymentVerificationError extends RevenueError {
     this.name = 'PaymentVerificationError';
   }
 }
+
+// ─── Bank feed / accounting feed (3.0) ───
+
+export class BankFeedImportError extends RevenueError {
+  constructor(message: string, details?: Record<string, unknown>) {
+    super(message, 'BANK_FEED_IMPORT_ERROR', details);
+    this.name = 'BankFeedImportError';
+  }
+}
+
+export class WrongTransactionKindError extends RevenueError {
+  constructor(transactionId: string, expected: string, actual: string) {
+    super(
+      `Transaction '${transactionId}' is kind '${actual}', not '${expected}'`,
+      'WRONG_TRANSACTION_KIND',
+      { transactionId, expected, actual },
+    );
+    this.name = 'WrongTransactionKindError';
+  }
+}
+
+export class BankFeedProviderNotFoundError extends RevenueError {
+  constructor(providerName: string) {
+    super(
+      `Bank-feed provider '${providerName}' not registered. Use \`engine.bankFeedProviders.register(name, provider)\`.`,
+      'BANK_FEED_PROVIDER_NOT_FOUND',
+      { providerName },
+    );
+    this.name = 'BankFeedProviderNotFoundError';
+  }
+}

@@ -9,6 +9,7 @@ export default defineConfig({
       '@classytic/revenue/providers': path.resolve(__dirname, 'revenue/src/providers/index.ts'),
       '@classytic/revenue/bridges': path.resolve(__dirname, 'revenue/src/bridges/index.ts'),
       '@classytic/revenue': path.resolve(__dirname, 'revenue/src/index.ts'),
+      '@classytic/revenue-manual': path.resolve(__dirname, 'revenue-manual/src/index.ts'),
     },
   },
   test: {

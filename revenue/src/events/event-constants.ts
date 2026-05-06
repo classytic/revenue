@@ -18,6 +18,13 @@ export const REVENUE_EVENTS = {
   SUBSCRIPTION_RESUMED: 'revenue:subscription.resumed',
   // Transaction
   TRANSACTION_UPDATED: 'revenue:transaction.updated',
+  // Bank feed / accounting feed (3.0)
+  TRANSACTION_IMPORTED: 'revenue:transaction.imported',
+  TRANSACTION_MATCHED: 'revenue:transaction.matched',
+  TRANSACTION_UNMATCHED: 'revenue:transaction.unmatched',
+  TRANSACTION_JOURNALIZED: 'revenue:transaction.journalized',
+  TRANSACTION_REJECTED: 'revenue:transaction.rejected',
+  TRANSACTION_REMOVED_BY_FEED: 'revenue:transaction.removed_by_feed',
   // Escrow
   ESCROW_HELD: 'revenue:escrow.held',
   ESCROW_RELEASED: 'revenue:escrow.released',

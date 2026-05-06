@@ -17,16 +17,18 @@ import { warmModels } from '../helpers/warm-models.js';
 import {
   createRevenue,
   PaymentProvider,
-  PaymentIntent,
-  PaymentResult,
-  RefundResult,
-  WebhookEvent,
-  type CreateIntentParams,
   TRANSACTION_STATUS,
   SUBSCRIPTION_STATUS,
   HOLD_STATUS,
   SETTLEMENT_STATUS,
 } from '../../revenue/src/index.js';
+import type {
+  CreateIntentParams,
+  PaymentIntent,
+  PaymentResult,
+  RefundResult,
+  WebhookEvent,
+} from '@classytic/primitives/payment-gateway';
 
 const TEST_TIMEOUT = 15000;
 
@@ -42,44 +44,44 @@ class FakeProvider extends PaymentProvider {
 
   async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
     const id = `fake_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const amount = params.amount.amount;
+    const currency = params.amount.currency ?? 'USD';
     this.store.set(id, {
-      amount: params.amount,
-      currency: params.currency ?? 'USD',
+      amount,
+      currency,
       status: 'pending',
     });
 
-    return new PaymentIntent({
+    return {
       id,
       sessionId: id,
       paymentIntentId: id,
       provider: 'fake',
       status: 'pending',
-      amount: params.amount,
-      currency: params.currency,
+      amount: { amount, currency },
       metadata: {},
-    });
+    };
   }
 
   async verifyPayment(intentId: string): Promise<PaymentResult> {
     const record = this.store.get(intentId);
     if (!record) {
-      return new PaymentResult({
+      return {
         id: intentId,
         provider: 'fake',
         status: 'failed',
         metadata: {},
-      });
+      };
     }
     record.status = 'succeeded';
-    return new PaymentResult({
+    return {
       id: intentId,
       provider: 'fake',
       status: 'succeeded',
-      amount: record.amount,
-      currency: record.currency,
+      amount: { amount: record.amount, currency: record.currency },
       paidAt: new Date(),
       metadata: {},
-    });
+    };
   }
 
   async getStatus(intentId: string): Promise<PaymentResult> {
@@ -87,25 +89,25 @@ class FakeProvider extends PaymentProvider {
   }
 
   async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
-    return new RefundResult({
+    return {
       id: `ref_${paymentId}`,
       provider: 'fake',
       status: 'succeeded',
-      amount: amount ?? 0,
+      amount: { amount: amount ?? 0, currency: 'USD' },
       refundedAt: new Date(),
       metadata: {},
-    });
+    };
   }
 
   async handleWebhook(payload: unknown): Promise<WebhookEvent> {
     const p = payload as any;
-    return new WebhookEvent({
+    return {
       id: `wh_${Date.now()}`,
       provider: 'fake',
       type: p?.type ?? 'payment.succeeded',
       data: p ?? {},
       createdAt: new Date(),
-    });
+    };
   }
 
   override getCapabilities() {
@@ -450,7 +452,7 @@ describe('Repository CRUD (inherited from mongokit)', () => {
     }
 
     const result = await engine.repositories.transaction.getAll({ page: 1, limit: 2 });
-    expect((result as any).docs).toHaveLength(2);
+    expect((result as any).data).toHaveLength(2);
     expect((result as any).total).toBe(3);
     expect((result as any).pages).toBe(2);
   }, TEST_TIMEOUT);
