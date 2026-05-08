@@ -119,9 +119,16 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
     }
   }, TIMEOUT);
 
-  it('isolates outbox failures from transport delivery', async () => {
+  it('propagates outbox.save failures so the caller can roll back', async () => {
     if (!mongoAvailable) return;
 
+    // Per PACKAGE_RULES §P8: outbox.save is durability-critical. When it
+    // fails, the dispatch helper MUST re-throw so the host's transaction
+    // rolls back — otherwise the business doc commits while the event row
+    // vanishes, and the relay never knows the event existed. The error is
+    // also logged for observability before the re-throw. The transport
+    // publish is skipped on save failure (we never reached it), preventing
+    // a phantom in-process event for a state that won't survive rollback.
     const outbox = new RecordingOutbox();
     const transportCalls: DomainEvent[] = [];
     let loggedOutboxErrors = 0;
@@ -151,15 +158,18 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
     try {
       outbox.failNext = true;
 
-      // Transaction write should still succeed; transport publish still fires.
-      const txn = await engine.repositories.transaction.createPaymentIntent({
-        amount: 1000,
-        gateway: 'fake',
-        data: { customerId: 'c2' },
-      });
-      expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
-      expect(transportCalls.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(true);
+      await expect(
+        engine.repositories.transaction.createPaymentIntent({
+          amount: 1000,
+          gateway: 'fake',
+          data: { customerId: 'c2' },
+        }),
+      ).rejects.toThrow(/outbox/i);
+
+      // Save failed → no row in outbox, no publish to transport, but the
+      // error WAS logged for observability before being re-thrown.
       expect(outbox.saved.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(false);
+      expect(transportCalls.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(false);
       expect(loggedOutboxErrors).toBe(1);
     } finally {
       await engine.destroy();

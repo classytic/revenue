@@ -3,6 +3,72 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] — multi-tenant scope correctness across all repos
+
+**Fix.** `SubscriptionRepository` and `SettlementRepository` lifecycle verbs
+were calling internal `getById` / `update` / `getAll` without threading
+`ctx.organizationId` into the mongokit options bag. The moment a host
+enabled `multiTenantPlugin` (the recommended default — see PACKAGE_RULES
+§9), every verb threw `Missing 'organizationId' in context for 'getById'`
+mid-flow and the lifecycle was unusable.
+
+Affected verbs (all now threaded correctly):
+
+- `SubscriptionRepository.{activate,cancel,pause,resume}` — every internal
+  `getById` and `update` now forwards `ctx`.
+- `SettlementRepository.{schedule,processPending,complete,fail}` — every
+  internal `getById`, `getAll`, `update` now forwards `ctx`.
+
+**Refactor.** Introduces `RevenueRepositoryBase<TDoc, TDeps>` (abstract;
+internal — not exported) consolidating the two cross-cutting concerns
+that were previously hand-rolled in three places:
+
+- `protected optsFromCtx(ctx, extra?)` — thin adapter over mongokit's
+  canonical `repoOptionsFromCtx` extractor, plus revenue's `_bypassTenant`
+  flag for platform-admin cross-org reads. **Adding a new canonical context
+  field is now a single edit in `repo-options.ts` upstream, not three.**
+- `protected dispatch(event, ctx)` — outbox-save (session-bound when
+  `ctx.session` is present) → transport-publish, with isolated try/catch
+  on each step (PACKAGE_RULES P8 / §5.5).
+
+`TransactionRepository`, `SubscriptionRepository`, `SettlementRepository`
+all extend the base. `BaseRevenueRepoDeps` (the shared `events` / `outbox`
+/ `logger` trio) is now the canonical superset every per-repo `Deps`
+interface extends.
+
+### Added
+
+- **`tests/scenarios/subscription-tenancy.scenario.test.ts`** — 6 tests
+  proving each lifecycle verb works under `scope: { enabled, required }`,
+  cross-tenant access is rejected with `SubscriptionNotFoundError`, and
+  `multiTenantPlugin` is wired (canary: omitting ctx throws
+  `Missing organizationId`).
+- **`tests/scenarios/settlement-tenancy.scenario.test.ts`** — 5 tests for
+  the same matrix on settlements: schedule, processPending, complete, fail,
+  cross-tenant rejection.
+
+### Internal
+
+- `RevenueRepositoryBase` is unexported on purpose — kept private to
+  the package. Adding a new repo means subclassing it; consumers stay
+  on the existing engine factory surface (`createRevenue(...)`).
+- No public API change. Engine factory, repo method signatures, and
+  exported types are all byte-stable.
+
+### Migration
+
+None — this is a behavioural fix. If you were running 2.1.0 with
+`scope: false` as a workaround for the lifecycle bugs, you can now turn
+scope back on. Recommended config:
+
+```ts
+await createRevenue({
+  connection: mongoose.connection,
+  scope: { enabled: true, fieldType: 'objectId', required: true },
+  // ...
+});
+```
+
 ## [2.0.0] — major rewrite
 
 Payment lifecycle engine refactored around unified transactions, an

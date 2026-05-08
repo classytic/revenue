@@ -18,12 +18,15 @@ export type {
 // payload builder. See PACKAGE_RULES §11–§14.
 export type { DomainEvent, EventHandler, EventTransport } from '@classytic/primitives/events';
 
-// ─── Outbox contract (host-owned durability, PACKAGE_RULES §5.5 + P8) ───
-// Revenue does NOT ship an outbox store. Hosts pass arc's `MemoryOutboxStore`,
-// `MongoOutboxStore`, or any `OutboxStore`-implementing adapter over their
-// own backend. Revenue's repositories save-then-publish in a P8 dispatch
-// helper when an outbox is wired; otherwise events flow only to
-// `eventTransport`.
+// ─── Outbox (transactional event durability — host-composed) ────────────────
+// Re-exports the OutboxStore contract from @classytic/primitives/outbox so
+// hosts can wire any compatible implementation (arc's MongoOutboxStore,
+// custom Kafka-backed store, etc.) without an adapter — see PACKAGE_RULES
+// §5.5 + §P8. Ships `MemoryOutboxStore` for tests + dev wiring; production
+// durability belongs to the host. Revenue's `dispatch()` helper
+// ([`src/repositories/base.repository.ts`](src/repositories/base.repository.ts#L175))
+// calls `outbox.save(event, { session })` BEFORE `events.publish(event)`
+// when an outbox is wired; otherwise events flow only to `eventTransport`.
 export type {
   OutboxStore,
   OutboxWriteOptions,
@@ -39,6 +42,7 @@ export {
   InvalidOutboxEventError,
   OutboxOwnershipError,
 } from '@classytic/primitives/outbox';
+export { MemoryOutboxStore } from './events/outbox-store.js';
 export { InProcessRevenueBus } from './events/in-process-bus.js';
 export type { InProcessRevenueBusOptions } from './events/in-process-bus.js';
 export { createEvent } from './events/helpers.js';

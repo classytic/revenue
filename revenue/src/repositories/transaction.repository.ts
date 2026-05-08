@@ -11,8 +11,8 @@ import type {
   BankTransaction,
 } from '@classytic/primitives/bank-transaction';
 import type { CommissionConfig } from '../engine/engine-types.js';
-import type { DomainEvent, EventTransport } from '@classytic/primitives/events';
-import type { OutboxStore } from '@classytic/primitives/outbox';
+import type { DomainEvent } from '@classytic/primitives/events';
+import { RevenueRepositoryBase, type BaseRevenueRepoDeps } from './base.repository.js';
 import { createEvent } from '../events/helpers.js';
 import { REVENUE_EVENTS } from '../events/event-constants.js';
 import { TRANSACTION_STATUS } from '../enums/transaction.enums.js';
@@ -36,16 +36,12 @@ import { calculateCommission, reverseCommission } from '../shared/calculators/co
 import { reverseTax } from '../shared/calculators/tax.js';
 import { calculateSplits, calculateOrganizationPayout } from '../shared/calculators/splits.js';
 
-export interface TransactionRepoDeps {
-  events: EventTransport;
-  /**
-   * Optional host-owned outbox store (PACKAGE_RULES §5.5 + P8). When present,
-   * every domain event is persisted via `outbox.save(event)` before the
-   * in-process `events.publish(event)` so the host's relay (arc's EventOutbox,
-   * a Postgres LISTEN/NOTIFY pump, Kafka Connect, …) can replay on transport
-   * failure. When absent, events fire through `events.publish` only.
-   */
-  outbox?: OutboxStore | undefined;
+/**
+ * Deps for {@link TransactionRepository}. Extends {@link BaseRevenueRepoDeps}
+ * (events / outbox? / logger?) with provider/bridge/config wiring specific
+ * to the payment-flow + bank-feed lifecycles.
+ */
+export interface TransactionRepoDeps extends BaseRevenueRepoDeps {
   providers: ProviderRegistry;
   /**
    * Bank-feed provider registry (3.0). Optional — when omitted, the
@@ -56,7 +52,6 @@ export interface TransactionRepoDeps {
   bridges: RevenueBridges;
   commission?: CommissionConfig;
   defaultCurrency: string;
-  logger?: { error(...args: unknown[]): void } | undefined;
 }
 
 /**
@@ -97,78 +92,57 @@ export interface TransactionRepoDeps {
  */
 type RepoWithBulkWrite = Repository<TransactionDocument> & Partial<BatchOperationsMethods>;
 
-export class TransactionRepository extends Repository<TransactionDocument> {
-  private deps!: TransactionRepoDeps;
-
+export class TransactionRepository extends RevenueRepositoryBase<TransactionDocument, TransactionRepoDeps> {
   constructor(model: Model<TransactionDocument>, plugins: PluginType[] = []) {
     super(model, plugins);
   }
 
-  inject(deps: TransactionRepoDeps): void {
-    this.deps = deps;
-  }
-
-  /**
-   * Thread `ctx.organizationId` (and future ctx fields) into mongokit
-   * options so the `multiTenantPlugin` can auto-scope filters, queries,
-   * and inserts. Merges any caller-supplied extras. Centralizing this
-   * here means every domain verb participates in scope isolation without
-   * per-call boilerplate.
-   */
-  private optsFromCtx(
-    ctx: RevenueContext,
-    extra: Record<string, unknown> = {},
-  ): Record<string, unknown> {
-    const out: Record<string, unknown> = { ...extra };
-    if (ctx.organizationId !== undefined) out.organizationId = ctx.organizationId;
-    if (ctx.session !== undefined) out.session = ctx.session;
-    return out;
-  }
-
-  // ─── Dispatch helpers (PACKAGE_RULES P8 / §5.5) ───
+  // ─── Phased dispatch helpers (PACKAGE_RULES §P8 / §5.5) ───
+  //
+  // Phased dispatch — `saveToOutbox` runs INSIDE a `withTransaction` body
+  // so the event row commits atomically with the business write;
+  // `publishToTransport` runs AFTER the transaction commits so in-process
+  // subscribers fire only when the parent write succeeded.
+  //
+  // For verbs that don't open their own session, the base `dispatch()` is
+  // simpler: call `this.dispatch(event, ctx)` and the same atomicity is
+  // achieved via `ctx.session` threading.
 
   /**
    * Save an event to the host-owned outbox, session-bound when available.
    *
-   * When `session` is passed, the outbox row commits atomically with the
-   * business write (P8 true session-bound write). When absent, the save
-   * happens after commit — still durable via the host's relay, but with a
-   * small at-most-once window on process crash.
+   * Called INSIDE a `withTransaction` body. The outbox row commits
+   * atomically with the business write (P8 true session-bound write) —
+   * if outbox.save fails, this method re-throws so `withTransaction`
+   * rolls the parent write back. Without propagation, the parent doc
+   * would commit while the event row vanishes, defeating the whole
+   * transactional-outbox correctness argument.
    *
-   * Isolated try/catch: an outbox failure never throws out of this helper;
-   * the caller still issues a transport.publish.
+   * Logging happens before the re-throw so the failure surfaces in
+   * observability without losing the original stack trace.
    */
-  private async saveToOutbox(event: DomainEvent, session?: unknown): Promise<void> {
+  protected async saveToOutbox(event: DomainEvent, session?: unknown): Promise<void> {
     if (!this.deps.outbox) return;
     try {
       await this.deps.outbox.save(event, session !== undefined ? { session } : {});
     } catch (err) {
       this.deps.logger?.error('[revenue] outbox.save failed for', event.type, err);
+      throw err;
     }
   }
 
   /**
    * Publish an event to the in-process `EventTransport` after commit.
-   * Transport failure is logged — the host relay will still redeliver from
-   * the outbox, so in-process subscribers missing an event is recoverable.
+   * Transport failure is logged and swallowed — the host relay re-delivers
+   * from the durable outbox row on the next poll, so in-process
+   * subscribers missing an event is recoverable. Best-effort by design.
    */
-  private async publishToTransport(event: DomainEvent): Promise<void> {
+  protected async publishToTransport(event: DomainEvent): Promise<void> {
     try {
       await this.deps.events.publish(event);
     } catch (err) {
       this.deps.logger?.error('[revenue] events.publish failed for', event.type, err);
     }
-  }
-
-  /**
-   * Non-transactional dispatch (used by verbs that don't open their own
-   * `withTransaction` block): outbox.save (session-bound when ctx provides
-   * one) → transport.publish. Matches arc's EventOutbox + MemoryEventTransport
-   * wiring bit-for-bit.
-   */
-  private async dispatch(event: DomainEvent, ctx: RevenueContext = {}): Promise<void> {
-    await this.saveToOutbox(event, ctx.session);
-    await this.publishToTransport(event);
   }
 
   // ─── Domain: Create Payment Intent ───
@@ -432,11 +406,11 @@ export class TransactionRepository extends Repository<TransactionDocument> {
       processedAt: new Date(),
       data: webhookEvent.data,
     };
-    const updated = await this.Model.findOneAndUpdate(
+    const updated = await this.findOneAndUpdate<TransactionDocument>(
       { _id: transaction._id, 'webhook.eventId': { $ne: webhookEvent.id } },
       { $set: { webhook: nextWebhook } },
       { returnDocument: 'after' },
-    ).lean<TransactionDocument>();
+    );
 
     if (!updated) {
       // Another concurrent replay won the CAS — return the canonical
@@ -1364,14 +1338,28 @@ export class TransactionRepository extends Repository<TransactionDocument> {
         ? [TRANSACTION_STATUS.VERIFIED, TRANSACTION_STATUS.COMPLETED]
         : [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.MATCHED];
 
+    // Settlement-window timestamp depends on kind:
+    //   - `bank_feed` rows carry `postedDate` (the bank's settled-on date).
+    //   - `payment_flow` rows carry `verifiedAt` (the gateway's confirm-on
+    //     timestamp). `postedDate` is never set on payment_flow, and
+    //     `createdAt` is "row insertion time" which can be hours-to-days
+    //     after the actual charge — too noisy to anchor reconciliation.
+    // Falling back to `createdAt` keeps legacy rows (verified before the
+    // field existed) match-able, matching how upgraded ledgers usually
+    // backfill `verifiedAt = createdAt` on the first migration.
+    const dateClauses: Record<string, unknown>[] =
+      targetKind === TRANSACTION_KIND.BANK_FEED
+        ? [{ postedDate: { $gte: start, $lte: end } }]
+        : [
+            { verifiedAt: { $gte: start, $lte: end } },
+            { createdAt: { $gte: start, $lte: end } },
+          ];
+
     const query: Record<string, unknown> = {
       kind: targetKind,
       status: { $in: validStatuses },
       amount: { $gte: minAmount, $lte: maxAmount },
-      $or: [
-        { postedDate: { $gte: start, $lte: end } },
-        { createdAt: { $gte: start, $lte: end } },
-      ],
+      $or: dateClauses,
     };
     if (filter.currency !== undefined) query.currency = filter.currency;
     if (filter.counterpartyName !== undefined) {

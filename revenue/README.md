@@ -53,25 +53,48 @@ const refundTxn = await revenue.repositories.transaction.refund(
 ```
 createRevenue(config) --> RevenueEngine
   |
-  |-- repositories.transaction       extends mongokit Repository
-  |     getAll, getById, getByQuery, create, update, delete, count  (inherited)
+  |-- repositories.transaction      extends RevenueRepositoryBase
+  |     CRUD inherited (mongokit Repository)
   |     createPaymentIntent, verify, refund, handleWebhook          (domain verbs)
   |     hold, release, split                                        (escrow verbs)
+  |     import, match, unmatch, journalize, reject, removeByFeed    (bank-feed verbs)
   |
-  |-- repositories.subscription      extends mongokit Repository
-  |     getAll, getById, create, update, delete, count              (inherited)
+  |-- repositories.subscription     extends RevenueRepositoryBase
+  |     CRUD inherited
   |     activate, cancel, pause, resume                             (domain verbs)
   |
-  |-- repositories.settlement        extends mongokit Repository
-  |     getAll, getById, create, update, delete, count              (inherited)
+  |-- repositories.settlement       extends RevenueRepositoryBase
+  |     CRUD inherited
   |     schedule, processPending, complete, fail                    (domain verbs)
   |
-  |-- providers                      ProviderRegistry
-  |-- events                         RevenueEventTransport (Arc-compatible)
-  |-- models                         Mongoose models (for Arc adapter)
+  |-- providers                     ProviderRegistry
+  |-- events                        RevenueEventTransport (Arc-compatible)
+  |-- models                        Mongoose models (for Arc adapter)
+
+
+      RevenueRepositoryBase (internal)
+        |
+        |-- extends mongokit Repository<TDoc>
+        |-- protected optsFromCtx(ctx, extra?)   threads RevenueContext into mongokit
+        |                                        options bag (uses repoOptionsFromCtx;
+        |                                        forwards organizationId, userId,
+        |                                        session, requestId + _bypassTenant)
+        |-- protected dispatch(event, ctx)       outbox.save (session-bound) →
+        |                                        events.publish (PACKAGE_RULES P8)
+        \-- protected deps: BaseRevenueRepoDeps  events / outbox? / logger?
 ```
 
-Repositories extend mongokit `Repository`. CRUD + pagination + query is inherited. Domain verbs contain real business logic (state machine transitions, provider calls, event emission). No service layer. No proxy methods.
+**Three repos. One scope-threading helper. One dispatch helper.** Every
+domain verb routes its mongokit calls through `optsFromCtx(ctx)` so
+multi-tenant scope, audit attribution, and transaction sessions land
+on every read/write without per-method boilerplate. Every domain event
+goes through `dispatch(event, ctx)` so outbox and transport semantics
+stay consistent across the package.
+
+CRUD, pagination, querying, and policy hooks come from
+[`@classytic/mongokit`](https://www.npmjs.com/package/@classytic/mongokit).
+Domain verbs contain real business logic (state machine transitions,
+provider calls, event emission). No service layer. No proxy methods.
 
 ## RevenueConfig
 
