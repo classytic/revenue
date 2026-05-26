@@ -66,7 +66,7 @@ describe('revenueEventDefinitions — invariants', () => {
 describe('Bank-feed events (3.0) — Zod happy paths', () => {
   it('TransactionImported requires source + bankAccountId + externalId', () => {
     const r = TransactionImported.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1', status: 'imported' },
+      transaction: { publicId: 'txn_1', status: 'imported', methodKind: 'card' },
       source: 'plaid',
       bankAccountId: 'acct_main',
       externalId: 'PLAID_TX_123',
@@ -77,7 +77,7 @@ describe('Bank-feed events (3.0) — Zod happy paths', () => {
   it('TransactionMatched accepts a partial mapping (debit/credit/notes optional)', () => {
     expect(
       TransactionMatched.zodSchema.safeParse({
-        transaction: { publicId: 'txn_1' },
+        transaction: { publicId: 'txn_1', methodKind: 'card' },
         mapping: { debitAccount: '1010', creditAccount: '4000', notes: 'monthly Stripe payout' },
         relatedTransactionId: '64a8f1...',
         matchedBy: 'reconciler@acme',
@@ -87,7 +87,7 @@ describe('Bank-feed events (3.0) — Zod happy paths', () => {
     // Empty mapping is also valid — host may provide it later via update().
     expect(
       TransactionMatched.zodSchema.safeParse({
-        transaction: { publicId: 'txn_1' },
+        transaction: { publicId: 'txn_1', methodKind: 'card' },
         mapping: {},
       }).success,
     ).toBe(true);
@@ -95,14 +95,14 @@ describe('Bank-feed events (3.0) — Zod happy paths', () => {
 
   it('TransactionUnmatched only requires `transaction`', () => {
     const r = TransactionUnmatched.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
     });
     expect(r.success).toBe(true);
   });
 
   it('TransactionJournalized requires journalEntryRef.{type,id}', () => {
     const r = TransactionJournalized.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       journalEntryRef: { type: 'JournalEntry', id: 'je_xyz' },
     });
     expect(r.success).toBe(true);
@@ -110,7 +110,7 @@ describe('Bank-feed events (3.0) — Zod happy paths', () => {
 
   it('TransactionRejected requires a non-empty reason', () => {
     const r = TransactionRejected.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       reason: 'duplicate of FIT_001',
       rejectedBy: 'admin',
     });
@@ -119,7 +119,7 @@ describe('Bank-feed events (3.0) — Zod happy paths', () => {
 
   it('TransactionRemovedByFeed requires source + externalId', () => {
     const r = TransactionRemovedByFeed.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       source: 'plaid',
       externalId: 'PLAID_TX_123',
     });
@@ -130,7 +130,7 @@ describe('Bank-feed events (3.0) — Zod happy paths', () => {
 describe('Bank-feed events (3.0) — Zod rejection paths', () => {
   it('TransactionImported rejects missing externalId', () => {
     const r = TransactionImported.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       source: 'plaid',
       bankAccountId: 'acct_main',
     });
@@ -139,7 +139,7 @@ describe('Bank-feed events (3.0) — Zod rejection paths', () => {
 
   it('TransactionJournalized rejects malformed journalEntryRef (missing id)', () => {
     const r = TransactionJournalized.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       journalEntryRef: { type: 'JournalEntry' },
     });
     expect(r.success).toBe(false);
@@ -147,7 +147,7 @@ describe('Bank-feed events (3.0) — Zod rejection paths', () => {
 
   it('TransactionRejected rejects empty reason', () => {
     const r = TransactionRejected.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       reason: '',
     });
     expect(r.success).toBe(false);
@@ -158,7 +158,7 @@ describe('Bank-feed events (3.0) — DomainEvent envelope round-trip', () => {
   it('TransactionImported.create() emits a well-formed DomainEvent', () => {
     const event = TransactionImported.create(
       {
-        transaction: { publicId: 'txn_1', status: 'imported' },
+        transaction: { publicId: 'txn_1', status: 'imported', methodKind: 'card' },
         source: 'plaid',
         bankAccountId: 'acct_main',
         externalId: 'PLAID_TX_123',
@@ -173,7 +173,7 @@ describe('Bank-feed events (3.0) — DomainEvent envelope round-trip', () => {
 
   it('TransactionMatched preserves mapping in the envelope', () => {
     const event = TransactionMatched.create({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       mapping: { debitAccount: '1010', creditAccount: '4000' },
     });
     expect(event.type).toBe('revenue:transaction.matched');

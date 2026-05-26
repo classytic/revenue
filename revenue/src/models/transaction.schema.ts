@@ -1,6 +1,9 @@
 import mongoose, { type Connection, type Model, Schema } from 'mongoose';
 import type { ApprovalChain } from '@classytic/primitives/approval';
+import { PAYMENT_METHOD_KIND, type PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
 import { TRANSACTION_KIND, type TransactionKindValue, TRANSACTION_KIND_VALUES } from '../enums/bank-feed.enums.js';
+
+const PAYMENT_METHOD_KIND_ENUM = Object.values(PAYMENT_METHOD_KIND) as PaymentMethodKind[];
 
 /**
  * The Transaction document carries an optional `approvals` value object
@@ -99,6 +102,7 @@ export interface TransactionDocument {
   originalCurrency?: string;
 
   method: string;
+  methodKind: PaymentMethodKind;
   status: string;
   /**
    * Optional embedded approval chain — P7. Hosts that gate manual /
@@ -280,6 +284,7 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
     originalCurrency: { type: String },
 
     method: { type: String, required: true },
+    methodKind: { type: String, enum: PAYMENT_METHOD_KIND_ENUM, required: true },
     status: { type: String, default: 'pending' },
     // P7 — embedded ApprovalChain VO (primitives owns the shape). Hosts
     // running a maker-checker workflow (manual receipts, refunds, bank

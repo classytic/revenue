@@ -54,7 +54,7 @@ beforeEach(async () => {
 });
 
 async function createAndVerify(amount: number) {
-  const txn = await engine.repositories.transaction.createPaymentIntent({ amount, gateway: 'fake' });
+  const txn = await engine.repositories.transaction.createPaymentIntent({ amount, gateway: 'fake', methodKind: 'card'  });
   return engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 }
 
@@ -65,7 +65,7 @@ describe('Throughput: rapid-fire creates', () => {
     const start = Date.now();
     const promises = Array.from({ length: 50 }, (_, i) =>
       engine.repositories.transaction.createPaymentIntent({
-        amount: 1000 + i, gateway: 'fake',
+        amount: 1000 + i, gateway: 'fake', methodKind: 'card',
         data: { customerId: `cust_${i}` },
       }),
     );
@@ -85,7 +85,7 @@ describe('Concurrency: double verify race', () => {
   it('two concurrent verify calls — one succeeds, one fails with state machine error', async () => {
     if (!mongoAvailable) return;
 
-    const txn = await engine.repositories.transaction.createPaymentIntent({ amount: 10000, gateway: 'fake' });
+    const txn = await engine.repositories.transaction.createPaymentIntent({ amount: 10000, gateway: 'fake', methodKind: 'card'  });
     const intentId = txn.gateway!.paymentIntentId as string;
 
     const results = await Promise.allSettled([
@@ -108,7 +108,7 @@ describe('State machine rejection', () => {
   it('cannot refund a pending transaction', async () => {
     if (!mongoAvailable) return;
 
-    const txn = await engine.repositories.transaction.createPaymentIntent({ amount: 5000, gateway: 'fake' });
+    const txn = await engine.repositories.transaction.createPaymentIntent({ amount: 5000, gateway: 'fake', methodKind: 'card'  });
     await expect(
       engine.repositories.transaction.refund(String(txn._id), null, { reason: 'test' }),
     ).rejects.toThrow();
@@ -117,7 +117,7 @@ describe('State machine rejection', () => {
   it('cannot hold a pending transaction', async () => {
     if (!mongoAvailable) return;
 
-    const txn = await engine.repositories.transaction.createPaymentIntent({ amount: 5000, gateway: 'fake' });
+    const txn = await engine.repositories.transaction.createPaymentIntent({ amount: 5000, gateway: 'fake', methodKind: 'card'  });
     await expect(
       engine.repositories.transaction.hold(String(txn._id)),
     ).rejects.toThrow();
@@ -196,7 +196,7 @@ describe('Pagination under load', () => {
 
     const promises = Array.from({ length: 100 }, (_, i) =>
       engine.repositories.transaction.createPaymentIntent({
-        amount: 1000 + i, gateway: 'fake',
+        amount: 1000 + i, gateway: 'fake', methodKind: 'card',
       }),
     );
     await Promise.all(promises);

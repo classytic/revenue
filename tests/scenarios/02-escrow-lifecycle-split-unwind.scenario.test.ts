@@ -85,7 +85,7 @@ describe('Scenario 02 — Escrow lifecycle with partial release, split, late ref
 
     // Day 0: buyer pays
     const txn = await engine.repositories.transaction.createPaymentIntent({
-      amount: 10000, gateway: 'fake',
+      amount: 10000, gateway: 'fake', methodKind: 'card',
       data: { customerId: 'buyer_dispute', sourceId: 'order_D1', sourceModel: 'Order' },
       metadata: { orderId: 'order_D1' },
     });
@@ -177,7 +177,7 @@ describe('Scenario 02 — Escrow lifecycle with partial release, split, late ref
     if (!mongoAvailable) return;
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
-      amount: 5000, gateway: 'fake',
+      amount: 5000, gateway: 'fake', methodKind: 'card',
       data: { customerId: 'buyer_no_hold' },
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);

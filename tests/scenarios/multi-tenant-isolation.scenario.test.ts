@@ -69,11 +69,11 @@ describe('Scenario: Multi-tenant isolation', () => {
 
     // Create one transaction per org.
     const txnA = await engine.repositories.transaction.createPaymentIntent(
-      { amount: 100, gateway: 'fake', data: { customerId: 'c_a' } },
+      { amount: 100, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_a' } },
       { organizationId: orgA, actorId: 'u1' },
     );
     const txnB = await engine.repositories.transaction.createPaymentIntent(
-      { amount: 200, gateway: 'fake', data: { customerId: 'c_b' } },
+      { amount: 200, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_b' } },
       { organizationId: orgB, actorId: 'u2' },
     );
 
@@ -104,15 +104,15 @@ describe('Scenario: Multi-tenant isolation', () => {
     const orgB = 'branch_ctg';
 
     await engine.repositories.transaction.createPaymentIntent(
-      { amount: 100, gateway: 'fake', data: { customerId: 'c_a1' } },
+      { amount: 100, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_a1' } },
       { organizationId: orgA },
     );
     await engine.repositories.transaction.createPaymentIntent(
-      { amount: 300, gateway: 'fake', data: { customerId: 'c_a2' } },
+      { amount: 300, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_a2' } },
       { organizationId: orgA },
     );
     await engine.repositories.transaction.createPaymentIntent(
-      { amount: 500, gateway: 'fake', data: { customerId: 'c_b1' } },
+      { amount: 500, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_b1' } },
       { organizationId: orgB },
     );
 
@@ -138,7 +138,7 @@ describe('Scenario: Multi-tenant isolation', () => {
     const orgB = 'branch_ctg';
 
     const txnA = await engine.repositories.transaction.createPaymentIntent(
-      { amount: 100, gateway: 'fake', data: { customerId: 'c_cross' } },
+      { amount: 100, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_cross' } },
       { organizationId: orgA },
     );
     const sessionId = txnA.gateway!.paymentIntentId as string;

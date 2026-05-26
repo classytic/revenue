@@ -88,7 +88,7 @@ describe('multiTenantPlugin wiring probe — transaction repo (revenue 3.0)', ()
     await expect(
       engine.repositories.transaction.import(
         [row()],
-        { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX },
+        { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
         emptyCtx,
       ),
     ).rejects.toThrow(/organizationId/i);
@@ -138,6 +138,7 @@ describe('multiTenantPlugin wiring probe — transaction repo (revenue 3.0)', ()
           currency: 'USD',
           flow: 'inflow',
           type: 'capital_injection',
+          methodKind: 'manual',
         },
         emptyCtx,
       ),

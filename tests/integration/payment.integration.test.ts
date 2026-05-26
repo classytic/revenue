@@ -156,7 +156,7 @@ describe('Payment Flow', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 10000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'cust_1', sourceId: 'order_1', sourceModel: 'Order' },
     });
 
@@ -172,7 +172,7 @@ describe('Payment Flow', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 5000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
     });
 
     const verified = await engine.repositories.transaction.verify(
@@ -190,7 +190,7 @@ describe('Payment Flow', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 8000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
@@ -213,7 +213,7 @@ describe('Payment Flow', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 10000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
@@ -233,13 +233,13 @@ describe('Payment Flow', () => {
 
     const first = await engine.repositories.transaction.createPaymentIntent({
       amount: 5000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       idempotencyKey: 'idem_123',
     });
 
     const second = await engine.repositories.transaction.createPaymentIntent({
       amount: 5000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       idempotencyKey: 'idem_123',
     });
 
@@ -251,7 +251,7 @@ describe('Payment Flow', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 0,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       monetizationType: 'free',
     });
 
@@ -268,7 +268,7 @@ describe('Escrow Flow', () => {
     if (!mongoAvailable) return;
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
-      amount: 20000, gateway: 'fake',
+      amount: 20000, gateway: 'fake', methodKind: 'card',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
@@ -288,7 +288,7 @@ describe('Escrow Flow', () => {
     if (!mongoAvailable) return;
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
-      amount: 10000, gateway: 'fake',
+      amount: 10000, gateway: 'fake', methodKind: 'card',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
@@ -311,7 +311,7 @@ describe('Subscription Flow', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 2999,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       monetizationType: 'subscription',
       planKey: 'monthly',
     });
@@ -447,7 +447,7 @@ describe('Repository CRUD (inherited from mongokit)', () => {
     for (let i = 0; i < 3; i++) {
       await engine.repositories.transaction.createPaymentIntent({
         amount: 1000 * (i + 1),
-        gateway: 'fake',
+        gateway: 'fake', methodKind: 'card',
       });
     }
 
@@ -462,7 +462,7 @@ describe('Repository CRUD (inherited from mongokit)', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 7777,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
     });
 
     const found = await engine.repositories.transaction.getById(txn._id.toString());
@@ -473,8 +473,8 @@ describe('Repository CRUD (inherited from mongokit)', () => {
   it('should count documents', async () => {
     if (!mongoAvailable) return;
 
-    await engine.repositories.transaction.createPaymentIntent({ amount: 100, gateway: 'fake' });
-    await engine.repositories.transaction.createPaymentIntent({ amount: 200, gateway: 'fake' });
+    await engine.repositories.transaction.createPaymentIntent({ amount: 100, gateway: 'fake', methodKind: 'card'  });
+    await engine.repositories.transaction.createPaymentIntent({ amount: 200, gateway: 'fake', methodKind: 'card'  });
 
     const count = await engine.repositories.transaction.count({});
     expect(count).toBe(2);
@@ -511,7 +511,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
 
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
       amount: 50000,
-      gateway: 'manual',
+      gateway: 'manual', methodKind: 'wallet',
       data: { customerId: 'cust_bd_1', sourceId: 'order_99', sourceModel: 'Order' },
       metadata: { paymentInstructions: 'Send bKash to 01700000000' },
     });
@@ -529,7 +529,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     if (!mongoAvailable) return;
 
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
-      amount: 25000, gateway: 'manual',
+      amount: 25000, gateway: 'manual', methodKind: 'manual',
     });
 
     const verified = await manualEngine.repositories.transaction.verify(
@@ -546,7 +546,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     if (!mongoAvailable) return;
 
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
-      amount: 30000, gateway: 'manual',
+      amount: 30000, gateway: 'manual', methodKind: 'manual',
     });
     await manualEngine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
@@ -564,7 +564,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
 
     // Create
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
-      amount: 100000, gateway: 'manual',
+      amount: 100000, gateway: 'manual', methodKind: 'manual',
       data: { customerId: 'cust_lifecycle', sourceId: 'order_lifecycle', sourceModel: 'Order' },
     });
     expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
@@ -581,5 +581,54 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     const updated = await manualEngine.repositories.transaction.getById(txn._id.toString());
     expect((updated as any).status).toBe(TRANSACTION_STATUS.PARTIALLY_REFUNDED);
     expect((updated as any).refundedAmount).toBe(40000);
+  }, TEST_TIMEOUT);
+});
+
+describe('backfillMethodKind', () => {
+  it('allows other + pending → real kind transition', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 4200,
+      gateway: 'fake',
+      methodKind: 'other',
+    });
+    expect(txn.methodKind).toBe('other');
+    expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
+
+    const updated = await engine.repositories.transaction.backfillMethodKind(
+      txn._id.toString(),
+      'card',
+    );
+    expect(updated.methodKind).toBe('card');
+    expect(updated.status).toBe(TRANSACTION_STATUS.PENDING);
+  }, TEST_TIMEOUT);
+
+  it('rejects when methodKind already specific', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 1000,
+      gateway: 'fake',
+      methodKind: 'card',
+    });
+    await expect(
+      engine.repositories.transaction.backfillMethodKind(txn._id.toString(), 'wallet'),
+    ).rejects.toThrow(/METHOD_KIND_LOCKED|locked/i);
+  }, TEST_TIMEOUT);
+
+  it('rejects after the transaction has settled past pending', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 1500,
+      gateway: 'fake',
+      methodKind: 'other',
+    });
+    await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+
+    await expect(
+      engine.repositories.transaction.backfillMethodKind(txn._id.toString(), 'wallet'),
+    ).rejects.toThrow(/METHOD_KIND_LOCKED|locked/i);
   }, TEST_TIMEOUT);
 });

@@ -64,7 +64,7 @@ beforeEach(async () => {
 async function buyerPays(amount: number, orderId: string) {
   const txn = await engine.repositories.transaction.createPaymentIntent({
     amount,
-    gateway: 'fake',
+    gateway: 'fake', methodKind: 'card',
     data: { customerId: `buyer_${orderId}`, sourceId: orderId, sourceModel: 'Order' },
     metadata: { orderId },
   });

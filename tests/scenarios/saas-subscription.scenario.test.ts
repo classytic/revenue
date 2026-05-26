@@ -63,7 +63,7 @@ beforeEach(async () => {
 async function payAndActivate(customerId: string, amount: number, planKey: string) {
   const txn = await engine.repositories.transaction.createPaymentIntent({
     amount,
-    gateway: 'fake',
+    gateway: 'fake', methodKind: 'card',
     monetizationType: 'subscription',
     planKey,
     data: { customerId },
@@ -188,7 +188,7 @@ describe('Scenario: SaaS Subscription Lifecycle', () => {
     // Period 2 renewal
     const period2 = await engine.repositories.transaction.createPaymentIntent({
       amount: 2999,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       monetizationType: 'subscription',
       planKey: 'monthly',
       data: { customerId: 'user_renewals', sourceId: String(sub._id), sourceModel: 'Subscription' },
@@ -199,7 +199,7 @@ describe('Scenario: SaaS Subscription Lifecycle', () => {
     // Period 3 renewal
     const period3 = await engine.repositories.transaction.createPaymentIntent({
       amount: 2999,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       monetizationType: 'subscription',
       planKey: 'monthly',
       data: { customerId: 'user_renewals', sourceId: String(sub._id), sourceModel: 'Subscription' },

@@ -125,7 +125,7 @@ describe('Scenario: Webhook replay dedup', () => {
 
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
-        amount: 1500, gateway: 'det',
+        amount: 1500, gateway: 'det', methodKind: 'card',
         data: { customerId: 'cust_1' },
       });
       const sessionId = txn.gateway!.sessionId as string;

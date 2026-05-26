@@ -64,16 +64,26 @@ describe('revenueEventDefinitions', () => {
 describe('Zod schemas — happy paths', () => {
   it('PaymentVerified accepts a minimal transaction payload', () => {
     const r = PaymentVerified.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1', status: 'verified' },
+      transaction: { publicId: 'txn_1', status: 'verified', methodKind: 'card' },
       verifiedBy: 'user_1',
     });
     expect(r.success).toBe(true);
   });
 
+  it('PaymentVerified accepts new 0.8.0 kinds (mobile_money, bnpl)', () => {
+    for (const methodKind of ['mobile_money', 'bnpl', 'direct_debit', 'instant_bank_transfer', 'gift_card'] as const) {
+      const r = PaymentVerified.zodSchema.safeParse({
+        transaction: { publicId: `txn_${methodKind}`, status: 'verified', methodKind },
+        verifiedBy: 'user_1',
+      });
+      expect(r.success, `methodKind=${methodKind}`).toBe(true);
+    }
+  });
+
   it('PaymentRefunded requires refundAmount as money + isPartialRefund boolean', () => {
     const r = PaymentRefunded.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
-      refundTransaction: { publicId: 'txn_refund_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
+      refundTransaction: { publicId: 'txn_refund_1', methodKind: 'card' },
       refundAmount: { amount: 500, currency: 'USD' },
       isPartialRefund: true,
       reason: 'customer request',
@@ -84,7 +94,7 @@ describe('Zod schemas — happy paths', () => {
   it('MonetizationCreated requires monetizationType + transaction', () => {
     const r = MonetizationCreated.zodSchema.safeParse({
       monetizationType: 'purchase',
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
     });
     expect(r.success).toBe(true);
   });
@@ -125,7 +135,7 @@ describe('Zod schemas — happy paths', () => {
 
   it('EscrowHeld requires heldAmount money', () => {
     const r = EscrowHeld.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       heldAmount: { amount: 10000, currency: 'USD' },
       reason: 'marketplace_hold',
     });
@@ -134,7 +144,7 @@ describe('Zod schemas — happy paths', () => {
 
   it('EscrowReleased requires isFullRelease + isPartialRelease booleans', () => {
     const r = EscrowReleased.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       releaseAmount: { amount: 5000, currency: 'USD' },
       recipientId: 'seller_1',
       recipientType: 'seller',
@@ -146,7 +156,7 @@ describe('Zod schemas — happy paths', () => {
 
   it('EscrowSplit validates splits array with recipient + amount', () => {
     const r = EscrowSplit.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       splits: [
         { recipientId: 'seller_1', amount: { amount: 7000, currency: 'USD' } },
         { recipientId: 'platform', amount: { amount: 3000, currency: 'USD' }, recipientType: 'platform' },
@@ -187,8 +197,8 @@ describe('Zod schemas — happy paths', () => {
 describe('Zod schemas — rejection paths', () => {
   it('PaymentRefunded rejects missing refundAmount', () => {
     const r = PaymentRefunded.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
-      refundTransaction: { publicId: 'txn_refund_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
+      refundTransaction: { publicId: 'txn_refund_1', methodKind: 'card' },
       isPartialRefund: false,
     });
     expect(r.success).toBe(false);
@@ -196,7 +206,7 @@ describe('Zod schemas — rejection paths', () => {
 
   it('EscrowHeld rejects 2-char currency', () => {
     const r = EscrowHeld.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
       heldAmount: { amount: 1000, currency: 'US' },
     });
     expect(r.success).toBe(false);
@@ -221,7 +231,7 @@ describe('Zod schemas — rejection paths', () => {
 describe('DomainEvent envelope', () => {
   it('PaymentVerified.create() emits a well-formed DomainEvent', () => {
     const event = PaymentVerified.create(
-      { transaction: { publicId: 'txn_1', status: 'verified' }, verifiedBy: 'u_1' },
+      { transaction: { publicId: 'txn_1', status: 'verified', methodKind: 'card' }, verifiedBy: 'u_1' },
       { organizationId: 'org_1', correlationId: 'c_1' },
     );
     expect(event.type).toBe('revenue:payment.verified');
@@ -232,7 +242,7 @@ describe('DomainEvent envelope', () => {
   it('MonetizationCreated carries the transaction through the envelope', () => {
     const event = MonetizationCreated.create({
       monetizationType: 'purchase',
-      transaction: { publicId: 'txn_1' },
+      transaction: { publicId: 'txn_1', methodKind: 'card' },
     });
     expect(event.type).toBe('revenue:monetization.created');
     expect((event.payload.transaction as { publicId?: string }).publicId).toBe('txn_1');

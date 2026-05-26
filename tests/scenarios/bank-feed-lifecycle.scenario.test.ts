@@ -125,7 +125,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
       row({ externalId: 'FIT_001', amount: { amount: 50000, currency: 'USD' } }),
       row({ externalId: 'FIT_002', amount: { amount: -25000, currency: 'USD' }, description: 'AWS BILLING' }),
     ];
-    const opts = { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX };
+    const opts = { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' as const };
 
     const first = await engine.repositories.transaction.import(rows, opts, ctx);
     expect(first.inserted).toBe(2);
@@ -149,7 +149,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         row({ externalId: 'IN_1', amount: { amount: 12345, currency: 'USD' } }),
         row({ externalId: 'OUT_1', amount: { amount: -9876, currency: 'USD' } }),
       ],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
     );
     const inflow = await engine.repositories.transaction.getByQuery({ externalId: 'IN_1' }, { organizationId: ctx.organizationId });
@@ -165,7 +165,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
   it('lifecycle: imported → matched → journalized', async () => {
     const report = await engine.repositories.transaction.import(
       [row({ externalId: 'FIT_ABC', amount: { amount: 100000, currency: 'USD' } })],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID, methodKind: 'bank_transfer' },
       ctx,
     );
     expect(report.inserted).toBe(1);
@@ -201,7 +201,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
   it('un-match cycle — matched → imported → matched', async () => {
     await engine.repositories.transaction.import(
       [row({ externalId: 'FIT_UM', amount: { amount: 5000, currency: 'USD' } })],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
     );
     const imported = await engine.repositories.transaction.getByQuery(
@@ -233,7 +233,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
   it('reject is terminal — match-after-reject fails', async () => {
     await engine.repositories.transaction.import(
       [row({ externalId: 'FIT_REJ' })],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
     );
     const imported = await engine.repositories.transaction.getByQuery(
@@ -270,6 +270,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         tax: 0,
         net: 1000,
         method: 'manual',
+        methodKind: 'manual',
         status: TRANSACTION_STATUS.PENDING,
       } as never,
       { organizationId: ctx.organizationId },
@@ -291,6 +292,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         currency: 'USD',
         flow: 'inflow',
         type: 'capital_injection',
+        methodKind: 'manual',
         description: 'Owner equity contribution',
         postedDate: new Date('2026-05-02'),
       },
@@ -321,7 +323,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         row({ externalId: 'GONE_1', amount: { amount: 2000, currency: 'USD' } }),
         row({ externalId: 'GONE_2', amount: { amount: 3000, currency: 'USD' } }),
       ],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID, methodKind: 'bank_transfer' },
       ctx,
     );
 
@@ -342,7 +344,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
 
     const result = await engine.repositories.transaction.removeByFeed(
       ['KEEP_JE', 'GONE_1', 'GONE_2'],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID, methodKind: 'bank_transfer' },
       ctx,
     );
     // KEEP_JE is journalized — surfaced in retainedJournalized, not silently kept.
@@ -372,6 +374,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         tax: 0,
         net: 9970,
         method: 'stripe',
+        methodKind: 'card',
         status: TRANSACTION_STATUS.VERIFIED,
         verifiedAt: new Date('2026-05-01'),
         gateway: { type: 'stripe', paymentIntentId: 'pi_abc' },
@@ -389,7 +392,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
           counterparty: { name: 'STRIPE PAYMENTS' },
         }),
       ],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID, methodKind: 'bank_transfer' },
       ctx,
     );
 
@@ -417,7 +420,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         // Future entry — excluded by asOf
         row({ externalId: 'D', amount: { amount: 10000, currency: 'USD' }, postedDate: new Date('2026-05-10') }),
       ],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
     );
 

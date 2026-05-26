@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import { PAYMENT_METHOD_KIND, type PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
+
+const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
+  PaymentMethodKind,
+  ...PaymentMethodKind[],
+];
 
 const commissionSchema = z.object({
   rate: z.number().min(0).max(1),
@@ -79,6 +85,7 @@ export const transactionBaseSchema = z.object({
     isInclusive: z.boolean().optional(),
   }).optional(),
   method: z.string(),
+  methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES),
   status: z.string().default('pending'),
   gateway: gatewaySchema.optional(),
   paymentDetails: z.record(z.string(), z.unknown()).optional(),

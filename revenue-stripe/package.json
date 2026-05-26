@@ -1,0 +1,85 @@
+{
+  "name": "@classytic/revenue-stripe",
+  "version": "0.1.0",
+  "description": "Stripe provider for @classytic/revenue — SaaS subscriptions, marketplace Connect, lean Checkout. Subpath-split so hosts tree-shake what they don't use.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "keywords": [
+    "revenue",
+    "payment",
+    "stripe",
+    "stripe-saas",
+    "stripe-connect",
+    "stripe-checkout",
+    "subscriptions",
+    "payment-intents",
+    "webhooks",
+    "provider",
+    "typescript"
+  ],
+  "author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
+  "contributors": [
+    "Sadman Chowdhury (https://github.com/siam923)"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/classytic/revenue.git"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./saas": {
+      "types": "./dist/saas/index.d.mts",
+      "default": "./dist/saas/index.mjs"
+    },
+    "./connect": {
+      "types": "./dist/connect/index.d.mts",
+      "default": "./dist/connect/index.mjs"
+    },
+    "./checkout": {
+      "types": "./dist/checkout/index.d.mts",
+      "default": "./dist/checkout/index.mjs"
+    },
+    "./webhooks": {
+      "types": "./dist/webhooks/index.d.mts",
+      "default": "./dist/webhooks/index.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@classytic/revenue": ">=2.1.0",
+    "@classytic/primitives": ">=0.7.1",
+    "stripe": "^22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "stripe": "^22.1.1",
+    "tsdown": "^0.20.3",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "nanoid": "^5.1.6"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

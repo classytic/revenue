@@ -65,7 +65,7 @@ async function payInstallment(
 ) {
   const txn = await engine.repositories.transaction.createPaymentIntent({
     amount,
-    gateway: 'fake',
+    gateway: 'fake', methodKind: 'card',
     data: { customerId: studentId, sourceId: enrollmentId, sourceModel: 'Enrollment' },
     metadata: { installmentNo, enrollmentId },
   });
@@ -110,7 +110,7 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
     // Installment 3: pending (student hasn't paid yet)
     const late = await engine.repositories.transaction.createPaymentIntent({
       amount: 3000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: studentId, sourceId: enrollmentId, sourceModel: 'Enrollment' },
       metadata: { installmentNo: 3, late: true, lateFee: 100 },
     });
@@ -137,7 +137,7 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
     // Installment 4 is fully waived by scholarship
     const waiver = await engine.repositories.transaction.createPaymentIntent({
       amount: 0,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       monetizationType: 'free',
       data: { customerId: studentId, sourceId: enrollmentId, sourceModel: 'Enrollment' },
       metadata: { installmentNo: 4, waiverReason: 'merit_scholarship' },

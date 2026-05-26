@@ -167,7 +167,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
       // Attempt 1: primary fails hard, no transaction created
       await expect(
         engine.repositories.transaction.createPaymentIntent({
-          amount: 100000, gateway: 'stripe',
+          amount: 100000, gateway: 'stripe', methodKind: 'card',
           data: { customerId: 'buyer_fo' },
           idempotencyKey: idemKey,
         }),
@@ -180,7 +180,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
 
       // Attempt 2: fallback succeeds — ONE transaction exists under the idemKey
       const firstSuccess = await engine.repositories.transaction.createPaymentIntent({
-        amount: 100000, gateway: 'sslcommerz',
+        amount: 100000, gateway: 'sslcommerz', methodKind: 'card',
         data: { customerId: 'buyer_fo' },
         idempotencyKey: idemKey,
       });
@@ -191,7 +191,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
       // Attempt 3: client retries the fallback with the same idemKey (network
       // hiccup on the response) — MUST return the existing, no extra provider call
       const retried = await engine.repositories.transaction.createPaymentIntent({
-        amount: 100000, gateway: 'sslcommerz',
+        amount: 100000, gateway: 'sslcommerz', methodKind: 'card',
         data: { customerId: 'buyer_fo' },
         idempotencyKey: idemKey,
       });
@@ -211,7 +211,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
       // Even if client accidentally retries on the PRIMARY with same idemKey,
       // the idempotency check returns the existing row before calling primary
       const crossProviderRetry = await engine.repositories.transaction.createPaymentIntent({
-        amount: 100000, gateway: 'stripe',
+        amount: 100000, gateway: 'stripe', methodKind: 'card',
         data: { customerId: 'buyer_fo' },
         idempotencyKey: idemKey,
       });
@@ -240,7 +240,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
     try {
       // Fallback captured the order — primary was never able to write to revenue
       const captured = await engine.repositories.transaction.createPaymentIntent({
-        amount: 50000, gateway: 'sslcommerz',
+        amount: 50000, gateway: 'sslcommerz', methodKind: 'card',
         data: { customerId: 'buyer_late_wh' },
         idempotencyKey: 'order_LATE1',
       });

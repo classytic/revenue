@@ -3,6 +3,12 @@ export class RevenueError extends Error {
     message: string,
     public readonly code: string,
     public readonly details?: Record<string, unknown>,
+    /**
+     * Suggested HTTP status. Hosts that surface RevenueError over HTTP
+     * (Arc, raw Express) read this to set the response code. Optional —
+     * defaults to 500 in the host's error mapper when unset.
+     */
+    public readonly httpStatus?: number,
   ) {
     super(message);
     this.name = 'RevenueError';
@@ -114,6 +120,25 @@ export class WrongTransactionKindError extends RevenueError {
       { transactionId, expected, actual },
     );
     this.name = 'WrongTransactionKindError';
+  }
+}
+
+/**
+ * Thrown by `TransactionRepository.backfillMethodKind` when the existing
+ * doc is NOT eligible for backfill (methodKind already specific, or
+ * status no longer `'pending'`). 409 because the request is well-formed
+ * but conflicts with the current resource state.
+ */
+export class MethodKindLockedError extends RevenueError {
+  constructor(transactionId: string, currentMethodKind: string, currentStatus: string) {
+    super(
+      `Transaction '${transactionId}' methodKind is locked (current: '${currentMethodKind}', status: '${currentStatus}'). ` +
+        `Backfill is allowed only when methodKind === 'other' AND status === 'pending'.`,
+      'METHOD_KIND_LOCKED',
+      { transactionId, currentMethodKind, currentStatus },
+      409,
+    );
+    this.name = 'MethodKindLockedError';
   }
 }
 

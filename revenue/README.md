@@ -48,6 +48,14 @@ const refundTxn = await revenue.repositories.transaction.refund(
 // refundTxn.type → 'refund', refundTxn.flow → 'outflow', refundTxn.amount → 5000
 ```
 
+## Hosted-checkout `methodKind` backfill
+
+Every transaction carries a `methodKind: PaymentMethodKind` (`card`, `bank_transfer`, `wallet`, `cash`, `cheque`, `cryptocurrency`, `manual`, `other`). For hosted-checkout flows where the customer picks their method on the gateway's UI (Stripe Checkout, PayPal redirect, Razorpay Checkout), create the PaymentIntent with `methodKind: 'other'` — then call `transactionRepository.backfillMethodKind(transactionId, kind)` from your verification webhook handler once you know the actual choice. The backfill is an atomic CAS — allowed only when the doc still has `methodKind === 'other'` AND `status === 'pending'`; any other transition throws `MethodKindLockedError` (HTTP 409). For the Stripe case, `@classytic/revenue-stripe` exposes `stripePaymentIntentToKind(intent)` so the host doesn't write the mapping table itself.
+
+## Bank-feed `import()` requires `methodKind`
+
+`TransactionRepository.import()` (and the higher-level `drainSync` / `parseAndImport`) require an explicit `opts.methodKind` — no silent default. Pass `'bank_transfer'` for Plaid/OFX/CAMT/MT940 drains, `'card'` for a Stripe-balance import, `'wallet'` for PayPal exports, `'cryptocurrency'` for exchange CSVs. This forces every feed integration to be intentional about how its rows show up in downstream analytics and accounting reports.
+
 ## Architecture
 
 ```

@@ -78,7 +78,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
     // Customer initiates payment, receives instructions to send bank transfer
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 500000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'buyer_99', sourceId: 'order_bank_01', sourceModel: 'Order' },
       metadata: {
         paymentMethod: 'bank_transfer',
@@ -106,7 +106,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 750000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'highvalue_buyer', sourceId: 'order_hv_1', sourceModel: 'Order' },
       metadata: { riskScore: 72, requiresReview: true },
     });
@@ -138,7 +138,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 250000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'suspicious_account', sourceId: 'order_sus', sourceModel: 'Order' },
       metadata: { riskScore: 94 },
     });
@@ -224,7 +224,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
     // Buyer completes a large purchase
     const purchase = await engine.repositories.transaction.createPaymentIntent({
       amount: 1500000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'vip_buyer', sourceId: 'order_vip', sourceModel: 'Order' },
     });
     await engine.repositories.transaction.verify(

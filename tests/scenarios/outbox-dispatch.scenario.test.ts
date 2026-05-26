@@ -93,7 +93,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 5000,
-        gateway: 'fake',
+        gateway: 'fake', methodKind: 'card',
         data: { customerId: 'c1' },
       });
       const verified = await engine.repositories.transaction.verify(
@@ -161,7 +161,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       await expect(
         engine.repositories.transaction.createPaymentIntent({
           amount: 1000,
-          gateway: 'fake',
+          gateway: 'fake', methodKind: 'card',
           data: { customerId: 'c2' },
         }),
       ).rejects.toThrow(/outbox/i);
@@ -198,7 +198,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
     try {
       await engine.repositories.transaction.createPaymentIntent({
         amount: 2000,
-        gateway: 'fake',
+        gateway: 'fake', methodKind: 'card',
         data: { customerId: 'c3' },
       });
       expect(transportCalls.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(true);

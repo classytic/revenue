@@ -62,7 +62,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
 
     const topup = await engine.repositories.transaction.createPaymentIntent({
       amount: 25000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'user_42', sourceId: 'wallet_42', sourceModel: 'Wallet' },
       metadata: { purpose: 'wallet_topup' },
     });
@@ -92,7 +92,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
 
     const topup = await engine.repositories.transaction.createPaymentIntent({
       amount: 10000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'user_err' },
     });
 
@@ -111,7 +111,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
 
     const topup = await engine.repositories.transaction.createPaymentIntent({
       amount: 15000,
-      gateway: 'fake',
+      gateway: 'fake', methodKind: 'card',
       data: { customerId: 'user_cb', sourceId: 'wallet_cb', sourceModel: 'Wallet' },
     });
     await engine.repositories.transaction.verify(topup.gateway!.paymentIntentId as string);
@@ -146,10 +146,10 @@ describe('Scenario: Bank Wallet Top-Up', () => {
 
     const key = `topup_req_${Date.now()}`;
     const first = await engine.repositories.transaction.createPaymentIntent({
-      amount: 5000, gateway: 'fake', idempotencyKey: key,
+      amount: 5000, gateway: 'fake', methodKind: 'card', idempotencyKey: key,
     });
     const second = await engine.repositories.transaction.createPaymentIntent({
-      amount: 5000, gateway: 'fake', idempotencyKey: key,
+      amount: 5000, gateway: 'fake', methodKind: 'card', idempotencyKey: key,
     });
 
     expect(String(first._id)).toBe(String(second._id));

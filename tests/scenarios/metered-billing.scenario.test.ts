@@ -62,7 +62,7 @@ beforeEach(async () => {
 async function chargePeriod(customerId: string, period: string, usageCents: number) {
   const txn = await engine.repositories.transaction.createPaymentIntent({
     amount: usageCents,
-    gateway: 'fake',
+    gateway: 'fake', methodKind: 'card',
     data: { customerId, sourceId: `${customerId}_${period}`, sourceModel: 'UsagePeriod' },
     metadata: { period, billingType: 'metered' },
   });

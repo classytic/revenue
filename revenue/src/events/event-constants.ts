@@ -5,6 +5,13 @@ export const REVENUE_EVENTS = {
   PAYMENT_REFUNDED: 'revenue:payment.refunded',
   PAYMENT_REQUIRES_ACTION: 'revenue:payment.requires_action',
   PAYMENT_PROCESSING: 'revenue:payment.processing',
+  PAYMENT_AUTHORIZED: 'revenue:payment.authorized',
+  PAYMENT_CAPTURED: 'revenue:payment.captured',
+  PAYMENT_AUTH_VOIDED: 'revenue:payment.auth_voided',
+  PAYMENT_DISPUTED: 'revenue:payment.disputed',
+  PAYMENT_DISPUTE_WON: 'revenue:payment.dispute_won',
+  PAYMENT_DISPUTE_LOST: 'revenue:payment.dispute_lost',
+  PAYMENT_SETTLED: 'revenue:payment.settled',
   // Monetization
   MONETIZATION_CREATED: 'revenue:monetization.created',
   PURCHASE_CREATED: 'revenue:purchase.created',

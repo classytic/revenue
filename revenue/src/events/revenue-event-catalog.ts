@@ -36,7 +36,16 @@
 import { z } from 'zod';
 import type { DomainEvent } from '@classytic/primitives/events';
 import { createEvent as createPrimitiveEvent } from '@classytic/primitives/events';
+import {
+  PAYMENT_METHOD_KIND,
+  type PaymentMethodKind,
+} from '@classytic/primitives/payment-method-kind';
 import { REVENUE_EVENTS } from './event-constants.js';
+
+const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
+  PaymentMethodKind,
+  ...PaymentMethodKind[],
+];
 
 // ─── Definition shape (structurally compatible with Arc EventRegistry) ────
 
@@ -99,6 +108,7 @@ const transactionRef = z.object({
   status: z.string().optional(),
   monetizationType: z.string().optional(),
   amount: money.optional(),
+  methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES),
 }).passthrough();
 
 const subscriptionRef = z.object({
@@ -147,8 +157,58 @@ const paymentRefundedSchema = z.object({
   transaction: transactionRef,
   refundTransaction: transactionRef,
   refundAmount: money,
+  originalAmount: money,
   reason: z.string().optional(),
   isPartialRefund: z.boolean(),
+});
+
+const paymentAuthorizedSchema = z.object({
+  transaction: transactionRef,
+  authorizedAmount: money,
+  expiresAt: z.iso.datetime().optional(),
+});
+
+const paymentCapturedSchema = z.object({
+  transaction: transactionRef,
+  capturedAmount: money,
+  authorizedAmount: money,
+  isPartial: z.boolean(),
+});
+
+const paymentAuthVoidedSchema = z.object({
+  transaction: transactionRef,
+  voidedAmount: money,
+  reason: z.string().optional(),
+});
+
+const paymentDisputedSchema = z.object({
+  transaction: transactionRef,
+  disputeId: z.string(),
+  disputedAmount: money,
+  reason: z.string(),
+  status: z.string(),
+  evidenceDueBy: z.iso.datetime().optional(),
+});
+
+const paymentDisputeWonSchema = z.object({
+  transaction: transactionRef,
+  disputeId: z.string(),
+  recoveredAmount: money,
+});
+
+const paymentDisputeLostSchema = z.object({
+  transaction: transactionRef,
+  disputeId: z.string(),
+  lostAmount: money,
+  feeAmount: money.optional(),
+});
+
+const paymentSettledSchema = z.object({
+  transaction: transactionRef,
+  settledAmount: money,
+  feeAmount: money.optional(),
+  payoutId: z.string().optional(),
+  expectedArrivalAt: z.iso.datetime().optional(),
 });
 
 // ─── Monetization / purchase / free ──────────────────────────────────────
@@ -333,6 +393,13 @@ export type PaymentFailedPayload = z.infer<typeof paymentFailedSchema>;
 export type PaymentProcessingPayload = z.infer<typeof paymentProcessingSchema>;
 export type PaymentRequiresActionPayload = z.infer<typeof paymentRequiresActionSchema>;
 export type PaymentRefundedPayload = z.infer<typeof paymentRefundedSchema>;
+export type PaymentAuthorizedPayload = z.infer<typeof paymentAuthorizedSchema>;
+export type PaymentCapturedPayload = z.infer<typeof paymentCapturedSchema>;
+export type PaymentAuthVoidedPayload = z.infer<typeof paymentAuthVoidedSchema>;
+export type PaymentDisputedPayload = z.infer<typeof paymentDisputedSchema>;
+export type PaymentDisputeWonPayload = z.infer<typeof paymentDisputeWonSchema>;
+export type PaymentDisputeLostPayload = z.infer<typeof paymentDisputeLostSchema>;
+export type PaymentSettledPayload = z.infer<typeof paymentSettledSchema>;
 export type MonetizationCreatedPayload = z.infer<typeof monetizationCreatedSchema>;
 export type PurchaseCreatedPayload = z.infer<typeof purchaseCreatedSchema>;
 export type FreeCreatedPayload = z.infer<typeof freeCreatedSchema>;
@@ -390,6 +457,48 @@ export const PaymentRefunded = defineRevenueEvent({
   name: REVENUE_EVENTS.PAYMENT_REFUNDED,
   description: 'A payment transaction was (partially or fully) refunded.',
   zodSchema: paymentRefundedSchema,
+});
+
+export const PaymentAuthorized = defineRevenueEvent({
+  name: REVENUE_EVENTS.PAYMENT_AUTHORIZED,
+  description: 'A payment authorisation hold was placed (funds NOT captured).',
+  zodSchema: paymentAuthorizedSchema,
+});
+
+export const PaymentCaptured = defineRevenueEvent({
+  name: REVENUE_EVENTS.PAYMENT_CAPTURED,
+  description: 'A previously-authorised payment was captured (full or partial).',
+  zodSchema: paymentCapturedSchema,
+});
+
+export const PaymentAuthVoided = defineRevenueEvent({
+  name: REVENUE_EVENTS.PAYMENT_AUTH_VOIDED,
+  description: 'An uncaptured payment authorisation was voided.',
+  zodSchema: paymentAuthVoidedSchema,
+});
+
+export const PaymentDisputed = defineRevenueEvent({
+  name: REVENUE_EVENTS.PAYMENT_DISPUTED,
+  description: 'A dispute / chargeback was opened against a payment.',
+  zodSchema: paymentDisputedSchema,
+});
+
+export const PaymentDisputeWon = defineRevenueEvent({
+  name: REVENUE_EVENTS.PAYMENT_DISPUTE_WON,
+  description: 'A payment dispute was resolved in the merchant\'s favour.',
+  zodSchema: paymentDisputeWonSchema,
+});
+
+export const PaymentDisputeLost = defineRevenueEvent({
+  name: REVENUE_EVENTS.PAYMENT_DISPUTE_LOST,
+  description: 'A payment dispute was lost — funds permanently debited.',
+  zodSchema: paymentDisputeLostSchema,
+});
+
+export const PaymentSettled = defineRevenueEvent({
+  name: REVENUE_EVENTS.PAYMENT_SETTLED,
+  description: 'Payment funds settled to the merchant bank account.',
+  zodSchema: paymentSettledSchema,
 });
 
 export const MonetizationCreated = defineRevenueEvent({
@@ -564,6 +673,13 @@ export const revenueEventDefinitions: ReadonlyArray<RevenueEventDefinition> = [
   PaymentProcessing,
   PaymentRequiresAction,
   PaymentRefunded,
+  PaymentAuthorized,
+  PaymentCaptured,
+  PaymentAuthVoided,
+  PaymentDisputed,
+  PaymentDisputeWon,
+  PaymentDisputeLost,
+  PaymentSettled,
   MonetizationCreated,
   PurchaseCreated,
   FreeCreated,

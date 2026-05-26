@@ -124,7 +124,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 4200,
-        gateway: 'fake',
+        gateway: 'fake', methodKind: 'card',
         data: { customerId: 'c_repo' },
       });
       await engine.repositories.transaction.verify(
@@ -179,7 +179,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
 
     try {
       const payment = await engine.repositories.transaction.createPaymentIntent({
-        amount: 9999, gateway: 'fake', data: { customerId: 'c_session' },
+        amount: 9999, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_session' },
       });
       const verified = await engine.repositories.transaction.verify(
         payment.gateway!.paymentIntentId as string,

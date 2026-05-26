@@ -129,7 +129,7 @@ describe('Scenario: Arc integration parity', () => {
       });
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 2500,
-        gateway: 'fake',
+        gateway: 'fake', methodKind: 'card',
         data: { customerId: 'cust_arc' },
       });
       await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
@@ -163,7 +163,7 @@ describe('Scenario: Arc integration parity', () => {
 
     try {
       const payment = await engine.repositories.transaction.createPaymentIntent({
-        amount: 10_000, gateway: 'fake', data: { customerId: 'cust_refund' },
+        amount: 10_000, gateway: 'fake', methodKind: 'card', data: { customerId: 'cust_refund' },
       });
       const verified = await engine.repositories.transaction.verify(
         payment.gateway!.paymentIntentId as string,
@@ -219,7 +219,7 @@ describe('Scenario: Arc integration parity', () => {
           await engine.repositories.transaction.createPaymentIntent(
             {
               amount: 1234,
-              gateway: 'fake',
+              gateway: 'fake', methodKind: 'card',
               data: { customerId: 'cust_host_tx' },
             },
             { actorId: 'test', session },

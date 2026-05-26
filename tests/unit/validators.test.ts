@@ -15,14 +15,14 @@ import {
 describe('Transaction schemas', () => {
   it('transactionCreateSchema accepts valid input', () => {
     const result = transactionCreateSchema.safeParse({
-      type: 'purchase', flow: 'inflow', amount: 10000, currency: 'USD', method: 'manual',
+      type: 'purchase', flow: 'inflow', amount: 10000, currency: 'USD', method: 'manual', methodKind: 'manual',
     });
     expect(result.success).toBe(true);
   });
 
   it('transactionCreateSchema rejects negative amount', () => {
     const result = transactionCreateSchema.safeParse({
-      type: 'purchase', flow: 'inflow', amount: -1, currency: 'USD', method: 'manual',
+      type: 'purchase', flow: 'inflow', amount: -1, currency: 'USD', method: 'manual', methodKind: 'manual',
     });
     expect(result.success).toBe(false);
   });
@@ -50,13 +50,13 @@ describe('Transaction schemas', () => {
 describe('Payment schemas', () => {
   it('paymentIntentSchema accepts valid intent', () => {
     const result = paymentIntentSchema.safeParse({
-      amount: 5000, currency: 'USD', gateway: 'stripe',
+      amount: 5000, currency: 'USD', gateway: 'stripe', methodKind: 'card',
     });
     expect(result.success).toBe(true);
   });
 
   it('paymentIntentSchema rejects zero amount', () => {
-    const result = paymentIntentSchema.safeParse({ amount: 0, gateway: 'stripe' });
+    const result = paymentIntentSchema.safeParse({ amount: 0, gateway: 'stripe', methodKind: 'card' });
     // amount: 0 is a free transaction — may or may not be valid depending on schema
     // Just verify it parses without crash
     expect(typeof result.success).toBe('boolean');

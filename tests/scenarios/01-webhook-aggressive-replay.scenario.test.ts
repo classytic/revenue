@@ -120,7 +120,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
 
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
-        amount: 5000, gateway: 'counter',
+        amount: 5000, gateway: 'counter', methodKind: 'card',
         data: { customerId: 'cust_replay' },
       });
       const sessionId = txn.gateway!.sessionId as string;
@@ -200,7 +200,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
 
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
-        amount: 5000, gateway: 'counter',
+        amount: 5000, gateway: 'counter', methodKind: 'card',
         data: { customerId: 'cust_concurrent_replay' },
       });
       const sessionId = txn.gateway!.sessionId as string;
@@ -246,10 +246,10 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
 
     try {
       const a = await engine.repositories.transaction.createPaymentIntent({
-        amount: 1000, gateway: 'counter', data: { customerId: 'cust_A' },
+        amount: 1000, gateway: 'counter', methodKind: 'card', data: { customerId: 'cust_A' },
       });
       const b = await engine.repositories.transaction.createPaymentIntent({
-        amount: 2000, gateway: 'counter', data: { customerId: 'cust_B' },
+        amount: 2000, gateway: 'counter', methodKind: 'card', data: { customerId: 'cust_B' },
       });
 
       // Chaotic order: A/B/A/A/B/A — each event.id unique to its transaction.

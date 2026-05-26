@@ -12,6 +12,7 @@ import type {
 } from '@classytic/primitives/bank-transaction';
 import type { CommissionConfig } from '../engine/engine-types.js';
 import type { DomainEvent } from '@classytic/primitives/events';
+import type { PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
 import { RevenueRepositoryBase, type BaseRevenueRepoDeps } from './base.repository.js';
 import { createEvent } from '../events/helpers.js';
 import { REVENUE_EVENTS } from '../events/event-constants.js';
@@ -28,6 +29,7 @@ import {
 } from '../core/state-machines.js';
 import {
   BankFeedImportError,
+  MethodKindLockedError,
   TransactionNotFoundError,
   ValidationError,
   WrongTransactionKindError,
@@ -155,6 +157,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     amount: number;
     currency?: string;
     gateway: string;
+    methodKind: PaymentMethodKind;
     paymentData?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
     idempotencyKey?: string;
@@ -181,6 +184,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     if (params.amount > 0) {
       const intent = await provider.createIntent({
         amount: { amount: params.amount, currency },
+        methodKind: params.methodKind,
         metadata: params.metadata, ...params.paymentData,
       });
       gatewayData = {
@@ -206,6 +210,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
         fee: commission?.gatewayFeeAmount ?? 0, tax: 0,
         net: params.amount - (commission?.gatewayFeeAmount ?? 0),
         method: params.gateway,
+        methodKind: params.methodKind,
         status: params.amount === 0 ? TRANSACTION_STATUS.VERIFIED : TRANSACTION_STATUS.PENDING,
         gateway: gatewayData,
         commission: commission ?? undefined,
@@ -343,7 +348,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
         fee: reversedCommission?.gatewayFeeAmount ?? 0,
         tax: reversedTax?.taxAmount ?? 0,
         net: refundAmount - (reversedCommission?.gatewayFeeAmount ?? 0) - (reversedTax?.taxAmount ?? 0),
-        method: transaction.method, status: TRANSACTION_STATUS.VERIFIED,
+        method: transaction.method, methodKind: transaction.methodKind, status: TRANSACTION_STATUS.VERIFIED,
         gateway: transaction.gateway, commission: reversedCommission ?? undefined,
         relatedTransactionId: transaction._id,
         sourceId: transaction.sourceId, sourceModel: transaction.sourceModel,
@@ -518,7 +523,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
           organizationId: transaction.organizationId, customerId: options.recipientId,
           type: 'escrow_release', flow: 'outflow', tags: ['escrow', 'release'],
           amount: releaseAmount, currency: transaction.currency,
-          fee: 0, tax: 0, net: releaseAmount, method: transaction.method,
+          fee: 0, tax: 0, net: releaseAmount, method: transaction.method, methodKind: transaction.methodKind,
           status: TRANSACTION_STATUS.VERIFIED, relatedTransactionId: transaction._id,
           sourceId: transaction.sourceId, sourceModel: transaction.sourceModel,
           verifiedAt: new Date(), metadata: options.metadata,
@@ -574,7 +579,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
           organizationId: transaction.organizationId, customerId: s.recipientId,
           type: 'commission', flow: 'outflow', tags: ['split', s.type],
           amount: s.grossAmount, currency: transaction.currency,
-          fee: s.gatewayFeeAmount, tax: 0, net: s.netAmount, method: transaction.method,
+          fee: s.gatewayFeeAmount, tax: 0, net: s.netAmount, method: transaction.method, methodKind: transaction.methodKind,
           status: TRANSACTION_STATUS.VERIFIED, relatedTransactionId: transaction._id,
           sourceId: transaction.sourceId, sourceModel: transaction.sourceModel, verifiedAt: new Date(),
         } as any, writeOpts);
@@ -593,7 +598,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
         organizationId: transaction.organizationId, type: 'platform_revenue',
         flow: 'inflow', tags: ['split', 'platform'],
         amount: orgPayout, currency: transaction.currency,
-        fee: 0, tax: 0, net: orgPayout, method: transaction.method,
+        fee: 0, tax: 0, net: orgPayout, method: transaction.method, methodKind: transaction.methodKind,
         status: TRANSACTION_STATUS.VERIFIED, relatedTransactionId: transaction._id, verifiedAt: new Date(),
       } as any, writeOpts);
 
@@ -646,9 +651,21 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
    */
   async import(
     rows: BankTransaction[],
-    opts: { bankAccountId: string; source: string; method?: string },
+    opts: { bankAccountId: string; source: string; methodKind: PaymentMethodKind; method?: string },
     ctx: RevenueContext = {},
   ): Promise<BankImportReport> {
+    // No default — callers must be intentional. A Stripe balance import
+    // is `'card'`, not bank_transfer; a Plaid drain is `'bank_transfer'`;
+    // a crypto-exchange CSV is `'cryptocurrency'`. Silently defaulting
+    // to `'bank_transfer'` would mis-classify those into accounting
+    // reports and analytics.
+    if (!opts.methodKind) {
+      throw new BankFeedImportError(
+        '`opts.methodKind` is required on TransactionRepository.import() — ' +
+          'pick the canonical PaymentMethodKind for the source (e.g. `\'bank_transfer\'` for Plaid/OFX, ' +
+          '`\'card\'` for a Stripe balance, `\'wallet\'` for PayPal, `\'cryptocurrency\'` for an exchange).',
+      );
+    }
     const startedAt = Date.now();
     if (!Array.isArray(rows) || rows.length === 0) {
       return { inserted: 0, updated: 0, skipped: 0, errors: [], durationMs: 0 };
@@ -714,6 +731,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
         source: opts.source,
         type: 'bank_feed',
         tags: ['bank_feed', opts.source],
+        methodKind: opts.methodKind,
         fee: 0,
         tax: 0,
         net: absoluteAmount,
@@ -801,7 +819,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
    */
   async drainSync(
     providerName: string,
-    params: FetchTransactionsParams & { bankAccountId: string },
+    params: FetchTransactionsParams & { bankAccountId: string; methodKind: PaymentMethodKind },
     ctx: RevenueContext = {},
   ): Promise<{ totalImported: number; totalUpdated: number; totalRemoved: number; nextCursor?: string; errors: BankImportRowError[] }> {
     if (!this.deps.bankFeedProviders) {
@@ -821,7 +839,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
       if (page.transactions && page.transactions.length > 0) {
         const report = await this.import(
           page.transactions,
-          { bankAccountId: params.bankAccountId, source: providerName },
+          { bankAccountId: params.bankAccountId, source: providerName, methodKind: params.methodKind },
           ctx,
         );
         totalImported += report.inserted;
@@ -858,7 +876,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
    */
   async parseAndImport(
     providerName: string,
-    upload: { buffer: Buffer | string | Uint8Array; format?: string; bankAccountId: string },
+    upload: { buffer: Buffer | string | Uint8Array; format?: string; bankAccountId: string; methodKind: PaymentMethodKind },
     ctx: RevenueContext = {},
   ): Promise<BankImportReport> {
     if (!this.deps.bankFeedProviders) {
@@ -875,7 +893,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     });
     return this.import(
       parsed.transactions,
-      { bankAccountId: upload.bankAccountId, source: providerName },
+      { bankAccountId: upload.bankAccountId, source: providerName, methodKind: upload.methodKind },
       ctx,
     );
   }
@@ -893,6 +911,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
       currency: string;
       flow: 'inflow' | 'outflow';
       type: string;
+      methodKind: PaymentMethodKind;
       description?: string;
       counterparty?: TransactionDocument['counterparty'];
       reference?: string;
@@ -918,6 +937,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
         tax: 0,
         net: data.amount,
         method: 'manual',
+        methodKind: data.methodKind,
         status: initialStatusFor(TRANSACTION_KIND.MANUAL),
         source: 'manual',
         ...(data.description !== undefined ? { description: data.description } : {}),
@@ -934,6 +954,76 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     );
 
     return doc as TransactionDocument;
+  }
+
+  /**
+   * Backfill the `methodKind` on a Transaction created with kind
+   * unknown — the canonical use case is hosted-checkout (Stripe
+   * Checkout, PayPal redirect, Razorpay Checkout) where the customer
+   * picks their payment method on the gateway's UI, AFTER the host has
+   * already created the PaymentIntent + Transaction with
+   * `methodKind: 'other'`.
+   *
+   * Call this from your verification / webhook handler once you know
+   * the customer's actual choice — e.g. inside
+   * `payment_intent.succeeded`:
+   *
+   * ```ts
+   * await transactionRepository.backfillMethodKind(
+   *   tx._id,
+   *   stripePaymentIntentToKind(event.data.object),
+   *   ctx,
+   * );
+   * ```
+   *
+   * **Guard rule.** Atomic CAS — succeeds only when the doc has
+   * `methodKind === 'other'` AND `status === 'pending'`. Any other
+   * combination throws `MethodKindLockedError` (HTTP 409): once a
+   * transaction has a specific kind (or has settled past pending),
+   * silently overwriting it would corrupt downstream analytics and
+   * accounting reports.
+   *
+   * Emits `revenue:transaction.updated` with `changedFields:
+   * ['methodKind']` so subscribers can re-bucket the row.
+   */
+  async backfillMethodKind(
+    transactionId: string,
+    methodKind: PaymentMethodKind,
+    ctx: RevenueContext = {},
+  ): Promise<TransactionDocument> {
+    const updated = await this.findOneAndUpdate<TransactionDocument>(
+      {
+        _id: transactionId,
+        methodKind: 'other',
+        status: TRANSACTION_STATUS.PENDING,
+      },
+      { $set: { methodKind } },
+      { returnDocument: 'after' },
+    );
+    if (!updated) {
+      const existing = (await this.getById(
+        transactionId,
+        this.optsFromCtx(ctx, { throwOnNotFound: false }),
+      )) as TransactionDocument | null;
+      if (!existing) throw new TransactionNotFoundError(transactionId);
+      throw new MethodKindLockedError(
+        transactionId,
+        existing.methodKind ?? 'unknown',
+        existing.status ?? 'unknown',
+      );
+    }
+
+    await this.dispatch(
+      createEvent(
+        REVENUE_EVENTS.TRANSACTION_UPDATED,
+        { transaction: updated, changedFields: ['methodKind'] },
+        ctx,
+        { resource: 'transaction', resourceId: (updated as TransactionDocument).publicId },
+      ),
+      ctx,
+    );
+
+    return updated as TransactionDocument;
   }
 
   /**

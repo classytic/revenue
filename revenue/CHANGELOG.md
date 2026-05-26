@@ -3,6 +3,35 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-05-26
+
+### Added — auth/capture + dispute event coverage
+
+Seven new event constants on `REVENUE_EVENTS` aligning with the
+`@classytic/primitives@0.7.1` payment event catalogue:
+`PAYMENT_AUTHORIZED`, `PAYMENT_CAPTURED`, `PAYMENT_AUTH_VOIDED`,
+`PAYMENT_DISPUTED`, `PAYMENT_DISPUTE_WON`, `PAYMENT_DISPUTE_LOST`,
+`PAYMENT_SETTLED`. Catalog payload schemas updated to match.
+
+### Added — `RevenueError.httpStatus`
+
+`RevenueError` carries an optional `httpStatus` field so Arc / Express
+hosts can map errors to response codes without per-error switch
+statements. Defaults to 500 in the host mapper when unset.
+
+### Added — `MethodKindLockedError` (409)
+
+New error thrown by `TransactionRepository.backfillMethodKind` when the
+existing doc is not backfill-eligible (methodKind already specific OR
+status no longer `pending`). 409 because the request is well-formed but
+conflicts with current resource state.
+
+### Changed — peer bump: `@classytic/primitives` `>=0.7.1`
+
+Catalogue now imports `PAYMENT_METHOD_KIND` from
+`@classytic/primitives/payment-method-kind`. Hosts must bump primitives
+to `>=0.7.1`.
+
 ## [2.1.1] — multi-tenant scope correctness across all repos
 
 **Fix.** `SubscriptionRepository` and `SettlementRepository` lifecycle verbs
