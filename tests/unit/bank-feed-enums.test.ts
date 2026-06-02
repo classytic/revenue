@@ -139,12 +139,13 @@ describe('statusesForKind — UI dropdown helper', () => {
   it('returns 11 payment-flow statuses', () => {
     expect(statusesForKind(TRANSACTION_KIND.PAYMENT_FLOW)).toHaveLength(11);
   });
-  it('returns 4 bank-feed statuses', () => {
+  it('returns 5 bank-feed statuses', () => {
     expect(statusesForKind(TRANSACTION_KIND.BANK_FEED)).toEqual([
       'imported',
       'matched',
       'journalized',
       'rejected',
+      'reconciled_external',
     ]);
   });
   it('returns 4 manual statuses', () => {

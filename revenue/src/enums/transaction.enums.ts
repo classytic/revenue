@@ -25,6 +25,11 @@ export const TRANSACTION_STATUS = {
   MATCHED: 'matched',
   JOURNALIZED: 'journalized',
   REJECTED: 'rejected',
+  // Terminal, non-matchable: the row is already reconciled at the source
+  // vendor (e.g. a synced Xero Payment or transfer leg whose GL the vendor
+  // already owns). Born in this status — never reached via match/journalize —
+  // so it can never post a second journal entry. See bank-feed state machine.
+  RECONCILED_EXTERNAL: 'reconciled_external',
 } as const;
 
 export type TransactionStatus = typeof TRANSACTION_STATUS;

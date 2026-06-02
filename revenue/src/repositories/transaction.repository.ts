@@ -16,7 +16,7 @@ import type { PaymentMethodKind } from '@classytic/primitives/payment-method-kin
 import { RevenueRepositoryBase, type BaseRevenueRepoDeps } from './base.repository.js';
 import { createEvent } from '../events/helpers.js';
 import { REVENUE_EVENTS } from '../events/event-constants.js';
-import { TRANSACTION_STATUS } from '../enums/transaction.enums.js';
+import { TRANSACTION_STATUS, type TransactionStatusValue } from '../enums/transaction.enums.js';
 import { HOLD_STATUS } from '../enums/escrow.enums.js';
 import {
   TRANSACTION_KIND,
@@ -651,7 +651,21 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
    */
   async import(
     rows: BankTransaction[],
-    opts: { bankAccountId: string; source: string; methodKind: PaymentMethodKind; method?: string },
+    opts: {
+      bankAccountId: string;
+      source: string;
+      methodKind: PaymentMethodKind;
+      method?: string;
+      /**
+       * Override the born status of newly-inserted rows. Defaults to
+       * `initialStatusFor(bank_feed)` = `imported` (matchable). Pass
+       * `reconciled_external` for vendor-reconciled rows (Xero Payments /
+       * transfer legs) so they are BORN terminal + non-matchable and can
+       * never post a journal entry. Applies to `$setOnInsert` only — re-imports
+       * never overwrite an existing row's status.
+       */
+      initialStatus?: TransactionStatusValue;
+    },
     ctx: RevenueContext = {},
   ): Promise<BankImportReport> {
     // No default — callers must be intentional. A Stripe balance import
@@ -725,7 +739,9 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
 
       const setOnInsert: Record<string, unknown> = {
         kind: TRANSACTION_KIND.BANK_FEED,
-        status: initialStatusFor(TRANSACTION_KIND.BANK_FEED),
+        // Born status: caller may override to `reconciled_external` so
+        // vendor-reconciled rows are terminal + non-matchable from insert.
+        status: opts.initialStatus ?? initialStatusFor(TRANSACTION_KIND.BANK_FEED),
         bankAccountId: opts.bankAccountId,
         externalId: row.externalId,
         source: opts.source,

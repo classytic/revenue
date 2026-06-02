@@ -3,6 +3,27 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-06-02
+
+### Added — `reconciled_external` terminal bank-feed status
+
+New `BANK_FEED_STATUS.RECONCILED_EXTERNAL` (`'reconciled_external'`) for rows
+that are already reconciled at the source vendor (e.g. synced Xero Payments or
+bank-transfer legs whose GL the vendor already owns). It is a **terminal island**
+in the bank-feed state machine: no inbound edge (cannot be flipped in from
+`imported`/`matched`) and no outbound edge — so `match()`/`journalize()`/
+`unmatch()` all throw `InvalidStateTransition`. Such rows can never post a
+journal entry, so surfacing them for visibility can't double-count the ledger.
+
+### Added — `initialStatus` option on `TransactionRepository.import()`
+
+`import(rows, { …, initialStatus }, ctx)` overrides the born status of newly
+inserted bank-feed rows (default `imported`). Pass `reconciled_external` so
+vendor-reconciled rows are **born** terminal + non-matchable (closes the
+race where a row could be matched in the window between insert and a later
+status flip). Applies to `$setOnInsert` only — re-imports never overwrite an
+existing row's status.
+
 ## [2.2.0] - 2026-05-26
 
 ### Added — auth/capture + dispute event coverage

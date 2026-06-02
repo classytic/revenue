@@ -60,6 +60,9 @@ export const BANK_FEED_STATUS = {
   MATCHED: 'matched',
   JOURNALIZED: 'journalized',
   REJECTED: 'rejected',
+  // Terminal + non-matchable. Born here for vendor-reconciled rows (Xero
+  // Payments, transfer legs) so they're visible but can never post a JE.
+  RECONCILED_EXTERNAL: 'reconciled_external',
 } as const;
 
 export type BankFeedStatusValue = (typeof BANK_FEED_STATUS)[keyof typeof BANK_FEED_STATUS];
@@ -147,6 +150,7 @@ const STATUSES_BY_KIND: Record<TransactionKindValue, ReadonlySet<string>> = {
     TRANSACTION_STATUS.MATCHED,
     TRANSACTION_STATUS.JOURNALIZED,
     TRANSACTION_STATUS.REJECTED,
+    TRANSACTION_STATUS.RECONCILED_EXTERNAL,
   ]),
   [TRANSACTION_KIND.MANUAL]: new Set([
     TRANSACTION_STATUS.PENDING,

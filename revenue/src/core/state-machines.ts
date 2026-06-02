@@ -223,6 +223,8 @@ export const PAYMENT_FLOW_STATE_MACHINE = TRANSACTION_STATE_MACHINE;
 //   imported  → matched | rejected
 //   matched   → imported (un-match) | journalized
 //   journalized, rejected — terminal
+//   reconciled_external — terminal, NOT reachable from any state (born here
+//                         for vendor-reconciled rows; never matched → no 2nd JE)
 //
 // Designed to be sparse: a bank-feed row never enters the payment-flow
 // graph and vice versa. The repo verbs gate by `kind` via the `where:`
@@ -239,6 +241,9 @@ export const BANK_FEED_STATE_MACHINE = new StateMachine<TransactionStatusValue>(
     ])],
     [TRANSACTION_STATUS.JOURNALIZED, new Set([])],
     [TRANSACTION_STATUS.REJECTED, new Set([])],
+    // Terminal island: no inbound edge (can't be flipped in from imported/
+    // matched — closes the auto-reconcile race) and no outbound edge.
+    [TRANSACTION_STATUS.RECONCILED_EXTERNAL, new Set([])],
   ]),
   'transaction.bank_feed',
 );
