@@ -1207,6 +1207,120 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
   }
 
   /**
+   * Reconcile a bank-feed / manual row that settled a linked document
+   * (invoice/bill) WITHOUT posting a journal entry. The document's payment
+   * already owns the cash JE (`Dr Bank / Cr AR`), so the bank line only needs
+   * its status moved to `settled` — calling `match()` here would fire
+   * `LedgerBridge.onTransactionMatched` and double-count the cash. This is the
+   * package's intended path when the JE lives elsewhere (the reachable sibling
+   * of the born-`reconciled_external` import).
+   *
+   * `imported → settled` (bank_feed) / `pending → settled` (manual). Idempotent:
+   * a row already `settled` is returned unchanged, so a best-effort caller can
+   * safely re-run. The optional `metadata` is shallow-merged onto the document's
+   * `metadata` (dotted `$set`, so sibling keys survive) — hosts stamp the link
+   * back to the settling document there. No JE bridge call, no domain event:
+   * settlement is host-initiated and the host owns the reconcile audit trail.
+   */
+  async settle(
+    id: string,
+    data: { settledBy?: string; metadata?: Record<string, unknown> } = {},
+    ctx: RevenueContext = {},
+  ): Promise<TransactionDocument> {
+    const existing = await this.getById(id, this.optsFromCtx(ctx)) as TransactionDocument | null;
+    if (!existing) throw new TransactionNotFoundError(id);
+    if (existing.kind !== TRANSACTION_KIND.BANK_FEED && existing.kind !== TRANSACTION_KIND.MANUAL) {
+      throw new WrongTransactionKindError(id, 'bank_feed | manual', existing.kind);
+    }
+    // Idempotent: a best-effort caller may re-run after a settlement already
+    // landed. `settled → settled` is not a legal edge, so short-circuit.
+    if (existing.status === TRANSACTION_STATUS.SETTLED) {
+      return existing;
+    }
+
+    const machine = smFor(existing.kind);
+    machine.validate(existing.status as never, TRANSACTION_STATUS.SETTLED as never, id);
+
+    const set: Record<string, unknown> = {
+      verifiedAt: new Date(),
+      ...(data.settledBy !== undefined ? { verifiedBy: data.settledBy } : {}),
+    };
+    // Shallow-merge metadata via dotted paths so unrelated metadata keys
+    // survive (a whole-object `$set` would replace them).
+    if (data.metadata) {
+      for (const [k, v] of Object.entries(data.metadata)) {
+        set[`metadata.${k}`] = v;
+      }
+    }
+
+    const claimed = await this.claim(
+      existing._id,
+      {
+        from: [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.PENDING],
+        to: TRANSACTION_STATUS.SETTLED,
+        where: { kind: existing.kind },
+      },
+      { $set: set },
+      this.optsFromCtx(ctx) as never,
+    );
+    if (!claimed) {
+      throw new ValidationError(`Transaction ${id} could not be settled (race-loss or illegal state)`);
+    }
+    return claimed as TransactionDocument;
+  }
+
+  /**
+   * Reverse a `settle()` — the linked document's payment was undone, so the
+   * bank line returns to its birth status to re-enter the reconcile queue.
+   * `settled → imported` (bank_feed) / `settled → pending` (manual). Clears
+   * `verifiedAt`/`verifiedBy` plus any metadata keys named in `clearMetadata`
+   * (the host-stamped link back to the now-reversed document). Idempotent: a
+   * row not currently `settled` is returned unchanged.
+   */
+  async unsettle(
+    id: string,
+    data: { unsettledBy?: string; clearMetadata?: string[] } = {},
+    ctx: RevenueContext = {},
+  ): Promise<TransactionDocument> {
+    const existing = await this.getById(id, this.optsFromCtx(ctx)) as TransactionDocument | null;
+    if (!existing) throw new TransactionNotFoundError(id);
+    if (existing.kind !== TRANSACTION_KIND.BANK_FEED && existing.kind !== TRANSACTION_KIND.MANUAL) {
+      throw new WrongTransactionKindError(id, 'bank_feed | manual', existing.kind);
+    }
+    if (existing.status !== TRANSACTION_STATUS.SETTLED) {
+      return existing; // nothing to reverse
+    }
+
+    // Restore the birth status deterministically by kind — a manual row was
+    // born `pending`, a bank_feed row `imported`.
+    const target = existing.kind === TRANSACTION_KIND.MANUAL
+      ? TRANSACTION_STATUS.PENDING
+      : TRANSACTION_STATUS.IMPORTED;
+    const machine = smFor(existing.kind);
+    machine.validate(TRANSACTION_STATUS.SETTLED as never, target as never, id);
+
+    const unset: Record<string, unknown> = { verifiedBy: 1, verifiedAt: 1 };
+    for (const k of data.clearMetadata ?? []) {
+      unset[`metadata.${k}`] = 1;
+    }
+
+    const claimed = await this.claim(
+      existing._id,
+      {
+        from: TRANSACTION_STATUS.SETTLED,
+        to: target,
+        where: { kind: existing.kind },
+      },
+      { $unset: unset },
+      this.optsFromCtx(ctx) as never,
+    );
+    if (!claimed) {
+      throw new ValidationError(`Transaction ${id} could not be un-settled (current state is not 'settled')`);
+    }
+    return claimed as TransactionDocument;
+  }
+
+  /**
    * Stamp the journal entry reference and transition `matched →
    * journalized`. Typical caller is the `LedgerBridge.onTransactionMatched`
    * implementation — after creating a JE, it calls this verb so the row

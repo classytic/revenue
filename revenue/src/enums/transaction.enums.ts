@@ -30,6 +30,13 @@ export const TRANSACTION_STATUS = {
   // already owns). Born in this status — never reached via match/journalize —
   // so it can never post a second journal entry. See bank-feed state machine.
   RECONCILED_EXTERNAL: 'reconciled_external',
+  // Settled by a linked document (an invoice/bill whose payment already owns
+  // the cash JE — `Dr Bank / Cr AR`). The bank line itself posts NO second JE;
+  // `settle()` flips `imported|pending → settled` without touching the ledger
+  // bridge. Distinct from `reconciled_external` (which is vendor/Xero-owned and
+  // born terminal): `settled` is reached via `settle()` and is reversible to
+  // its birth status via `unsettle()`. See bank-feed / manual state machines.
+  SETTLED: 'settled',
 } as const;
 
 export type TransactionStatus = typeof TRANSACTION_STATUS;

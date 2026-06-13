@@ -220,11 +220,19 @@ export const PAYMENT_FLOW_STATE_MACHINE = TRANSACTION_STATE_MACHINE;
 
 // ─── Bank Feed State Machine — kind: 'bank_feed' (3.0) ───
 //
-//   imported  → matched | rejected
+//   imported  → matched | rejected | settled
 //   matched   → imported (un-match) | journalized
+//   settled   → imported (un-settle)
 //   journalized, rejected — terminal
 //   reconciled_external — terminal, NOT reachable from any state (born here
 //                         for vendor-reconciled rows; never matched → no 2nd JE)
+//
+// `settled` is the invoice/bill-settlement branch: a deposit that pays an
+// invoice posts its cash JE through the invoice payment, so the bank line is
+// reconciled WITHOUT a second JE. `settle()` flips `imported → settled`;
+// `unsettle()` reverses `settled → imported` when the match is undone. Unlike
+// `reconciled_external` (vendor-owned, born terminal), `settled` is reachable
+// and reversible — but it never enters the JE bridge.
 //
 // Designed to be sparse: a bank-feed row never enters the payment-flow
 // graph and vice versa. The repo verbs gate by `kind` via the `where:`
@@ -234,10 +242,14 @@ export const BANK_FEED_STATE_MACHINE = new StateMachine<TransactionStatusValue>(
     [TRANSACTION_STATUS.IMPORTED, new Set([
       TRANSACTION_STATUS.MATCHED,
       TRANSACTION_STATUS.REJECTED,
+      TRANSACTION_STATUS.SETTLED,
     ])],
     [TRANSACTION_STATUS.MATCHED, new Set([
       TRANSACTION_STATUS.IMPORTED, // un-match
       TRANSACTION_STATUS.JOURNALIZED,
+    ])],
+    [TRANSACTION_STATUS.SETTLED, new Set([
+      TRANSACTION_STATUS.IMPORTED, // un-settle (match reversed)
     ])],
     [TRANSACTION_STATUS.JOURNALIZED, new Set([])],
     [TRANSACTION_STATUS.REJECTED, new Set([])],
@@ -250,20 +262,27 @@ export const BANK_FEED_STATE_MACHINE = new StateMachine<TransactionStatusValue>(
 
 // ─── Manual Transaction State Machine — kind: 'manual' (3.0) ───
 //
-//   pending → matched | rejected
+//   pending → matched | rejected | settled
 //   matched → journalized
+//   settled → pending (un-settle)
 //   journalized, rejected — terminal
 //
 // Cleaner two-step lifecycle for hand-keyed entries (treasurer logs a
-// cash deposit, owner injects capital). No provider, no webhook.
+// cash deposit, owner injects capital). No provider, no webhook. A manual
+// row can also settle a bill/invoice (e.g. a hand-keyed payment), so it
+// shares the `settled` branch — reversible to its `pending` birth status.
 export const MANUAL_STATE_MACHINE = new StateMachine<TransactionStatusValue>(
   new Map<TransactionStatusValue, Set<TransactionStatusValue>>([
     [TRANSACTION_STATUS.PENDING, new Set([
       TRANSACTION_STATUS.MATCHED,
       TRANSACTION_STATUS.REJECTED,
+      TRANSACTION_STATUS.SETTLED,
     ])],
     [TRANSACTION_STATUS.MATCHED, new Set([
       TRANSACTION_STATUS.JOURNALIZED,
+    ])],
+    [TRANSACTION_STATUS.SETTLED, new Set([
+      TRANSACTION_STATUS.PENDING, // un-settle (match reversed)
     ])],
     [TRANSACTION_STATUS.JOURNALIZED, new Set([])],
     [TRANSACTION_STATUS.REJECTED, new Set([])],

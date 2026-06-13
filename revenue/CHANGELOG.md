@@ -3,6 +3,30 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-06-14
+
+### Added — `settled` bank-feed/manual status + `settle()` / `unsettle()` verbs
+
+New `BANK_FEED_STATUS.SETTLED` (`'settled'`) for a bank line that was reconciled
+by a **linked document** (an invoice/bill whose payment already posted the cash
+JE, `Dr Bank / Cr AR`). The line itself posts **no second journal entry**.
+
+- `transaction.settle(id, { settledBy?, metadata? })` — `imported → settled`
+  (bank_feed) / `pending → settled` (manual). Does **not** call the ledger
+  bridge (no JE). Idempotent (re-running on a `settled` row is a no-op).
+  `metadata` is shallow-merged (dotted `$set`) so the host can stamp the link
+  back to the settling document.
+- `transaction.unsettle(id, { unsettledBy?, clearMetadata? })` — reverses to the
+  birth status (`settled → imported` bank_feed / `settled → pending` manual) and
+  clears the named metadata keys.
+
+Unlike `reconciled_external` (vendor-owned, born terminal, no edges), `settled`
+is **reachable and reversible** but never enters the JE bridge. This replaces the
+host-side pattern of a raw `updateOne` parking invoice-settled rows at `matched`
+(which overloaded `matched` and forced every consumer to sniff
+`metadata.matchedVia` to tell "done" from "needs a JE"). `status` is now the
+single source of truth.
+
 ## [2.3.0] - 2026-06-02
 
 ### Added — `reconciled_external` terminal bank-feed status

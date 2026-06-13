@@ -139,21 +139,23 @@ describe('statusesForKind — UI dropdown helper', () => {
   it('returns 11 payment-flow statuses', () => {
     expect(statusesForKind(TRANSACTION_KIND.PAYMENT_FLOW)).toHaveLength(11);
   });
-  it('returns 5 bank-feed statuses', () => {
+  it('returns 6 bank-feed statuses', () => {
     expect(statusesForKind(TRANSACTION_KIND.BANK_FEED)).toEqual([
       'imported',
       'matched',
       'journalized',
       'rejected',
       'reconciled_external',
+      'settled',
     ]);
   });
-  it('returns 4 manual statuses', () => {
+  it('returns 5 manual statuses', () => {
     expect(statusesForKind(TRANSACTION_KIND.MANUAL)).toEqual([
       'pending',
       'matched',
       'journalized',
       'rejected',
+      'settled',
     ]);
   });
 });

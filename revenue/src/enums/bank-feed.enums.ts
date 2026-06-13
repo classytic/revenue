@@ -63,6 +63,11 @@ export const BANK_FEED_STATUS = {
   // Terminal + non-matchable. Born here for vendor-reconciled rows (Xero
   // Payments, transfer legs) so they're visible but can never post a JE.
   RECONCILED_EXTERNAL: 'reconciled_external',
+  // Settled by a linked document (invoice/bill) whose payment already posted
+  // the cash JE — the bank line posts no second JE. Reached via `settle()`
+  // (`imported|pending → settled`), reversible via `unsettle()`. Excluded from
+  // the categorize/review queue (it carries no GL mapping to confirm).
+  SETTLED: 'settled',
 } as const;
 
 export type BankFeedStatusValue = (typeof BANK_FEED_STATUS)[keyof typeof BANK_FEED_STATUS];
@@ -151,12 +156,14 @@ const STATUSES_BY_KIND: Record<TransactionKindValue, ReadonlySet<string>> = {
     TRANSACTION_STATUS.JOURNALIZED,
     TRANSACTION_STATUS.REJECTED,
     TRANSACTION_STATUS.RECONCILED_EXTERNAL,
+    TRANSACTION_STATUS.SETTLED,
   ]),
   [TRANSACTION_KIND.MANUAL]: new Set([
     TRANSACTION_STATUS.PENDING,
     TRANSACTION_STATUS.MATCHED,
     TRANSACTION_STATUS.JOURNALIZED,
     TRANSACTION_STATUS.REJECTED,
+    TRANSACTION_STATUS.SETTLED,
   ]),
 };
 

@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Payment lifecycle engine — transactions, subscriptions, escrow, settlements, commissions. MongoKit-powered, Arc-compatible, framework-agnostic.",
   "type": "module",
   "sideEffects": false,

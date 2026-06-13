@@ -230,6 +230,129 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
     expect(rematched.matching?.notes).toBe('corrected mapping');
   }, TIMEOUT);
 
+  it('settle: imported → settled stamps metadata and posts NO journal entry', async () => {
+    await engine.repositories.transaction.import(
+      [row({ externalId: 'FIT_SETTLE', amount: { amount: 8000, currency: 'USD' } })],
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
+      ctx,
+    );
+    const imported = await engine.repositories.transaction.getByQuery(
+      { externalId: 'FIT_SETTLE' },
+      { organizationId: ctx.organizationId },
+    );
+    const id = String(imported!._id);
+
+    const settled = await engine.repositories.transaction.settle(
+      id,
+      {
+        settledBy: 'reconciler@acme',
+        metadata: { matchId: 'm_001', matchedInvoice: { id: 'inv_1', number: 'ORC1038' } },
+      },
+      ctx,
+    );
+    expect(settled.status).toBe(TRANSACTION_STATUS.SETTLED);
+    expect((settled.metadata as Record<string, unknown>)?.matchId).toBe('m_001');
+    expect((settled.metadata as Record<string, { number?: string }>)?.matchedInvoice?.number).toBe('ORC1038');
+    // No second JE — the invoice payment owns the cash GL. The ledger bridge
+    // must NOT have been called for this row.
+    expect(ledgerCalls.map((c) => c.type)).not.toContain('matched');
+    expect(ledgerCalls.map((c) => c.type)).not.toContain('journalized');
+
+    // Idempotent — a best-effort re-run returns the settled row, no throw.
+    const again = await engine.repositories.transaction.settle(id, {}, ctx);
+    expect(again.status).toBe(TRANSACTION_STATUS.SETTLED);
+  }, TIMEOUT);
+
+  it('un-settle: settled → imported clears the stamped link', async () => {
+    await engine.repositories.transaction.import(
+      [row({ externalId: 'FIT_UNSETTLE', amount: { amount: 4200, currency: 'USD' } })],
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
+      ctx,
+    );
+    const imported = await engine.repositories.transaction.getByQuery(
+      { externalId: 'FIT_UNSETTLE' },
+      { organizationId: ctx.organizationId },
+    );
+    const id = String(imported!._id);
+
+    await engine.repositories.transaction.settle(
+      id,
+      { metadata: { matchId: 'm_x', matchedInvoice: { id: 'inv_x', number: 'ORC9' } } },
+      ctx,
+    );
+    const reverted = await engine.repositories.transaction.unsettle(
+      id,
+      { unsettledBy: 'admin', clearMetadata: ['matchId', 'matchedInvoice'] },
+      ctx,
+    );
+    expect(reverted.status).toBe(TRANSACTION_STATUS.IMPORTED);
+    expect((reverted.metadata as Record<string, unknown>)?.matchId).toBeUndefined();
+    expect((reverted.metadata as Record<string, unknown>)?.matchedInvoice).toBeUndefined();
+
+    // Back in the queue → can be matched normally again.
+    const rematched = await engine.repositories.transaction.match(
+      id,
+      { mapping: { debitAccount: '1010', creditAccount: '4000' } },
+      ctx,
+    );
+    expect(rematched.status).toBe(TRANSACTION_STATUS.MATCHED);
+  }, TIMEOUT);
+
+  it('manual entry can settle a bill: pending → settled → pending', async () => {
+    const m = await engine.repositories.transaction.createManual(
+      {
+        amount: 30000,
+        currency: 'USD',
+        flow: 'outflow',
+        type: 'bill_payment',
+        methodKind: 'manual',
+        description: 'Hand-keyed vendor payment',
+        postedDate: new Date('2026-05-04'),
+      },
+      ctx,
+    );
+    expect(m.status).toBe(TRANSACTION_STATUS.PENDING);
+
+    const settled = await engine.repositories.transaction.settle(
+      String(m._id),
+      { metadata: { matchId: 'm_manual' } },
+      ctx,
+    );
+    expect(settled.status).toBe(TRANSACTION_STATUS.SETTLED);
+
+    // Reverse restores the MANUAL birth status (pending), not imported.
+    const reverted = await engine.repositories.transaction.unsettle(
+      String(m._id),
+      { clearMetadata: ['matchId'] },
+      ctx,
+    );
+    expect(reverted.status).toBe(TRANSACTION_STATUS.PENDING);
+  }, TIMEOUT);
+
+  it('settle rejects a payment_flow row (kind-gated)', async () => {
+    const pf = await engine.repositories.transaction.create(
+      {
+        organizationId: ctx.organizationId,
+        kind: TRANSACTION_KIND.PAYMENT_FLOW,
+        type: 'subscription',
+        flow: 'inflow',
+        tags: ['test'],
+        amount: 1000,
+        currency: 'USD',
+        fee: 0,
+        tax: 0,
+        net: 1000,
+        method: 'manual',
+        methodKind: 'manual',
+        status: TRANSACTION_STATUS.PENDING,
+      } as never,
+      { organizationId: ctx.organizationId },
+    );
+    await expect(
+      engine.repositories.transaction.settle(String(pf._id), {}, ctx),
+    ).rejects.toThrow(/kind/i);
+  }, TIMEOUT);
+
   it('reject is terminal — match-after-reject fails', async () => {
     await engine.repositories.transaction.import(
       [row({ externalId: 'FIT_REJ' })],
