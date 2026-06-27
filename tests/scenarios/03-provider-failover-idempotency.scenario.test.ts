@@ -69,7 +69,7 @@ class FlakyPrimary extends PaymentProvider {
     this.store.set(id, { amount });
     return {
       id, sessionId: id, paymentIntentId: id,
-      provider: 'stripe', status: 'pending',
+      provider: 'stripe', status: 'requires_payment_method',
       amount: { amount, currency }, metadata: {},
     };
   }
@@ -109,7 +109,7 @@ class FallbackSslcz extends PaymentProvider {
     this.store.set(id, { amount });
     return {
       id, sessionId: id, paymentIntentId: id,
-      provider: 'sslcommerz', status: 'pending',
+      provider: 'sslcommerz', status: 'requires_payment_method',
       amount: { amount, currency }, metadata: {},
     };
   }

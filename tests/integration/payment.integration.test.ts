@@ -57,7 +57,7 @@ class FakeProvider extends PaymentProvider {
       sessionId: id,
       paymentIntentId: id,
       provider: 'fake',
-      status: 'pending',
+      status: 'requires_payment_method',
       amount: { amount, currency },
       metadata: {},
     };

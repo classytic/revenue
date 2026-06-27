@@ -13,7 +13,7 @@ describe('ManualProvider', () => {
     const intent = await provider.createIntent(params);
 
     expect(intent.provider).toBe('manual');
-    expect(intent.status).toBe('pending');
+    expect(intent.status).toBe('requires_payment_method');
     expect(intent.amount).toEqual({ amount: 50000, currency: 'BDT' });
     expect(intent.id).toMatch(/^manual_/);
   });
@@ -42,7 +42,7 @@ describe('ManualProvider', () => {
 
   it('refund defaults amount to 0 when not provided', async () => {
     const result = await provider.refund('pay_123');
-    expect(result.amount.amount).toBe(0);
+    expect(result.amount!.amount).toBe(0);
   });
 
   it('handleWebhook throws — manual provider has no webhooks', async () => {

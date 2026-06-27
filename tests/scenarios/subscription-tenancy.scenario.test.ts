@@ -65,7 +65,7 @@ const ORG_A = 'org_a_dhaka';
 const ORG_B = 'org_b_ctg';
 
 async function createPendingSub(orgId: string, planKey = 'monthly') {
-  return engine.repositories.subscription.create(
+  return engine.repositories.subscription!.create(
     {
       customerId: 'cust_' + orgId,
       planKey,
@@ -84,7 +84,7 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
   it('activate() works under enabled scope (regression for v2.1.0 bug)', async () => {
     if (!mongoAvailable) return;
     const sub = await createPendingSub(ORG_A);
-    const activated = await engine.repositories.subscription.activate(
+    const activated = await engine.repositories.subscription!.activate(
       String(sub._id),
       {},
       { organizationId: ORG_A },
@@ -98,9 +98,9 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
   it('cancel() works under enabled scope', async () => {
     if (!mongoAvailable) return;
     const sub = await createPendingSub(ORG_A);
-    await engine.repositories.subscription.activate(String(sub._id), {}, { organizationId: ORG_A });
+    await engine.repositories.subscription!.activate(String(sub._id), {}, { organizationId: ORG_A });
 
-    const cancelled = await engine.repositories.subscription.cancel(
+    const cancelled = await engine.repositories.subscription!.cancel(
       String(sub._id),
       { immediate: true, reason: 'test cancel' },
       { organizationId: ORG_A },
@@ -112,9 +112,9 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
   it('pause() + resume() round-trip works under enabled scope', async () => {
     if (!mongoAvailable) return;
     const sub = await createPendingSub(ORG_A);
-    await engine.repositories.subscription.activate(String(sub._id), {}, { organizationId: ORG_A });
+    await engine.repositories.subscription!.activate(String(sub._id), {}, { organizationId: ORG_A });
 
-    const paused = await engine.repositories.subscription.pause(
+    const paused = await engine.repositories.subscription!.pause(
       String(sub._id),
       { reason: 'vacation' },
       { organizationId: ORG_A },
@@ -122,7 +122,7 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
     expect(paused.status).toBe(SUBSCRIPTION_STATUS.PAUSED);
     expect(paused.pausedAt).toBeInstanceOf(Date);
 
-    const resumed = await engine.repositories.subscription.resume(
+    const resumed = await engine.repositories.subscription!.resume(
       String(sub._id),
       { extendPeriod: true },
       { organizationId: ORG_A },
@@ -138,7 +138,7 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
     // Wrong org context — getById inside activate() filters by organizationId,
     // so the sub is invisible. Verb throws SubscriptionNotFoundError.
     await expect(
-      engine.repositories.subscription.activate(
+      engine.repositories.subscription!.activate(
         String(subA._id),
         {},
         { organizationId: ORG_B },
@@ -146,7 +146,7 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
     ).rejects.toBeInstanceOf(SubscriptionNotFoundError);
 
     // Sanity: under the right org, it works.
-    const activated = await engine.repositories.subscription.activate(
+    const activated = await engine.repositories.subscription!.activate(
       String(subA._id),
       {},
       { organizationId: ORG_A },
@@ -157,14 +157,14 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
   it('cross-tenant: org B cannot pause/cancel/resume org A\'s subscription', async () => {
     if (!mongoAvailable) return;
     const subA = await createPendingSub(ORG_A);
-    await engine.repositories.subscription.activate(String(subA._id), {}, { organizationId: ORG_A });
+    await engine.repositories.subscription!.activate(String(subA._id), {}, { organizationId: ORG_A });
 
     await expect(
-      engine.repositories.subscription.pause(String(subA._id), {}, { organizationId: ORG_B }),
+      engine.repositories.subscription!.pause(String(subA._id), {}, { organizationId: ORG_B }),
     ).rejects.toBeInstanceOf(SubscriptionNotFoundError);
 
     await expect(
-      engine.repositories.subscription.cancel(String(subA._id), { immediate: true }, { organizationId: ORG_B }),
+      engine.repositories.subscription!.cancel(String(subA._id), { immediate: true }, { organizationId: ORG_B }),
     ).rejects.toBeInstanceOf(SubscriptionNotFoundError);
   }, TIMEOUT);
 
@@ -176,7 +176,7 @@ describe('SubscriptionRepository — multi-tenant correctness', () => {
     // machine even runs. This is the canary that scope is wired
     // end-to-end through the fixed `optsFromCtx` plumbing.
     await expect(
-      engine.repositories.subscription.activate(String(sub._id), {}),
+      engine.repositories.subscription!.activate(String(sub._id), {}),
     ).rejects.toThrow(/organizationId/i);
   }, TIMEOUT);
 });

@@ -77,6 +77,7 @@ export type { SettlementDocument } from './models/settlement.schema.js';
 export { TransactionRepository } from './repositories/transaction.repository.js';
 export { SubscriptionRepository } from './repositories/subscription.repository.js';
 export { SettlementRepository } from './repositories/settlement.repository.js';
+export type { RecipientBalance } from './repositories/settlement.repository.js';
 export type { RevenueRepositories, RepositoryPluginBundle } from './repositories/create-repositories.js';
 
 // ─── Providers ───

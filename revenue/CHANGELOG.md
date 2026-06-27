@@ -3,6 +3,25 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0]
+
+### Added — `SettlementRepository.recipientBalance()` (the seller/creator "wallet")
+
+`recipientBalance(recipientId, { recipientType?, currency? }, ctx)` returns a
+recipient's payout balance bucketed by settlement status —
+`{ pending, held, available, processing, paidOut, failed, lifetime, currency }`
+in minor units. `pending` splits into `held` (escrowed — `scheduledAt` in the
+future) and `available` (cleared — due now), so a marketplace can show "in
+clearance" vs "ready to pay". One tenant-scoped `aggregatePipeline` over the
+`{ recipientId, status }` index, so hosts stop hand-rolling a raw
+`Model.aggregate` (which bypasses multi-tenant scope).
+
+### Added — `processPending({ recipientId })` filter
+
+`processPending` now accepts an optional `recipientId` so a host can pay out a
+single seller/participant (gating each via their own KYC/eligibility check)
+instead of only by organization.
+
 ## [2.4.0] - 2026-06-14
 
 ### Added — `settled` bank-feed/manual status + `settle()` / `unsettle()` verbs

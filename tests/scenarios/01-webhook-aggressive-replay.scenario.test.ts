@@ -58,7 +58,7 @@ class CountingProvider extends PaymentProvider {
     this.store.set(id, { amount, currency });
     return {
       id, sessionId: id, paymentIntentId: id,
-      provider: 'counter', status: 'pending',
+      provider: 'counter', status: 'requires_payment_method',
       amount: { amount, currency }, metadata: {},
     };
   }

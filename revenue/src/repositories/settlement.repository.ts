@@ -25,6 +25,31 @@ export interface SettlementProcessingError {
 }
 
 /**
+ * A recipient's payout balance — the amounts the platform has scheduled,
+ * is processing, has paid, or failed to pay, in minor units. The "wallet"
+ * view a marketplace shows a seller/creator. Derived from settlement status;
+ * tenant-scoped.
+ */
+export interface RecipientBalance {
+  recipientId: string;
+  currency: string | null;
+  /** Scheduled, awaiting payout (status: pending) = held + available. */
+  pending: number;
+  /** Pending but still in the clearance window (`scheduledAt` in the future) — escrowed, not yet payable. */
+  held: number;
+  /** Pending and due (`scheduledAt <= now`) — cleared, ready to pay out. */
+  available: number;
+  /** Payout in flight (status: processing). */
+  processing: number;
+  /** Paid out, lifetime (status: completed). */
+  paidOut: number;
+  /** Failed payouts (status: failed). */
+  failed: number;
+  /** pending + processing + paidOut — the total the platform has committed to this recipient. */
+  lifetime: number;
+}
+
+/**
  * SettlementRepository — payouts to recipients (organizations, vendors,
  * affiliates).
  *
@@ -111,6 +136,8 @@ export class SettlementRepository extends RevenueRepositoryBase<
       limit?: number;
       organizationId?: string;
       payoutMethod?: string;
+      /** Restrict the sweep to a single recipient — pay one seller/participant. */
+      recipientId?: string;
       dryRun?: boolean;
     } = {},
     ctx: RevenueContext = {},
@@ -127,6 +154,7 @@ export class SettlementRepository extends RevenueRepositoryBase<
     };
     if (options.organizationId) query.organizationId = options.organizationId;
     if (options.payoutMethod) query.payoutMethod = options.payoutMethod;
+    if (options.recipientId) query.recipientId = options.recipientId;
 
     const result = await this.getAll(
       { filters: query, limit: options.limit ?? 50, sort: { scheduledAt: 1 } },
@@ -312,5 +340,80 @@ export class SettlementRepository extends RevenueRepositoryBase<
     );
 
     return updated;
+  }
+
+  // ─── Query: recipient balance ───────────────────────────────────────────
+  //
+  // The "wallet" rollup: how much the platform owes / has paid a recipient,
+  // bucketed by settlement status. One tenant-scoped aggregation (the
+  // `{ recipientId, status }` index backs the `$match`), so a host never
+  // hand-rolls a raw `Model.aggregate` that would bypass multi-tenant scope.
+
+  async recipientBalance(
+    recipientId: string,
+    options: { recipientType?: string; currency?: string } = {},
+    ctx: RevenueContext = {},
+  ): Promise<RecipientBalance> {
+    const match: Record<string, unknown> = { recipientId };
+    if (options.recipientType !== undefined) match.recipientType = options.recipientType;
+    if (options.currency !== undefined) match.currency = options.currency;
+
+    const now = new Date();
+    const rows = await this.aggregatePipeline<{
+      _id: { status: string; due: boolean };
+      total: number;
+      currency: string | null;
+    }>(
+      [
+        { $match: match },
+        {
+          $group: {
+            // `due` only matters for pending — it splits escrowed (held,
+            // scheduledAt in the future) from cleared (available, due now).
+            _id: { status: '$status', due: { $lte: ['$scheduledAt', now] } },
+            total: { $sum: '$amount' },
+            currency: { $first: '$currency' },
+          },
+        },
+      ],
+      this.optsFromCtx(ctx),
+    );
+
+    const balance: RecipientBalance = {
+      recipientId,
+      currency: options.currency ?? null,
+      pending: 0,
+      held: 0,
+      available: 0,
+      processing: 0,
+      paidOut: 0,
+      failed: 0,
+      lifetime: 0,
+    };
+
+    for (const row of rows) {
+      switch (row._id.status) {
+        case SETTLEMENT_STATUS.PENDING:
+          balance.pending += row.total;
+          if (row._id.due) balance.available += row.total;
+          else balance.held += row.total;
+          break;
+        case SETTLEMENT_STATUS.PROCESSING:
+          balance.processing += row.total;
+          break;
+        case SETTLEMENT_STATUS.COMPLETED:
+          balance.paidOut += row.total;
+          break;
+        case SETTLEMENT_STATUS.FAILED:
+          balance.failed += row.total;
+          break;
+        default:
+          break; // cancelled and any future status don't count toward the wallet
+      }
+      if (row.currency && !balance.currency) balance.currency = row.currency;
+    }
+
+    balance.lifetime = balance.pending + balance.processing + balance.paidOut;
+    return balance;
   }
 }

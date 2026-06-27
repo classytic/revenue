@@ -52,7 +52,7 @@ class DeterministicProvider extends PaymentProvider {
     this.store.set(id, { amount, currency });
     return {
       id, sessionId: id, paymentIntentId: id,
-      provider: 'det', status: 'pending',
+      provider: 'det', status: 'requires_payment_method',
       amount: { amount, currency }, metadata: {},
     };
   }

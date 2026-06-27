@@ -72,7 +72,7 @@ export class ManualProvider extends PaymentProvider {
       sessionId: null,
       paymentIntentId: null,
       provider: 'manual',
-      status: 'pending',
+      status: 'requires_payment_method',
       amount: { amount: amountValue, currency },
       metadata: params.metadata ?? {},
       instructions: this._getPaymentInstructions(params, currency),

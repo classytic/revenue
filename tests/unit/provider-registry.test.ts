@@ -16,7 +16,7 @@ class StubProvider extends PaymentProvider {
   async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
     const amount = params.amount.amount;
     const currency = params.amount.currency ?? 'USD';
-    return { id: 's1', sessionId: 's1', paymentIntentId: 's1', provider: 'stub', status: 'pending', amount: { amount, currency }, metadata: {} };
+    return { id: 's1', sessionId: 's1', paymentIntentId: 's1', provider: 'stub', status: 'requires_payment_method', amount: { amount, currency }, metadata: {} };
   }
   async verifyPayment(id: string): Promise<PaymentResult> { return { id, provider: 'stub', status: 'succeeded', metadata: {} }; }
   async getStatus(id: string): Promise<PaymentResult> { return this.verifyPayment(id); }

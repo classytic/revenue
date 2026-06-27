@@ -37,7 +37,6 @@ import {
   BANK_FEED_SOURCE,
   type LedgerBridge,
   type RevenueContext,
-  type TransactionDocument,
 } from '../../revenue/src/index.js';
 import type { BankTransaction } from '@classytic/primitives/bank-transaction';
 
@@ -467,7 +466,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
 
     const result = await engine.repositories.transaction.removeByFeed(
       ['KEEP_JE', 'GONE_1', 'GONE_2'],
-      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID, methodKind: 'bank_transfer' },
+      { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID },
       ctx,
     );
     // KEEP_JE is journalized — surfaced in retainedJournalized, not silently kept.
