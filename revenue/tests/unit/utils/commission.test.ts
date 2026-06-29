@@ -6,11 +6,14 @@
  * Focuses on edge cases and integer math validation
  */
 
+import { test } from 'vitest';
 import { strict as assert } from 'assert';
-import { calculateCommission, reverseCommission } from '../../../src/shared/utils/calculators/commission.js';
-import { calculateTax, reverseTax } from '../../../src/shared/utils/calculators/tax.js';
-import { calculateSplits, reverseSplits } from '../../../src/shared/utils/calculators/commission-split.js';
+import { calculateCommission, reverseCommission } from '../../../src/shared/calculators/commission.js';
+import { calculateTax, reverseTax } from '../../../src/shared/calculators/tax.js';
+import { calculateSplits, reverseSplits } from '../../../src/shared/calculators/splits.js';
 import { ValidationError } from '../../../src/core/errors.js';
+
+test('commission, tax, and split calculations', () => {
 
 // ============ COMMISSION CALCULATION TESTS ============
 
@@ -391,3 +394,5 @@ try {
 }
 
 console.log('\n=== ALL COMMISSION/TAX/SPLIT TESTS PASSED ===\n');
+
+}); // end test

@@ -85,6 +85,7 @@ describe('Zod schemas — happy paths', () => {
       transaction: { publicId: 'txn_1', methodKind: 'card' },
       refundTransaction: { publicId: 'txn_refund_1', methodKind: 'card' },
       refundAmount: { amount: 500, currency: 'USD' },
+      originalAmount: { amount: 1000, currency: 'USD' },
       isPartialRefund: true,
       reason: 'customer request',
     });

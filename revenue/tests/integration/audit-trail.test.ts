@@ -5,16 +5,19 @@
  * Tests for state change audit tracking
  */
 
+import { test } from 'vitest';
 import { strict as assert } from 'assert';
 import {
   TRANSACTION_STATE_MACHINE,
   SUBSCRIPTION_STATE_MACHINE,
   SETTLEMENT_STATE_MACHINE,
-} from '../../src/core/state-machine/index.js';
-import { appendAuditEvent, getAuditTrail } from '../../src/infrastructure/audit/index.js';
+} from '../../src/core/state-machines.js';
+import { appendAuditEvent, getAuditTrail } from '../../src/shared/audit.js';
 import { TRANSACTION_STATUS } from '../../src/enums/transaction.enums.js';
 import { SUBSCRIPTION_STATUS } from '../../src/enums/subscription.enums.js';
 import { SETTLEMENT_STATUS } from '../../src/enums/settlement.enums.js';
+
+test('audit trail integration', async () => {
 
 console.log('\n=== AUDIT TRAIL INTEGRATION TESTS ===\n');
 
@@ -64,10 +67,10 @@ try {
 
   const updated = appendAuditEvent(document, auditEvent);
 
-  assert.ok(updated.metadata.stateHistory);
-  assert.strictEqual(updated.metadata.stateHistory.length, 1);
-  assert.strictEqual(updated.metadata.stateHistory[0].fromState, TRANSACTION_STATUS.PENDING);
-  assert.strictEqual(updated.metadata.stateHistory[0].toState, TRANSACTION_STATUS.PROCESSING);
+  assert.ok(updated.metadata.auditTrail);
+  assert.strictEqual(updated.metadata.auditTrail.length, 1);
+  assert.strictEqual(updated.metadata.auditTrail[0].fromState, TRANSACTION_STATUS.PENDING);
+  assert.strictEqual(updated.metadata.auditTrail[0].toState, TRANSACTION_STATUS.PROCESSING);
 
   console.log('✓ Append audit event to document metadata');
 } catch (error) {
@@ -221,8 +224,8 @@ try {
   assert.strictEqual(updated.metadata.anotherField, 123);
 
   // Audit event metadata should be in the event
-  assert.strictEqual(updated.metadata.stateHistory[0].metadata?.processingMethod, 'manual');
-  assert.strictEqual(updated.metadata.stateHistory[0].metadata?.priority, 'high');
+  assert.strictEqual(updated.metadata.auditTrail[0].metadata?.processingMethod, 'manual');
+  assert.strictEqual(updated.metadata.auditTrail[0].metadata?.priority, 'high');
 
   console.log('✓ Audit event with metadata preserves document metadata');
 } catch (error) {
@@ -300,7 +303,7 @@ try {
   console.error('✗ Invalid transition should throw error');
   throw new Error('Should have thrown InvalidStateTransitionError');
 } catch (error) {
-  if (error.message.includes('Invalid state transition')) {
+  if (error.message.includes('state transition')) {
     console.log('✓ Invalid transition does not create audit event');
   } else {
     throw error;
@@ -308,3 +311,5 @@ try {
 }
 
 console.log('\n=== ALL AUDIT TRAIL TESTS PASSED ===\n');
+
+}); // end test

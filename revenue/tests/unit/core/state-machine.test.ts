@@ -5,6 +5,7 @@
  * Tests for centralized state transition validation
  */
 
+import { test } from 'vitest';
 import { strict as assert } from 'assert';
 import {
   StateMachine,
@@ -13,7 +14,7 @@ import {
   SETTLEMENT_STATE_MACHINE,
   HOLD_STATE_MACHINE,
   SPLIT_STATE_MACHINE,
-} from '../../../src/core/state-machine/index.js';
+} from '../../../src/core/state-machines.js';
 import { InvalidStateTransitionError } from '../../../src/core/errors.js';
 import { TRANSACTION_STATUS } from '../../../src/enums/transaction.enums.js';
 import { SUBSCRIPTION_STATUS } from '../../../src/enums/subscription.enums.js';
@@ -55,6 +56,8 @@ function testInvalidTransition(
     }
   }
 }
+
+test('state machine transitions', () => {
 
 // ============ TRANSACTION STATE MACHINE TESTS ============
 
@@ -462,3 +465,5 @@ try {
 }
 
 console.log('\n=== ALL STATE MACHINE TESTS PASSED ===\n');
+
+}); // end test

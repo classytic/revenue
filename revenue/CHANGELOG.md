@@ -3,6 +3,28 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0]
+
+### Added — generalized settlement rollups (`summary` + `breakdownByRecipient`)
+
+`recipientBalance` only rolled up ONE recipient, forcing hosts to hand-roll raw
+aggregations for platform-wide / per-recipient / cross-org views. Two reusable
+primitives now cover all of them (the `recipientBalance` status+due bucketing,
+generalized — one tenant-scoped `aggregatePipeline`, never a raw `Model.aggregate`):
+
+- **`summary(filter = {}, ctx)` → `SettlementSummary`** — the money-state
+  (`held / available / processing / paidOut / pending / failed / lifetime /
+  currency`) for an ARBITRARY filter: a recipient, an org, or the whole platform
+  (pass `_bypassTenant` in ctx). Backs platform reconciliation + cross-org
+  earnings.
+- **`breakdownByRecipient(filter = {}, ctx)` → `RecipientBreakdown[]`** — one
+  rollup per distinct `(recipientId, recipientType)` (plus first-seen `role`),
+  for a "who is owed what" platform view.
+
+`recipientBalance` is now a thin wrapper over `summary({ recipientId, … })`.
+Exported types: `SettlementSummary`, `RecipientBreakdown`. No migration; no
+breaking change to `recipientBalance`'s shape.
+
 ## [2.5.0]
 
 ### Added — `SettlementRepository.recipientBalance()` (the seller/creator "wallet")

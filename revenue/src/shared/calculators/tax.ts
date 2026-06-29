@@ -1,3 +1,5 @@
+import { ValidationError } from '../../core/errors.js';
+
 export interface TaxConfig {
   isRegistered: boolean;
   defaultRate: number;
@@ -51,9 +53,9 @@ export function reverseTax(
   if (!originalTax.isApplicable) {
     return { isApplicable: false, rate: 0, baseAmount: refundAmount, taxAmount: 0, totalAmount: refundAmount, pricesIncludeTax: false };
   }
-  if (!originalAmount || originalAmount <= 0) throw new Error('Original amount must be greater than 0');
-  if (refundAmount < 0) throw new Error('Refund amount cannot be negative');
-  if (refundAmount > originalAmount) throw new Error('Refund amount exceeds original amount');
+  if (!originalAmount || originalAmount <= 0) throw new ValidationError('Original amount must be greater than 0');
+  if (refundAmount < 0) throw new ValidationError('Refund amount cannot be negative');
+  if (refundAmount > originalAmount) throw new ValidationError('Refund amount exceeds original amount');
 
   const refundRatio = refundAmount / originalAmount;
   const reversedType: TaxType | undefined = originalTax.type

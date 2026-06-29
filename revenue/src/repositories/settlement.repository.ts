@@ -50,6 +50,60 @@ export interface RecipientBalance {
 }
 
 /**
+ * Settlement money-state for an arbitrary filter (a recipient, an org, or the
+ * whole platform) — the same status+due rollup as {@link RecipientBalance} but
+ * not tied to a single recipient. The reusable shape behind `summary`.
+ */
+export type SettlementSummary = Omit<RecipientBalance, 'recipientId'>;
+
+/** One row of {@link SettlementRepository.breakdownByRecipient}. */
+export interface RecipientBreakdown extends RecipientBalance {
+  recipientType: string;
+  /** First-seen settlement role (creator_earning | co_instructor | referrer | …). */
+  role: string | null;
+}
+
+function emptySettlementSummary(): SettlementSummary {
+  return {
+    currency: null,
+    pending: 0,
+    held: 0,
+    available: 0,
+    processing: 0,
+    paidOut: 0,
+    failed: 0,
+    lifetime: 0,
+  };
+}
+
+/** Bucket one aggregated (status, due, total) row into a running summary. */
+function foldSettlementStatus(
+  s: SettlementSummary,
+  status: string,
+  due: boolean,
+  total: number,
+): void {
+  switch (status) {
+    case SETTLEMENT_STATUS.PENDING:
+      s.pending += total;
+      if (due) s.available += total;
+      else s.held += total;
+      break;
+    case SETTLEMENT_STATUS.PROCESSING:
+      s.processing += total;
+      break;
+    case SETTLEMENT_STATUS.COMPLETED:
+      s.paidOut += total;
+      break;
+    case SETTLEMENT_STATUS.FAILED:
+      s.failed += total;
+      break;
+    default:
+      break; // cancelled + any future status don't count toward the wallet
+  }
+}
+
+/**
  * SettlementRepository — payouts to recipients (organizations, vendors,
  * affiliates).
  *
@@ -349,15 +403,17 @@ export class SettlementRepository extends RevenueRepositoryBase<
   // `{ recipientId, status }` index backs the `$match`), so a host never
   // hand-rolls a raw `Model.aggregate` that would bypass multi-tenant scope.
 
-  async recipientBalance(
-    recipientId: string,
-    options: { recipientType?: string; currency?: string } = {},
+  /**
+   * Settlement money-state for an ARBITRARY filter — a recipient, an org, or
+   * the whole platform (pass `_bypassTenant` in ctx to span every org). One
+   * tenant-scoped `aggregatePipeline` (the `{ recipientId, status }` index backs
+   * the `$match`), never a raw `Model.aggregate`. The reusable rollup behind
+   * `recipientBalance`, platform reconciliation, and cross-org earnings.
+   */
+  async summary(
+    filter: Record<string, unknown> = {},
     ctx: RevenueContext = {},
-  ): Promise<RecipientBalance> {
-    const match: Record<string, unknown> = { recipientId };
-    if (options.recipientType !== undefined) match.recipientType = options.recipientType;
-    if (options.currency !== undefined) match.currency = options.currency;
-
+  ): Promise<SettlementSummary> {
     const now = new Date();
     const rows = await this.aggregatePipeline<{
       _id: { status: string; due: boolean };
@@ -365,7 +421,7 @@ export class SettlementRepository extends RevenueRepositoryBase<
       currency: string | null;
     }>(
       [
-        { $match: match },
+        { $match: filter },
         {
           $group: {
             // `due` only matters for pending — it splits escrowed (held,
@@ -379,41 +435,84 @@ export class SettlementRepository extends RevenueRepositoryBase<
       this.optsFromCtx(ctx),
     );
 
-    const balance: RecipientBalance = {
-      recipientId,
-      currency: options.currency ?? null,
-      pending: 0,
-      held: 0,
-      available: 0,
-      processing: 0,
-      paidOut: 0,
-      failed: 0,
-      lifetime: 0,
-    };
-
+    const out = emptySettlementSummary();
     for (const row of rows) {
-      switch (row._id.status) {
-        case SETTLEMENT_STATUS.PENDING:
-          balance.pending += row.total;
-          if (row._id.due) balance.available += row.total;
-          else balance.held += row.total;
-          break;
-        case SETTLEMENT_STATUS.PROCESSING:
-          balance.processing += row.total;
-          break;
-        case SETTLEMENT_STATUS.COMPLETED:
-          balance.paidOut += row.total;
-          break;
-        case SETTLEMENT_STATUS.FAILED:
-          balance.failed += row.total;
-          break;
-        default:
-          break; // cancelled and any future status don't count toward the wallet
-      }
-      if (row.currency && !balance.currency) balance.currency = row.currency;
+      foldSettlementStatus(out, row._id.status, row._id.due, row.total);
+      if (row.currency && !out.currency) out.currency = row.currency;
     }
+    out.lifetime = out.pending + out.processing + out.paidOut;
+    return out;
+  }
 
-    balance.lifetime = balance.pending + balance.processing + balance.paidOut;
-    return balance;
+  /**
+   * Per-recipient settlement rollup — one {@link RecipientBreakdown} per
+   * distinct (recipientId, recipientType) matching `filter`. The reusable list
+   * behind a platform "who is owed what" view; pass `_bypassTenant` to span all
+   * orgs.
+   */
+  async breakdownByRecipient(
+    filter: Record<string, unknown> = {},
+    ctx: RevenueContext = {},
+  ): Promise<RecipientBreakdown[]> {
+    const now = new Date();
+    const rows = await this.aggregatePipeline<{
+      _id: { recipientId: string; recipientType: string; status: string; due: boolean };
+      total: number;
+      currency: string | null;
+      role: string | null;
+    }>(
+      [
+        { $match: filter },
+        {
+          $group: {
+            _id: {
+              recipientId: '$recipientId',
+              recipientType: '$recipientType',
+              status: '$status',
+              due: { $lte: ['$scheduledAt', now] },
+            },
+            total: { $sum: '$amount' },
+            currency: { $first: '$currency' },
+            role: { $first: '$metadata.role' },
+          },
+        },
+      ],
+      this.optsFromCtx(ctx),
+    );
+
+    const byKey = new Map<string, RecipientBreakdown>();
+    for (const row of rows) {
+      const key = `${row._id.recipientType}:${row._id.recipientId}`;
+      let r = byKey.get(key);
+      if (!r) {
+        r = {
+          recipientId: row._id.recipientId,
+          recipientType: row._id.recipientType,
+          role: row.role ?? null,
+          ...emptySettlementSummary(),
+        };
+        byKey.set(key, r);
+      }
+      foldSettlementStatus(r, row._id.status, row._id.due, row.total);
+      if (row.role && !r.role) r.role = row.role;
+      if (row.currency && !r.currency) r.currency = row.currency;
+    }
+    for (const r of byKey.values()) {
+      r.lifetime = r.pending + r.processing + r.paidOut;
+    }
+    return [...byKey.values()];
+  }
+
+  /** One recipient's wallet — a thin `summary` over `{ recipientId, … }`. */
+  async recipientBalance(
+    recipientId: string,
+    options: { recipientType?: string; currency?: string } = {},
+    ctx: RevenueContext = {},
+  ): Promise<RecipientBalance> {
+    const filter: Record<string, unknown> = { recipientId };
+    if (options.recipientType !== undefined) filter.recipientType = options.recipientType;
+    if (options.currency !== undefined) filter.currency = options.currency;
+    const s = await this.summary(filter, ctx);
+    return { recipientId, ...s, currency: options.currency ?? s.currency };
   }
 }

@@ -1,3 +1,5 @@
+import { ValidationError } from '../../core/errors.js';
+
 export interface SplitRule {
   type: string;
   recipientId: string;
@@ -46,4 +48,23 @@ export function calculateSplits(
 export function calculateOrganizationPayout(amount: number, splits: SplitInfo[]): number {
   const splitTotal = splits.reduce((sum, s) => sum + s.grossAmount, 0);
   return amount - splitTotal;
+}
+
+export function reverseSplits(
+  originalSplits: SplitInfo[],
+  originalAmount: number,
+  refundAmount: number,
+): SplitInfo[] {
+  if (!originalAmount || originalAmount <= 0) throw new ValidationError('Original amount must be greater than 0');
+  if (refundAmount < 0) throw new ValidationError('Refund amount cannot be negative');
+  if (refundAmount > originalAmount) throw new ValidationError('Refund amount exceeds original amount');
+
+  const refundRatio = refundAmount / originalAmount;
+  return originalSplits.map((s) => ({
+    ...s,
+    grossAmount: Math.round(s.grossAmount * refundRatio),
+    gatewayFeeAmount: Math.round(s.gatewayFeeAmount * refundRatio),
+    netAmount: Math.round(s.netAmount * refundRatio),
+    status: 'waived',
+  }));
 }
