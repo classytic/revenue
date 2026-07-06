@@ -1,3 +1,4 @@
+import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 
 export const subscriptionBaseSchema = z.object({
@@ -6,7 +7,7 @@ export const subscriptionBaseSchema = z.object({
   customerId: z.string().nullish(),
   planKey: z.string(),
   amount: z.number().int().min(0),
-  currency: z.string().min(3).max(3).optional(),
+  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)').optional(),
   status: z.string().default('pending'),
   isActive: z.boolean().default(false),
   transactionId: z.string().nullish(),

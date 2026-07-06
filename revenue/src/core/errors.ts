@@ -15,6 +15,23 @@ export class RevenueError extends Error {
   }
 }
 
+/**
+ * Thrown when a host passes ctx.session but NO outbox is wired —
+ * publishing mid-transaction leaks ghost events on rollback (§P8.1).
+ * Session + outbox is legal durable-relay-only mode.
+ */
+export class UnmanagedSessionError extends RevenueError {
+  constructor() {
+    super(
+      'ctx.session provided but no OutboxStore is wired — events would leak or be lost. ' +
+        'Wire an outbox or drop the session.',
+      'revenue.session.unmanaged',
+      undefined,
+      409,
+    );
+  }
+}
+
 export class ValidationError extends RevenueError {
   constructor(message: string, details?: Record<string, unknown>) {
     super(message, 'VALIDATION_ERROR', details);

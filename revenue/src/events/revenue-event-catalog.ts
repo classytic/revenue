@@ -33,6 +33,7 @@
  * });
  * ```
  */
+import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 import type { DomainEvent } from '@classytic/primitives/events';
 import { createEvent as createPrimitiveEvent } from '@classytic/primitives/events';
@@ -95,7 +96,7 @@ function defineRevenueEvent<TSchema extends z.ZodType>(input: {
 
 const money = z.object({
   amount: z.number().nonnegative(),
-  currency: z.string().length(3),
+  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
 });
 
 // Domain documents are attached raw (repositories pass Mongoose docs). Hosts

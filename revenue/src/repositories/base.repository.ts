@@ -50,6 +50,7 @@ import { Repository, type PluginType, repoOptionsFromCtx } from '@classytic/mong
 import type { Model } from 'mongoose';
 import type { DomainEvent, EventTransport } from '@classytic/primitives/events';
 import type { OutboxStore } from '@classytic/primitives/outbox';
+import { UnmanagedSessionError } from '../core/errors.js';
 import type { RevenueContext } from '../core/context.js';
 
 /**
@@ -184,6 +185,10 @@ export abstract class RevenueRepositoryBase<
    * @param ctx - The same context that produced the business write.
    */
   protected async dispatch(event: DomainEvent, ctx: RevenueContext = {}): Promise<void> {
+    // §P8.1 guard: a host session with NO outbox has no correct delivery
+    // path — publishing now would leak ghost events on rollback.
+    if (ctx.session && !this.deps.outbox) throw new UnmanagedSessionError();
+
     if (this.deps.outbox) {
       try {
         await this.deps.outbox.save(
@@ -195,6 +200,9 @@ export abstract class RevenueRepositoryBase<
         throw err;
       }
     }
+    // Relay-only mode skips the immediate publish — the host transaction
+    // may still roll back; the outbox relay delivers the committed row.
+    if (ctx.session) return;
     try {
       await this.deps.events.publish(event);
     } catch (err) {

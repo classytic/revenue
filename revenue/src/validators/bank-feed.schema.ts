@@ -6,6 +6,7 @@
  * `z.iso.datetime()` — see the catalog file for those.
  */
 
+import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 import {
   BANK_FEED_SOURCE_VALUES,
@@ -16,7 +17,7 @@ import {
 
 export const moneySchema = z.object({
   amount: z.number().int(),
-  currency: z.string().length(3),
+  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
 });
 
 export const counterpartySchema = z.object({
@@ -88,7 +89,7 @@ export const manualEntrySchema = z.object({
   /** `'manual'` is the only legal value for this verb. */
   kind: z.literal('manual').default('manual'),
   amount: z.number().nonnegative(),
-  currency: z.string().length(3),
+  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
   flow: z.enum(['inflow', 'outflow']),
   type: z.string().min(1),
   description: z.string().optional(),
@@ -104,7 +105,7 @@ export const manualEntrySchema = z.object({
 
 export const findMatchCandidatesQuerySchema = z.object({
   amount: z.coerce.number().nonnegative(),
-  currency: z.string().length(3).optional(),
+  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)').optional(),
   postedDate: z.coerce.date(),
   toleranceDays: z.coerce.number().int().min(0).max(30).optional(),
   amountTolerancePct: z.coerce.number().min(0).max(0.5).optional(),

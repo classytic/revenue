@@ -3,6 +3,34 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] → 2.7.0
+
+### Fixed (behavioral) — 2026-07-05 addendum
+
+- **Ghost-event publish under host sessions (§P8.1).** `dispatch` published
+  regardless of `ctx.session`. Now: session + NO outbox throws the new
+  `UnmanagedSessionError` (`revenue.session.unmanaged`); session + outbox is
+  durable-relay-only (row joins the host tx, immediate publish skipped —
+  the relay delivers post-commit).
+
+### Changed — ISO 4217 currency gate via primitives (P1, 2026-07-04)
+
+- Every zod currency validator (payment / settlement / subscription /
+  transaction / bank-feed schemas + the revenue event catalog) replaced
+  its hand-rolled `length(3)` / `min(3).max(3)` checks (which accepted
+  lowercase `usd`) with `CURRENCY_PATTERN` from
+  `@classytic/primitives/currency`. Primitives peer floor raised to
+  `>=0.9.1`.
+
+### Fixed — subscription period math via `@classytic/primitives/calendar`
+
+- `subscription.activate` computed `endDate` with LOCAL `setMonth` /
+  `setFullYear` / `setDate`: (1) the boundary silently shifted with the deploy
+  machine's `TZ` env, and (2) month-ends overflowed — a Jan 31 monthly
+  activation ended **Mar 2/3** instead of Feb 28/29. Now `addMonths` /
+  `addYears` / `addDays` from `@classytic/primitives/calendar` (UTC-stable,
+  month-end clamping). Primitives peer bumped to `>=0.9.0`.
+
 ## [2.6.0]
 
 ### Added — generalized settlement rollups (`summary` + `breakdownByRecipient`)

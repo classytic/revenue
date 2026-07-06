@@ -1,4 +1,5 @@
 import type { PluginType } from '@classytic/mongokit';
+import { addDays, addMonths, addYears } from '@classytic/primitives/calendar';
 import type { Model } from 'mongoose';
 import type { SubscriptionDocument } from '../models/subscription.schema.js';
 import type { RevenueContext } from '../core/context.js';
@@ -87,11 +88,14 @@ export class SubscriptionRepository extends RevenueRepositoryBase<
     );
 
     const now = options.timestamp ?? new Date();
-    const endDate = new Date(now);
-    if (sub.planKey === 'monthly') endDate.setMonth(endDate.getMonth() + 1);
-    else if (sub.planKey === 'quarterly') endDate.setMonth(endDate.getMonth() + 3);
-    else if (sub.planKey === 'yearly') endDate.setFullYear(endDate.getFullYear() + 1);
-    else endDate.setDate(endDate.getDate() + 30);
+    // Calendar math via primitives (never local `setMonth`): UTC-stable
+    // regardless of the deploy machine's TZ, and month-ends clamp instead of
+    // overflowing (Jan 31 + 1 month → Feb 28/29, NOT Mar 2/3).
+    const endDate =
+      sub.planKey === 'monthly' ? addMonths(now, 1)
+      : sub.planKey === 'quarterly' ? addMonths(now, 3)
+      : sub.planKey === 'yearly' ? addYears(now, 1)
+      : addDays(now, 30);
 
     const updated = await this.update(
       subscriptionId,

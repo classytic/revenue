@@ -1,3 +1,4 @@
+import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 
 export const settlementBaseSchema = z.object({
@@ -9,7 +10,7 @@ export const settlementBaseSchema = z.object({
   status: z.string().default('pending'),
   payoutMethod: z.enum(['bank_transfer', 'mobile_wallet', 'platform_balance', 'crypto', 'check', 'manual']),
   amount: z.number().int().min(0),
-  currency: z.string().min(3).max(3),
+  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
   sourceTransactionIds: z.array(z.string()).default([]),
   sourceSplitIds: z.array(z.string()).default([]),
   bankTransferDetails: z.object({

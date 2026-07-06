@@ -1,3 +1,4 @@
+import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 import { PAYMENT_METHOD_KIND, type PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
 
@@ -8,7 +9,7 @@ const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
 
 export const paymentIntentSchema = z.object({
   amount: z.number().int().min(1),
-  currency: z.string().min(3).max(3),
+  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
   gateway: z.string(),
   methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES),
   customerId: z.string().optional(),
