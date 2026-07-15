@@ -38,6 +38,7 @@ import { calculateCommission, reverseCommission } from '../shared/calculators/co
 import { reverseTax } from '../shared/calculators/tax.js';
 import { calculateSplits, calculateOrganizationPayout } from '../shared/calculators/splits.js';
 
+import { fromSet, isTransitionRace } from './transition-support.js';
 /**
  * Deps for {@link TransactionRepository}. Extends {@link BaseRevenueRepoDeps}
  * (events / outbox? / logger?) with provider/bridge/config wiring specific
@@ -255,19 +256,26 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     else if (paymentResult.status === 'requires_action') newStatus = TRANSACTION_STATUS.REQUIRES_ACTION;
     else newStatus = TRANSACTION_STATUS.PROCESSING;
 
-    TRANSACTION_STATE_MACHINE.validate(transaction.status as any, newStatus as any, String(transaction._id));
-
-    const updates: Record<string, unknown> = { status: newStatus };
+    const set: Record<string, unknown> = {};
     if (newStatus === TRANSACTION_STATUS.VERIFIED) {
-      updates.verifiedAt = new Date();
-      updates.verifiedBy = options.verifiedBy;
+      set.verifiedAt = new Date();
+      set.verifiedBy = options.verifiedBy;
     } else if (newStatus === TRANSACTION_STATUS.FAILED) {
-      updates.failedAt = new Date();
-      updates.failureReason = 'Payment verification failed';
+      set.failedAt = new Date();
+      set.failureReason = 'Payment verification failed';
     }
 
-    // Pass ObjectId directly — mongokit accepts string | ObjectId
-    const updated = await this.update(transaction._id, updates, this.optsFromCtx(ctx));
+    // applyTransition (mongokit 3.22): the status write is a machine-gated
+    // CAS — the old validate-then-update had a window where a concurrent
+    // transition slipped between check and write. Safe here because the
+    // provider call above is a verification READ (no money moved); refund's
+    // post-provider write deliberately stays a plain update instead.
+    const updated = (await this.applyTransition(
+      String(transaction._id),
+      TRANSACTION_STATE_MACHINE,
+      { from: transaction.status, to: newStatus, set, history: false },
+      this.optsFromCtx(ctx) as never,
+    )) as TransactionDocument;
 
     if (newStatus === TRANSACTION_STATUS.VERIFIED) {
       await this.deps.bridges.ledger?.onPaymentVerified?.(updated as any, ctx);
@@ -1076,45 +1084,50 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     // Compile-time check — feeding the right machine; primitives' assertTransition fires
     // via the StateMachine wrapper and rejects illegal current states before the round-trip.
     const machine = smFor(existing.kind);
-    machine.validate(existing.status as never, TRANSACTION_STATUS.MATCHED as never, id);
 
-    const patch: Record<string, unknown> = {
-      $set: {
-        matching: {
-          ...data.mapping,
-          ...(data.matchedBy !== undefined ? { matchedBy: data.matchedBy } : {}),
-          matchedAt: new Date(),
-        },
-        ...(data.matchedBy !== undefined ? { verifiedBy: data.matchedBy } : {}),
-        verifiedAt: new Date(),
+    const set: Record<string, unknown> = {
+      matching: {
+        ...data.mapping,
+        ...(data.matchedBy !== undefined ? { matchedBy: data.matchedBy } : {}),
+        matchedAt: new Date(),
       },
-      // Belt-and-suspenders: a re-match (matched → matched with new mapping)
-      // must drop any prior `journalEntryRef`. The current SM blocks
-      // journalized → matched so this is moot today, but if a future SM
-      // loosening allows it, leaving a stale ref pointing at a now-
-      // superseded JE is the worst class of accounting bug. Cheap to
-      // unconditionally clear here.
-      $unset: { journalEntryRef: 1 },
+      ...(data.matchedBy !== undefined ? { verifiedBy: data.matchedBy } : {}),
+      verifiedAt: new Date(),
     };
     if (data.relatedTransactionId !== undefined) {
-      (patch.$set as Record<string, unknown>).relatedTransactionId = data.relatedTransactionId;
+      set.relatedTransactionId = data.relatedTransactionId;
     }
 
-    // Multi-source CAS — `imported → matched` is the happy path; `matched → matched`
-    // (re-match-with-different-mapping) lands as an idempotent no-state-write.
-    const claimed = await this.claim(
-      existing._id,
+    // Multi-source machine-gated CAS (mongokit applyTransition):
+    // `imported/pending → matched` are the per-kind happy paths;
+    // `matched → matched` (re-match-with-different-mapping) is the
+    // idempotent RE-CLAIM the 3.22.1 semantics admit. `fromSet` narrows
+    // the historical shared array to the kind's table truth.
+    // Belt-and-suspenders `$unset journalEntryRef`: a re-match must drop
+    // any prior ref — a stale pointer at a superseded JE is the worst
+    // class of accounting bug. Cheap to unconditionally clear.
+    const claimed = (await this.applyTransition(
+      String(existing._id),
+      machine,
       {
-        from: [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.MATCHED, TRANSACTION_STATUS.PENDING],
+        from: fromSet(
+          machine,
+          [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.MATCHED, TRANSACTION_STATUS.PENDING],
+          TRANSACTION_STATUS.MATCHED,
+        ),
         to: TRANSACTION_STATUS.MATCHED,
         where: { kind: existing.kind },
+        set,
+        unset: { journalEntryRef: 1 },
+        history: false,
       },
-      patch,
       this.optsFromCtx(ctx) as never,
-    );
-    if (!claimed) {
-      throw new ValidationError(`Transaction ${id} could not be matched (race-loss or illegal state)`);
-    }
+    ).catch((err: unknown) => {
+      if (isTransitionRace(err)) {
+        throw new ValidationError(`Transaction ${id} could not be matched (race-loss or illegal state)`);
+      }
+      throw err;
+    })) as TransactionDocument;
 
     await this.deps.bridges.ledger?.onTransactionMatched?.(
       claimed as unknown as Record<string, unknown>,
@@ -1162,27 +1175,29 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
 
     const priorJournalEntryRef = existing.journalEntryRef;
 
-    const claimed = await this.claim(
-      existing._id,
+    const claimed = (await this.applyTransition(
+      String(existing._id),
+      smFor(existing.kind),
       {
         from: TRANSACTION_STATUS.MATCHED,
         to: TRANSACTION_STATUS.IMPORTED,
         where: { kind: TRANSACTION_KIND.BANK_FEED },
-      },
-      {
-        $unset: {
+        unset: {
           matching: 1,
           relatedTransactionId: 1,
           journalEntryRef: 1,
           verifiedBy: 1,
           verifiedAt: 1,
         },
+        history: false,
       },
       this.optsFromCtx(ctx) as never,
-    );
-    if (!claimed) {
-      throw new ValidationError(`Transaction ${id} could not be unmatched (current state is not 'matched')`);
-    }
+    ).catch((err: unknown) => {
+      if (isTransitionRace(err)) {
+        throw new ValidationError(`Transaction ${id} could not be unmatched (current state is not 'matched')`);
+      }
+      throw err;
+    })) as TransactionDocument;
 
     await this.deps.bridges.ledger?.onTransactionUnmatched?.(
       claimed as unknown as Record<string, unknown>,
@@ -1239,7 +1254,6 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     }
 
     const machine = smFor(existing.kind);
-    machine.validate(existing.status as never, TRANSACTION_STATUS.SETTLED as never, id);
 
     const set: Record<string, unknown> = {
       verifiedAt: new Date(),
@@ -1253,19 +1267,27 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
       }
     }
 
-    const claimed = await this.claim(
-      existing._id,
+    const claimed = (await this.applyTransition(
+      String(existing._id),
+      machine,
       {
-        from: [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.PENDING],
+        from: fromSet(
+          machine,
+          [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.PENDING],
+          TRANSACTION_STATUS.SETTLED,
+        ),
         to: TRANSACTION_STATUS.SETTLED,
         where: { kind: existing.kind },
+        set,
+        history: false,
       },
-      { $set: set },
       this.optsFromCtx(ctx) as never,
-    );
-    if (!claimed) {
-      throw new ValidationError(`Transaction ${id} could not be settled (race-loss or illegal state)`);
-    }
+    ).catch((err: unknown) => {
+      if (isTransitionRace(err)) {
+        throw new ValidationError(`Transaction ${id} could not be settled (race-loss or illegal state)`);
+      }
+      throw err;
+    })) as TransactionDocument;
     return claimed as TransactionDocument;
   }
 
@@ -1297,26 +1319,29 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
       ? TRANSACTION_STATUS.PENDING
       : TRANSACTION_STATUS.IMPORTED;
     const machine = smFor(existing.kind);
-    machine.validate(TRANSACTION_STATUS.SETTLED as never, target as never, id);
 
     const unset: Record<string, unknown> = { verifiedBy: 1, verifiedAt: 1 };
     for (const k of data.clearMetadata ?? []) {
       unset[`metadata.${k}`] = 1;
     }
 
-    const claimed = await this.claim(
-      existing._id,
+    const claimed = (await this.applyTransition(
+      String(existing._id),
+      machine,
       {
         from: TRANSACTION_STATUS.SETTLED,
         to: target,
         where: { kind: existing.kind },
+        unset,
+        history: false,
       },
-      { $unset: unset },
       this.optsFromCtx(ctx) as never,
-    );
-    if (!claimed) {
-      throw new ValidationError(`Transaction ${id} could not be un-settled (current state is not 'settled')`);
-    }
+    ).catch((err: unknown) => {
+      if (isTransitionRace(err)) {
+        throw new ValidationError(`Transaction ${id} could not be un-settled (current state is not 'settled')`);
+      }
+      throw err;
+    })) as TransactionDocument;
     return claimed as TransactionDocument;
   }
 
@@ -1337,22 +1362,23 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
       throw new WrongTransactionKindError(id, 'bank_feed | manual', existing.kind);
     }
 
-    const machine = smFor(existing.kind);
-    machine.validate(existing.status as never, TRANSACTION_STATUS.JOURNALIZED as never, id);
-
-    const claimed = await this.claim(
-      existing._id,
+    const claimed = (await this.applyTransition(
+      String(existing._id),
+      smFor(existing.kind),
       {
         from: TRANSACTION_STATUS.MATCHED,
         to: TRANSACTION_STATUS.JOURNALIZED,
         where: { kind: existing.kind },
+        set: { journalEntryRef: data.journalEntryRef },
+        history: false,
       },
-      { $set: { journalEntryRef: data.journalEntryRef } },
       this.optsFromCtx(ctx) as never,
-    );
-    if (!claimed) {
-      throw new ValidationError(`Transaction ${id} could not be journalized (current state is not 'matched')`);
-    }
+    ).catch((err: unknown) => {
+      if (isTransitionRace(err)) {
+        throw new ValidationError(`Transaction ${id} could not be journalized (current state is not 'matched')`);
+      }
+      throw err;
+    })) as TransactionDocument;
 
     await this.deps.bridges.ledger?.onTransactionJournalized?.(
       claimed as unknown as Record<string, unknown>,
@@ -1397,31 +1423,32 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     }
 
     const machine = smFor(existing.kind);
-    machine.validate(existing.status as never, TRANSACTION_STATUS.REJECTED as never, id);
 
-    const claimed = await this.claim(
-      existing._id,
+    const claimed = (await this.applyTransition(
+      String(existing._id),
+      machine,
       {
-        from: [
-          TRANSACTION_STATUS.IMPORTED,
-          TRANSACTION_STATUS.MATCHED,
-          TRANSACTION_STATUS.PENDING,
-        ],
+        from: fromSet(
+          machine,
+          [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.MATCHED, TRANSACTION_STATUS.PENDING],
+          TRANSACTION_STATUS.REJECTED,
+        ),
         to: TRANSACTION_STATUS.REJECTED,
         where: { kind: existing.kind },
-      },
-      {
-        $set: {
+        set: {
           failureReason: data.reason,
           failedAt: new Date(),
           ...(data.rejectedBy !== undefined ? { verifiedBy: data.rejectedBy } : {}),
         },
+        history: false,
       },
       this.optsFromCtx(ctx) as never,
-    );
-    if (!claimed) {
-      throw new ValidationError(`Transaction ${id} could not be rejected (illegal current state)`);
-    }
+    ).catch((err: unknown) => {
+      if (isTransitionRace(err)) {
+        throw new ValidationError(`Transaction ${id} could not be rejected (illegal current state)`);
+      }
+      throw err;
+    })) as TransactionDocument;
 
     await this.deps.bridges.ledger?.onTransactionRejected?.(
       claimed as unknown as Record<string, unknown>,

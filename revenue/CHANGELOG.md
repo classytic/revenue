@@ -3,6 +3,56 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] — 2026-07-15
+
+### Changed — mongokit `applyTransition()` adopted across the transaction lifecycle (peer floors: mongokit >=3.22.2, repo-core >=0.13.0, primitives >=0.11.0)
+
+- **Requires mongokit ≥3.22.2** — this migration is what motivated (and
+  battle-tests) 3.22.1's re-claim fix: a from-array member equal to `to`
+  is an idempotent RE-CLAIM (match's `matched → matched`
+  re-match-with-new-mapping), which 3.22.0 wrongly asserted against the
+  transition table.
+- **Seven verbs migrated**: `verify` (was assert-then-plain-`update` — the
+  status write is now a machine-gated CAS; safe because the provider call
+  is a verification READ), `match`, `unmatch`, `settle`, `unsettle`,
+  `journalize`, `reject`. The `StateMachine` facade now satisfies
+  mongokit's structural `TransitionMachine` directly (`name` +
+  `assertTransition`), so per-kind machines (`smFor`) pass straight in.
+- **New `fromSet(machine, candidates, to)` helper** — CAS breadth is now
+  the per-kind table's TRUTH: candidates filter to (target-itself =
+  re-claim) ∪ (machine-legal sources). This preserves the historical
+  multi-source tolerance while TIGHTENING it — the old shared arrays
+  (e.g. `[imported, matched, pending]` across both kinds) could let the
+  CAS write an edge the kind's machine never declared.
+- Error contracts: pure races / vanished rows still throw the historical
+  per-verb `ValidationError` messages; a race into a now-illegal state
+  throws `InvalidStateTransitionError` with the ON-DISK status (same type
+  the pre-flight always threw — previously that edge case collapsed into
+  the generic ValidationError).
+- **DELIBERATELY kept**: `refund`'s post-provider status write stays a
+  plain update inside its transaction — a CAS must never introduce a new
+  throw AFTER an irreversible external money movement; pre-flight
+  validation + provider idempotency govern that path.
+- Workspace note: kits hoist at the `revenue-workspace` root
+  (`revenue-manual` / `revenue-stripe` peer on revenue itself, not the
+  kits).
+
+## Changed — kit refresh (peer floors: mongokit >=3.22.0, repo-core >=0.13.0, primitives >=0.11.0)
+
+- Verified against the mongokit 3.22 sweep and DELIBERATELY not migrated
+  to `applyTransition`: revenue's transition pattern is more
+  sophisticated than the boilerplate it absorbs — verbs validate the
+  CURRENT status via the per-kind machine (`smFor(kind).validate`) and
+  then CAS over a BROADER multi-source `from` array to allow idempotent
+  re-entries (`matched → matched` re-match, unsettle no-ops), guarded by
+  `where: { kind }`. `applyTransition` asserts EVERY source in a
+  from-array, which would reject those re-entry shapes unless the machine
+  tables were reworked. Payments semantics win; adoption would be a
+  scoped design pass, not a sweep item.
+- Workspace note: kits hoist at the `revenue-workspace` root
+  (`revenue-manual` / `revenue-stripe` peer on revenue itself, not the
+  kits); the workspace suite runs against 3.22/0.13.
+
 ## [Unreleased] → 2.7.0
 
 ### Fixed (behavioral) — 2026-07-05 addendum

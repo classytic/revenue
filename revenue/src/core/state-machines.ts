@@ -78,6 +78,18 @@ export class StateMachine<TState extends string> {
     this.inner.assertTransition(resourceId, from, to);
   }
 
+  // ── mongokit `applyTransition()` structural contract ────────────────
+  // (`TransitionMachine` = `{ name, assertTransition }`) — revenue
+  // machines pass straight into `repo.applyTransition` with no adapter.
+
+  get name(): string {
+    return this.inner.name;
+  }
+
+  assertTransition(entityId: string, from: string, to: string): void {
+    this.inner.assertTransition(entityId, from as TState, to as TState);
+  }
+
   canTransition(from: TState, to: TState): boolean {
     return this.inner.canTransition(from, to);
   }
