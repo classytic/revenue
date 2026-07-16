@@ -261,12 +261,15 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
     customerId: { type: String, default: null },
 
     // 3.0 discriminator — drives state-machine selection in repo verbs.
+    // NO field-level index: kind-prefix queries are served by the compound
+    // `{ kind, status, createdAt }` below (and the match_candidates indexes
+    // when bank-feed is on) — a bare `kind_1` would be pure write
+    // amplification (redundant prefix).
     kind: {
       type: String,
       enum: TRANSACTION_KIND_VALUES,
       default: TRANSACTION_KIND.PAYMENT_FLOW,
       required: true,
-      index: true,
     },
 
     type: { type: String, required: true },

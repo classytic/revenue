@@ -3,6 +3,25 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] — 2026-07-16
+
+### Fixed — redundant-prefix indexes removed (write amplification, zero read benefit)
+
+- **`kind` field-level index dropped** (transaction schema): kind-prefix
+  queries are served by the `{ kind, status, createdAt }` compound (and the
+  match-candidates indexes when bank-feed is on). The bare `kind_1` was a
+  redundant prefix — every insert paid for it, no query needed it.
+- **`injectTenantField` no longer force-indexes the tenant field.** When
+  scoped, the prepend pass makes the tenant the LEADING key of every
+  compound — MongoDB serves tenant-only queries from any of those prefixes,
+  so the bare `tenantField_1` was redundant on every scoped host (and a
+  zero-use index on scope-disabled hosts). A dedicated single-field tenant
+  index is still created when a schema declares no other indexes to prepend,
+  so scoped list queries always have one to ride.
+
+Found by be-prod's `db:ensure-indexes --stats` usage/redundancy audit. Pure
+index-declaration change — no query, verb, or wire behavior touched.
+
 ## [2.8.0] — 2026-07-15
 
 ### Changed — mongokit `applyTransition()` adopted across the transaction lifecycle (peer floors: mongokit >=3.22.2, repo-core >=0.13.0, primitives >=0.11.0)
