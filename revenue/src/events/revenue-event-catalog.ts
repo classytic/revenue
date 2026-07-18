@@ -100,16 +100,19 @@ const money = z.object({
 });
 
 // Domain documents are attached raw (repositories pass Mongoose docs). Hosts
-// that need strict validation can narrow via `passthrough` — we require the
-// headline identity fields so subscribers can route + log without parsing
-// the full blob.
+// that need strict validation can narrow via `passthrough` — every field is
+// optional because this is a REF: subscribers route + log off whatever
+// identity fields are present and re-fetch the authoritative doc by id.
+// (2.8.2) `amount` on a transaction DOC is a plain minor-unit number — the
+// old `money`-shaped requirement rejected every real emission; `methodKind`
+// was required, which broke host-published test fixtures carrying only `_id`.
 const transactionRef = z.object({
   _id: z.union([z.string(), z.any()]).optional(),
   publicId: z.string().optional(),
   status: z.string().optional(),
   monetizationType: z.string().optional(),
-  amount: money.optional(),
-  methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES),
+  amount: z.union([z.number(), money]).optional(),
+  methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES).optional(),
 }).passthrough();
 
 const subscriptionRef = z.object({
@@ -154,11 +157,15 @@ const paymentRequiresActionSchema = z.object({
   verifiedBy: z.string().optional(),
 });
 
+// (2.8.2) Aligned with what `refund()` ACTUALLY dispatches:
+// `{ transaction, refundTransaction, refundAmount: number, reason?, isPartialRefund }`.
+// The old shape (money-shaped refundAmount + required originalAmount) never
+// matched a real emission — the drift was invisible until hosts wired the
+// outbox/transport and subscribers started validating real payloads.
 const paymentRefundedSchema = z.object({
   transaction: transactionRef,
   refundTransaction: transactionRef,
-  refundAmount: money,
-  originalAmount: money,
+  refundAmount: z.number().nonnegative(),
   reason: z.string().optional(),
   isPartialRefund: z.boolean(),
 });

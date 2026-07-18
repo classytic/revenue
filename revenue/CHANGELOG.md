@@ -3,6 +3,27 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.2] — 2026-07-17
+
+### Fixed — event catalog drift vs actual dispatch shapes
+
+The catalog schemas for the payment family never matched what the
+repository verbs actually emit. Invisible while events died on the isolated
+in-process bus; the moment a host injects `outbox` + `eventTransport`
+(be-prod's transactional-outbox wiring) subscribers validate REAL payloads
+and every refund event failed validation.
+
+- **`paymentRefundedSchema`**: `refundAmount` is a plain minor-unit
+  `number` (what `refund()` dispatches), not a `{ amount, currency }`
+  money object; required `originalAmount` removed (never emitted).
+- **`transactionRef`**: `amount` accepts the doc's plain number (was
+  money-shaped only — rejected every real transaction doc); `methodKind`
+  now optional — a REF only guarantees identity fields, and host test
+  fixtures legitimately publish `{ _id }` alone.
+
+Subscribers keying on these schemas (arc-accounting posting handlers) get
+the corrected inferred payload types.
+
 ## [2.8.1] — 2026-07-16
 
 ### Fixed — redundant-prefix indexes removed (write amplification, zero read benefit)

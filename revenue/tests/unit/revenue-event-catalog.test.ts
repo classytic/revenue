@@ -80,14 +80,25 @@ describe('Zod schemas — happy paths', () => {
     }
   });
 
-  it('PaymentRefunded requires refundAmount as money + isPartialRefund boolean', () => {
+  it('PaymentRefunded matches the dispatch shape: numeric refundAmount + isPartialRefund boolean', () => {
+    // Mirrors transaction.repository refund()'s ACTUAL emission:
+    // { transaction, refundTransaction, refundAmount: number, reason?, isPartialRefund }
     const r = PaymentRefunded.zodSchema.safeParse({
       transaction: { publicId: 'txn_1', methodKind: 'card' },
       refundTransaction: { publicId: 'txn_refund_1', methodKind: 'card' },
-      refundAmount: { amount: 500, currency: 'USD' },
-      originalAmount: { amount: 1000, currency: 'USD' },
+      refundAmount: 500,
       isPartialRefund: true,
       reason: 'customer request',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('PaymentRefunded accepts a bare-identity ref (host test fixtures publish only _id)', () => {
+    const r = PaymentRefunded.zodSchema.safeParse({
+      transaction: { _id: 'aaaaaaaaaaaaaaaaaaaaaaaa' },
+      refundTransaction: { _id: 'bbbbbbbbbbbbbbbbbbbbbbbb' },
+      refundAmount: 500,
+      isPartialRefund: false,
     });
     expect(r.success).toBe(true);
   });
