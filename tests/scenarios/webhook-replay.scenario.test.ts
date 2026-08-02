@@ -27,7 +27,7 @@ import {
 } from '../../revenue/src/index.js';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
@@ -45,7 +45,7 @@ class DeterministicProvider extends PaymentProvider {
 
   constructor() { super({}); }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
     const id = `det_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const amount = params.amount.amount;
     const currency = params.amount.currency ?? 'USD';
@@ -126,6 +126,7 @@ describe('Scenario: Webhook replay dedup', () => {
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 1500, gateway: 'det', methodKind: 'card',
+        idempotencyKey: 'pay-cust_1',
         data: { customerId: 'cust_1' },
       });
       const sessionId = txn.gateway!.sessionId as string;

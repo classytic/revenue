@@ -23,12 +23,12 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
+import type { OutboxStore } from '@classytic/primitives/outbox';
 import {
   createRevenue,
   REVENUE_EVENTS,
   TRANSACTION_STATUS,
   type DomainEvent,
-  type OutboxStore,
 } from '../../revenue/src/index.js';
 
 const TIMEOUT = 15000;
@@ -94,6 +94,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 5000,
         gateway: 'fake', methodKind: 'card',
+        idempotencyKey: 'pay-c1',
         data: { customerId: 'c1' },
       });
       const verified = await engine.repositories.transaction.verify(
@@ -162,6 +163,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
         engine.repositories.transaction.createPaymentIntent({
           amount: 1000,
           gateway: 'fake', methodKind: 'card',
+          idempotencyKey: 'pay-c2',
           data: { customerId: 'c2' },
         }),
       ).rejects.toThrow(/outbox/i);
@@ -199,6 +201,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       await engine.repositories.transaction.createPaymentIntent({
         amount: 2000,
         gateway: 'fake', methodKind: 'card',
+        idempotencyKey: 'pay-c3',
         data: { customerId: 'c3' },
       });
       expect(transportCalls.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(true);

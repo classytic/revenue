@@ -24,7 +24,7 @@ import {
 } from '../../revenue/src/index.js';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
@@ -42,7 +42,7 @@ class FakeProvider extends PaymentProvider {
     super({});
   }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
     const id = `fake_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const amount = params.amount.amount;
     const currency = params.amount.currency ?? 'USD';
@@ -88,7 +88,13 @@ class FakeProvider extends PaymentProvider {
     return this.verifyPayment(intentId);
   }
 
-  async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
+  refundCalls: Array<{ paymentId: string; amount?: number | null; idempotencyKey?: string }> = [];
+  async refund(
+    paymentId: string,
+    amount?: number | null,
+    options?: { reason?: string; idempotencyKey?: string },
+  ): Promise<RefundResult> {
+    this.refundCalls.push({ paymentId, amount, idempotencyKey: options?.idempotencyKey });
     return {
       id: `ref_${paymentId}`,
       provider: 'fake',
@@ -124,15 +130,17 @@ class FakeProvider extends PaymentProvider {
 
 let engine: Awaited<ReturnType<typeof createRevenue>>;
 let mongoAvailable = false;
+let fakeProvider: FakeProvider;
 
 beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
 
+  fakeProvider = new FakeProvider();
   engine = await createRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
-    providers: { fake: new FakeProvider() },
+    providers: { fake: fakeProvider },
     modules: { subscription: true, escrow: true, settlement: true },
     scope: { enabled: false, fieldType: 'string' },
   });
@@ -157,6 +165,7 @@ describe('Payment Flow', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 10000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'pf-create-1',
       data: { customerId: 'cust_1', sourceId: 'order_1', sourceModel: 'Order' },
     });
 
@@ -173,6 +182,7 @@ describe('Payment Flow', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 5000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'pf-verify-1',
     });
 
     const verified = await engine.repositories.transaction.verify(
@@ -185,19 +195,41 @@ describe('Payment Flow', () => {
     expect(verified.verifiedAt).toBeDefined();
   }, TEST_TIMEOUT);
 
+  it('fail(): operator declines a PENDING payment → FAILED, and blocks a verified one', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 5000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'pf-fail-1',
+    });
+    // Machine-gated CAS PENDING → FAILED (sibling of verify), operator-driven.
+    const failed = await engine.repositories.transaction.fail(txn._id.toString(), {
+      reason: 'no funds received', failedBy: 'admin_1',
+    });
+    expect(failed.status).toBe(TRANSACTION_STATUS.FAILED);
+    expect(failed.failureReason).toBe('no funds received');
+
+    // A verified payment can NOT be failed — the CAS fails closed (no raw override).
+    const ok = await engine.repositories.transaction.createPaymentIntent({
+      amount: 5000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'pf-fail-2',
+    });
+    await engine.repositories.transaction.verify(ok.gateway!.paymentIntentId as string, { verifiedBy: 'a' });
+    await expect(engine.repositories.transaction.fail(ok._id.toString(), { reason: 'x' })).rejects.toThrow();
+  }, TEST_TIMEOUT);
+
   it('should process full refund', async () => {
     if (!mongoAvailable) return;
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 8000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'pf-full-refund-1',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
     const refundTxn = await engine.repositories.transaction.refund(
       txn._id.toString(),
       null,
-      { reason: 'customer request' },
+      { reason: 'customer request', idempotencyKey: 'pf-full-refund-1-r' },
     );
 
     expect(refundTxn.amount).toBe(8000);
@@ -214,18 +246,52 @@ describe('Payment Flow', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 10000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'pf-partial-refund-1',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
     const refundTxn = await engine.repositories.transaction.refund(
       txn._id.toString(),
       3000,
-      { reason: 'partial' },
+      { reason: 'partial', idempotencyKey: 'pf-partial-refund-1-r' },
     );
 
     expect(refundTxn.amount).toBe(3000);
     const original = await engine.repositories.transaction.getById(txn._id.toString());
     expect((original as any).status).toBe(TRANSACTION_STATUS.PARTIALLY_REFUNDED);
+  }, TEST_TIMEOUT);
+
+  it('idempotent refund: same key replays the existing refund, gateway charged ONCE', async () => {
+    if (!mongoAvailable) return;
+
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 8000,
+      gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'pf-idem-refund-1',
+    });
+    await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+
+    fakeProvider.refundCalls = [];
+    const key = 'refund-op-abc';
+    const first = await engine.repositories.transaction.refund(txn._id.toString(), 8000, {
+      reason: 'r', idempotencyKey: key,
+    });
+    const second = await engine.repositories.transaction.refund(txn._id.toString(), 8000, {
+      reason: 'r', idempotencyKey: key,
+    });
+
+    // Same refund transaction returned both times — no duplicate reversal.
+    expect(second._id.toString()).toBe(first._id.toString());
+    // The gateway was charged exactly ONCE (the replay skips the provider), and
+    // the key was forwarded so a real gateway could dedup a concurrent call.
+    expect(fakeProvider.refundCalls).toHaveLength(1);
+    expect(fakeProvider.refundCalls[0]!.idempotencyKey).toBe(key);
+    // Exactly one refund transaction persisted for this key.
+    const refunds = await engine.repositories.transaction.getAll(
+      { filters: { idempotencyKey: key, type: 'refund' } },
+      {},
+    );
+    expect((refunds as any).data ?? refunds).toHaveLength(1);
   }, TEST_TIMEOUT);
 
   it('should handle idempotency', async () => {
@@ -268,7 +334,7 @@ describe('Escrow Flow', () => {
     if (!mongoAvailable) return;
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
-      amount: 20000, gateway: 'fake', methodKind: 'card',
+      amount: 20000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'escrow-hold-1',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
@@ -288,7 +354,7 @@ describe('Escrow Flow', () => {
     if (!mongoAvailable) return;
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
-      amount: 10000, gateway: 'fake', methodKind: 'card',
+      amount: 10000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'escrow-split-1',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
@@ -312,6 +378,7 @@ describe('Subscription Flow', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 2999,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'sub-create-1',
       monetizationType: 'subscription',
       planKey: 'monthly',
     });
@@ -448,6 +515,7 @@ describe('Repository CRUD (inherited from mongokit)', () => {
       await engine.repositories.transaction.createPaymentIntent({
         amount: 1000 * (i + 1),
         gateway: 'fake', methodKind: 'card',
+        idempotencyKey: `crud-getall-${i}`,
       });
     }
 
@@ -463,6 +531,7 @@ describe('Repository CRUD (inherited from mongokit)', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 7777,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'crud-getbyid-1',
     });
 
     const found = await engine.repositories.transaction.getById(txn._id.toString());
@@ -473,8 +542,8 @@ describe('Repository CRUD (inherited from mongokit)', () => {
   it('should count documents', async () => {
     if (!mongoAvailable) return;
 
-    await engine.repositories.transaction.createPaymentIntent({ amount: 100, gateway: 'fake', methodKind: 'card'  });
-    await engine.repositories.transaction.createPaymentIntent({ amount: 200, gateway: 'fake', methodKind: 'card'  });
+    await engine.repositories.transaction.createPaymentIntent({ amount: 100, gateway: 'fake', methodKind: 'card', idempotencyKey: 'crud-count-1'  });
+    await engine.repositories.transaction.createPaymentIntent({ amount: 200, gateway: 'fake', methodKind: 'card', idempotencyKey: 'crud-count-2'  });
 
     const count = await engine.repositories.transaction.count({});
     expect(count).toBe(2);
@@ -512,6 +581,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
       amount: 50000,
       gateway: 'manual', methodKind: 'wallet',
+      idempotencyKey: 'manual-create-1',
       data: { customerId: 'cust_bd_1', sourceId: 'order_99', sourceModel: 'Order' },
       metadata: { paymentInstructions: 'Send bKash to 01700000000' },
     });
@@ -529,7 +599,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     if (!mongoAvailable) return;
 
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
-      amount: 25000, gateway: 'manual', methodKind: 'manual',
+      amount: 25000, gateway: 'manual', methodKind: 'manual', idempotencyKey: 'manual-verify-1',
     });
 
     const verified = await manualEngine.repositories.transaction.verify(
@@ -546,12 +616,12 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     if (!mongoAvailable) return;
 
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
-      amount: 30000, gateway: 'manual', methodKind: 'manual',
+      amount: 30000, gateway: 'manual', methodKind: 'manual', idempotencyKey: 'manual-refund-1',
     });
     await manualEngine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 
     const refundTxn = await manualEngine.repositories.transaction.refund(
-      txn._id.toString(), null, { reason: 'customer cancellation' },
+      txn._id.toString(), null, { reason: 'customer cancellation', idempotencyKey: 'manual-refund-1-r' },
     );
 
     expect(refundTxn.amount).toBe(30000);
@@ -565,6 +635,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     // Create
     const txn = await manualEngine.repositories.transaction.createPaymentIntent({
       amount: 100000, gateway: 'manual', methodKind: 'manual',
+      idempotencyKey: 'manual-lifecycle-1',
       data: { customerId: 'cust_lifecycle', sourceId: 'order_lifecycle', sourceModel: 'Order' },
     });
     expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
@@ -574,7 +645,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
     expect(verified.status).toBe(TRANSACTION_STATUS.VERIFIED);
 
     // Partial refund — returns the refund doc
-    const refundTxn = await manualEngine.repositories.transaction.refund(txn._id.toString(), 40000, { reason: 'partial return' });
+    const refundTxn = await manualEngine.repositories.transaction.refund(txn._id.toString(), 40000, { reason: 'partial return', idempotencyKey: 'manual-lifecycle-1-r' });
     expect(refundTxn.amount).toBe(40000);
 
     // Check original transaction updated
@@ -592,6 +663,7 @@ describe('backfillMethodKind', () => {
       amount: 4200,
       gateway: 'fake',
       methodKind: 'other',
+      idempotencyKey: 'backfill-1',
     });
     expect(txn.methodKind).toBe('other');
     expect(txn.status).toBe(TRANSACTION_STATUS.PENDING);
@@ -611,6 +683,7 @@ describe('backfillMethodKind', () => {
       amount: 1000,
       gateway: 'fake',
       methodKind: 'card',
+      idempotencyKey: 'backfill-2',
     });
     await expect(
       engine.repositories.transaction.backfillMethodKind(txn._id.toString(), 'wallet'),
@@ -624,6 +697,7 @@ describe('backfillMethodKind', () => {
       amount: 1500,
       gateway: 'fake',
       methodKind: 'other',
+      idempotencyKey: 'backfill-3',
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
 

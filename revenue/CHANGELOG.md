@@ -3,6 +3,49 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## 3.0.0 - 2026-07-29
+
+### Changed
+- **License:** relicensed from MIT to the **Classytic Source-Available License** (Community & Commercial). Evaluation/development use remains free; production use now requires a commercial license from Classytic LLC. See `LICENSE`.
+- Major bump marks the license change; versions published before 3.0.0 remain under their original MIT terms.
+
+## 2.9.0 - 2026-07-24 (unpublished)
+
+### Added — idempotent refunds
+
+`TransactionRepository.refund()` now accepts `options.idempotencyKey`, making a
+refund safely RETRYABLE — the missing primitive for host-side refund sagas that
+must recover from a crash between "gateway charged" and "refund recorded".
+
+- **Pre-check replay**: when the key matches an existing `type: 'refund'`
+  transaction, that transaction is returned WITHOUT calling the gateway again
+  (mirrors `create()`'s existing charge idempotency).
+- **Gateway pass-through**: the key is forwarded to `provider.refund(id, amount,
+  { reason, idempotencyKey })` so a gateway that honours it (Stripe-style) dedups
+  a concurrent / retried first-time refund at the source, before any local row
+  exists.
+- **Persisted on the refund txn**: the existing partial-unique `idempotencyKey`
+  index becomes the last-resort guard against a same-key race.
+
+`PaymentProvider.refund`'s `options` gained an optional `idempotencyKey`
+(additive — existing providers stay structurally compatible and may ignore it).
+No behaviour change when the key is omitted.
+
+### Added — operator payment-failure verb
+
+`TransactionRepository.fail(id, { reason, failedBy })` — the sibling of
+`verify()` for an operator declining a payment-flow transaction the gateway
+never confirmed (manual-payment rejection). Machine-gated CAS to `FAILED`
+(fail-closed on an already-verified or terminal row) + `revenue:payment.failed`
+event, with no provider read. Replaces hosts hand-checking status before a raw
+`update({ status: 'failed' })`.
+
+## 2.8.3 - 2026-07-22 (unpublished)
+
+### Changed
+- Internal: `InProcess*Bus` is now a thin subclass of `@classytic/primitives/event-infra`'s shared `InProcessEventBus` (dedup / error-isolation / close semantics unchanged); `MemoryOutboxStore` re-exported from the shared runtime where applicable. No public API, event-name, or wire-envelope change. Requires `@classytic/primitives >=0.13.0`.
+
 ## [2.8.2] — 2026-07-17
 
 ### Fixed — event catalog drift vs actual dispatch shapes

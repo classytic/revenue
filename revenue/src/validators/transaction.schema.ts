@@ -1,6 +1,6 @@
-import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 import { PAYMENT_METHOD_KIND, type PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
+import { moneyFields } from '@classytic/validation/money';
 
 const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
   PaymentMethodKind,
@@ -75,8 +75,7 @@ export const transactionBaseSchema = z.object({
   type: z.string(),
   flow: z.enum(['inflow', 'outflow']),
   tags: z.array(z.string()).default([]),
-  amount: z.number().int().min(0),
-  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
+  ...moneyFields('nonneg'),
   fee: z.number().int().default(0),
   tax: z.number().int().default(0),
   net: z.number().int().default(0),

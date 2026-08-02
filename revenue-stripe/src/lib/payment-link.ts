@@ -20,7 +20,7 @@ export interface GeneratePaymentLinkInput {
   connectedAccountId?: string;
   /** Platform fee %. Applied when `connectedAccountId` is set. */
   platformFeePercent?: number;
-  /** Pass-through metadata (Stripe stamps it on the resulting PaymentIntent). */
+  /** Pass-through metadata (Stripe stamps it on the resulting ProviderIntent). */
   metadata?: Record<string, string>;
   /** Where the customer lands after paying. */
   afterCompletion?: { type: 'redirect'; url: string } | { type: 'hosted_confirmation' };

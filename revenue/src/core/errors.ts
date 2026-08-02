@@ -159,6 +159,29 @@ export class MethodKindLockedError extends RevenueError {
   }
 }
 
+/**
+ * Thrown by `TransactionRepository.handleWebhook` when the provider's
+ * `verifyWebhookSignature` rejects the payload. 401 because the request
+ * failed authentication of its origin.
+ *
+ * The base `PaymentProvider.verifyWebhookSignature` defaults to accept-all,
+ * so providers that do NOT override it never produce this error — signature
+ * enforcement is opt-in per provider (least-breaking). Real gateways
+ * (Stripe/Razorpay/…) MUST override with HMAC/timing-safe verification, at
+ * which point this gate fires before any transaction is mutated.
+ */
+export class WebhookSignatureError extends RevenueError {
+  constructor(provider: string) {
+    super(
+      `Webhook signature verification failed for provider '${provider}'`,
+      'WEBHOOK_SIGNATURE_INVALID',
+      { provider },
+      401,
+    );
+    this.name = 'WebhookSignatureError';
+  }
+}
+
 export class BankFeedProviderNotFoundError extends RevenueError {
   constructor(providerName: string) {
     super(
@@ -167,5 +190,68 @@ export class BankFeedProviderNotFoundError extends RevenueError {
       { providerName },
     );
     this.name = 'BankFeedProviderNotFoundError';
+  }
+}
+
+/**
+ * A refund whose provider outcome was NEVER OBSERVED — a timeout, an abort, an
+ * unclassifiable provider error.
+ *
+ * Distinct from a decline on purpose. A decline means no money moved and the caller may
+ * retry; this means **we do not know**, the refund claim is deliberately still held, and a
+ * retry could refund the customer twice.
+ *
+ * The correct response is reconciliation — ask the provider what actually happened — not a
+ * retry. Callers that catch this must not release the claim themselves.
+ */
+export class RefundOutcomeUnknownError extends Error {
+  readonly transactionId: string;
+  readonly amount: number;
+  readonly providerReference?: string;
+  readonly causeCode?: string;
+
+  constructor(
+    transactionId: string,
+    amount: number,
+    details: { providerReference?: string; causeCode?: string } = {},
+  ) {
+    super(
+      `Refund outcome UNKNOWN for transaction ${transactionId} (amount ${amount}). ` +
+        'The provider did not confirm the reversal, but it may have processed it. The refund ' +
+        'claim is intentionally retained to prevent a double refund — resolve by reconciling ' +
+        'provider status, never by retrying.',
+    );
+    this.name = 'RefundOutcomeUnknownError';
+    this.transactionId = transactionId;
+    this.amount = amount;
+    if (details.providerReference !== undefined) this.providerReference = details.providerReference;
+    if (details.causeCode !== undefined) this.causeCode = details.causeCode;
+  }
+}
+
+/**
+ * A payment intent whose creation outcome was NEVER OBSERVED.
+ *
+ * The gateway may hold a live intent that we have no local record of, because the provider
+ * call happens before the transaction is persisted. Distinct from a decline so a caller
+ * cannot treat it as "nothing happened" and immediately retry.
+ *
+ * The idempotency key is what makes an eventual retry safe at the GATEWAY — Stripe and
+ * peers replay the original response against it. Making the orphan visible to US is
+ * `PaymentAttempt`'s job (phase 3).
+ */
+export class IntentOutcomeUnknownError extends Error {
+  readonly idempotencyKey: string;
+  readonly causeCode?: string;
+
+  constructor(idempotencyKey: string, details: { causeCode?: string } = {}) {
+    super(
+      `Payment intent outcome UNKNOWN (idempotency key ${idempotencyKey}). The provider may ` +
+        'have created an intent that was never recorded locally. Retry only with the SAME ' +
+        'idempotency key, so the gateway replays rather than creating a second intent.',
+    );
+    this.name = 'IntentOutcomeUnknownError';
+    this.idempotencyKey = idempotencyKey;
+    if (details.causeCode !== undefined) this.causeCode = details.causeCode;
   }
 }

@@ -6,19 +6,14 @@
  * `z.iso.datetime()` — see the catalog file for those.
  */
 
-import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
+import { currencyCode, signedMoneySchema } from '@classytic/validation/money';
 import {
   BANK_FEED_SOURCE_VALUES,
   TRANSACTION_KIND_VALUES,
 } from '../enums/bank-feed.enums.js';
 
 // ─── Reusable fragments ──────────────────────────────────────────────────
-
-export const moneySchema = z.object({
-  amount: z.number().int(),
-  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
-});
 
 export const counterpartySchema = z.object({
   name: z.string().optional(),
@@ -33,12 +28,12 @@ export const bankTransactionSchema = z.object({
   externalId: z.string().min(1),
   postedDate: z.coerce.date(),
   valueDate: z.coerce.date().optional(),
-  amount: moneySchema,
+  amount: signedMoneySchema,
   description: z.string(),
   counterparty: counterpartySchema.optional(),
   reference: z.string().optional(),
   category: z.string().optional(),
-  balanceAfter: moneySchema.optional(),
+  balanceAfter: signedMoneySchema.optional(),
   type: z.string().optional(),
   raw: z.unknown().optional(),
 });
@@ -89,7 +84,7 @@ export const manualEntrySchema = z.object({
   /** `'manual'` is the only legal value for this verb. */
   kind: z.literal('manual').default('manual'),
   amount: z.number().nonnegative(),
-  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
+  currency: currencyCode,
   flow: z.enum(['inflow', 'outflow']),
   type: z.string().min(1),
   description: z.string().optional(),
@@ -105,7 +100,7 @@ export const manualEntrySchema = z.object({
 
 export const findMatchCandidatesQuerySchema = z.object({
   amount: z.coerce.number().nonnegative(),
-  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)').optional(),
+  currency: currencyCode.optional(),
   postedDate: z.coerce.date(),
   toleranceDays: z.coerce.number().int().min(0).max(30).optional(),
   amountTolerancePct: z.coerce.number().min(0).max(0.5).optional(),

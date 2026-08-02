@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PaymentProvider } from '../../revenue/src/providers/base.js';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
@@ -13,7 +13,7 @@ import { ProviderNotFoundError } from '../../revenue/src/core/errors.js';
 class StubProvider extends PaymentProvider {
   public override readonly name = 'stub';
   constructor() { super({}); }
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
     const amount = params.amount.amount;
     const currency = params.amount.currency ?? 'USD';
     return { id: 's1', sessionId: 's1', paymentIntentId: 's1', provider: 'stub', status: 'requires_payment_method', amount: { amount, currency }, metadata: {} };
@@ -74,7 +74,7 @@ describe('createProviderRegistry', () => {
 });
 
 describe('PaymentProvider contract', () => {
-  it('createIntent returns a PaymentIntent shape', async () => {
+  it('createIntent returns a ProviderIntent shape', async () => {
     const p = new StubProvider();
     const intent = await p.createIntent({ amount: { amount: 1000, currency: 'USD' } });
     expect(intent.sessionId).toBe('s1');

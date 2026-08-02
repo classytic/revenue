@@ -1,7 +1,7 @@
 import type { Connection } from 'mongoose';
 import type { RevenueContext } from '../core/context.js';
 import type { RevenueBridges } from '../bridges/revenue-bridges.js';
-import type { PaymentProvider } from '../providers/base.js';
+import type { PaymentProviderPort } from '@classytic/primitives/payment-gateway';
 import type {
   BankFeedProvider,
   BankFeedProviderRegistry,
@@ -171,7 +171,15 @@ export interface RevenueConfig {
      */
     bankFeed?: boolean | BankFeedModuleConfig | undefined;
   } | undefined;
-  providers?: Record<string, PaymentProvider> | undefined;
+  /**
+   * Keyed by the name the engine will resolve them under.
+   *
+   * Typed as the PORT, not this package's `PaymentProvider` class — an adapter that depends
+   * only on `@classytic/primitives` must be composable here, which is the entire reason the
+   * contract moved. Several keys may point at ONE instance (a country pack aliasing its
+   * manual methods); that is expected and supported.
+   */
+  providers?: Record<string, PaymentProviderPort> | undefined;
   /**
    * Bank-feed providers — Plaid, fin-io OFX/CAMT/MT940/CSV, QBO/Xero CDC
    * adapters. Wired into `engine.bankFeedProviders` and consumed by

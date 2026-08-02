@@ -14,11 +14,13 @@
  * fields are never set on intents.
  */
 
+import type { PaymentCommandContext } from '@classytic/primitives/payment-gateway';
+import type { AssertStripeProvider } from '../lib/provider-base.js';
+import { StripeProviderBase } from '../lib/provider-base.js';
 import type Stripe from 'stripe';
-import { PaymentProvider } from '@classytic/revenue';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   ProviderCapabilities,
   RefundResult,
@@ -32,7 +34,7 @@ import { refund } from '../lib/refund.js';
 import { stripePaymentIntentToKind } from '../lib/method-kind.js';
 import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
 
-export class StripeSaasProvider extends PaymentProvider {
+export class StripeSaasProvider extends StripeProviderBase {
   public override readonly name: string = 'stripe-saas';
 
   /** Stripe SDK instance — public so advanced callers can drop down. */
@@ -48,7 +50,10 @@ export class StripeSaasProvider extends PaymentProvider {
     if (config.defaultCurrency) this.setDefaultCurrency(config.defaultCurrency);
   }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(
+    params: CreateIntentParams,
+    command: PaymentCommandContext,
+  ): Promise<ProviderIntent> {
     // SaaS provider never applies platform fee — pass 0 + ignore any
     // accidentally-provided connectedAccountId in stripe options.
     return createIntent(
@@ -58,6 +63,7 @@ export class StripeSaasProvider extends PaymentProvider {
         platformFeePercent: 0,
       },
       params,
+      command,
     );
   }
 
@@ -71,13 +77,15 @@ export class StripeSaasProvider extends PaymentProvider {
 
   async refund(
     paymentId: string,
-    amount?: number | null,
+    amount: number | null | undefined,
+    command: PaymentCommandContext,
     options: StripeRefundOptions = {},
   ): Promise<RefundResult> {
     return refund(
       { stripe: this.stripe, defaultCurrency: this.defaultCurrency },
       paymentId,
       amount,
+      command,
       options,
     );
   }
@@ -150,7 +158,7 @@ export class StripeSaasProvider extends PaymentProvider {
     }
   }
 
-  override getCapabilities(): ProviderCapabilities {
+  getCapabilities(): ProviderCapabilities {
     return {
       supportsWebhooks: true,
       supportsRefunds: true,
@@ -160,7 +168,7 @@ export class StripeSaasProvider extends PaymentProvider {
   }
 
   /**
-   * Convenience: turn a verified-by-webhook PaymentIntent into a
+   * Convenience: turn a verified-by-webhook ProviderIntent into a
    * PaymentResult without an extra Stripe round-trip.
    */
   static paymentIntentToResult(intent: Stripe.PaymentIntent): PaymentResult {
@@ -169,3 +177,12 @@ export class StripeSaasProvider extends PaymentProvider {
 }
 
 export default StripeSaasProvider;
+
+/**
+ * Compile-time proof that `StripeSaasProvider` satisfies `PaymentProviderPort`.
+ *
+ * The base no longer forces it — it is not abstract over the port's members — so without
+ * this a missing or mistyped method would only surface when the registry rejected it, or
+ * worse, at the first live payment.
+ */
+export type StripeSaasProviderSatisfiesPort = AssertStripeProvider<StripeSaasProvider>;

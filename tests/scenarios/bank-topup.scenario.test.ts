@@ -63,6 +63,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
     const topup = await engine.repositories.transaction.createPaymentIntent({
       amount: 25000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'topup-user_42-success',
       data: { customerId: 'user_42', sourceId: 'wallet_42', sourceModel: 'Wallet' },
       metadata: { purpose: 'wallet_topup' },
     });
@@ -93,6 +94,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
     const topup = await engine.repositories.transaction.createPaymentIntent({
       amount: 10000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'topup-user_err-failed',
       data: { customerId: 'user_err' },
     });
 
@@ -112,6 +114,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
     const topup = await engine.repositories.transaction.createPaymentIntent({
       amount: 15000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'topup-user_cb-chargeback',
       data: { customerId: 'user_cb', sourceId: 'wallet_cb', sourceModel: 'Wallet' },
     });
     await engine.repositories.transaction.verify(topup.gateway!.paymentIntentId as string);
@@ -119,7 +122,7 @@ describe('Scenario: Bank Wallet Top-Up', () => {
     const reversal = await engine.repositories.transaction.refund(
       String(topup._id),
       null,
-      { reason: 'bank_chargeback' },
+      { reason: 'bank_chargeback', idempotencyKey: 'refund-user_cb-chargeback' },
     );
 
     expect(reversal.flow).toBe('outflow');

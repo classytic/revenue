@@ -66,6 +66,7 @@ async function payInstallment(
   const txn = await engine.repositories.transaction.createPaymentIntent({
     amount,
     gateway: 'fake', methodKind: 'card',
+    idempotencyKey: `${enrollmentId}-inst-${installmentNo}`,
     data: { customerId: studentId, sourceId: enrollmentId, sourceModel: 'Enrollment' },
     metadata: { installmentNo, enrollmentId },
   });
@@ -111,6 +112,7 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
     const late = await engine.repositories.transaction.createPaymentIntent({
       amount: 3000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: `${enrollmentId}-inst-3-late`,
       data: { customerId: studentId, sourceId: enrollmentId, sourceModel: 'Enrollment' },
       metadata: { installmentNo: 3, late: true, lateFee: 100 },
     });
@@ -172,12 +174,12 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
     const r1 = await engine.repositories.transaction.refund(
       String(inst1._id),
       null,
-      { reason: 'student_withdrawal' },
+      { reason: 'student_withdrawal', idempotencyKey: `refund-${String(inst1._id)}` },
     );
     const r2 = await engine.repositories.transaction.refund(
       String(inst2._id),
       null,
-      { reason: 'student_withdrawal' },
+      { reason: 'student_withdrawal', idempotencyKey: `refund-${String(inst2._id)}` },
     );
 
     expect(r1.flow).toBe('outflow');
@@ -212,7 +214,7 @@ describe('Scenario: University Semester Fee — Installment Plan', () => {
     const refund = await engine.repositories.transaction.refund(
       String(inst1._id),
       1500,
-      { reason: 'late_withdrawal_50pct_retention' },
+      { reason: 'late_withdrawal_50pct_retention', idempotencyKey: `refund-${String(inst1._id)}` },
     );
     expect(refund.amount).toBe(1500);
 

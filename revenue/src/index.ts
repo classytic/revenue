@@ -19,29 +19,17 @@ export type {
 export type { DomainEvent, EventHandler, EventTransport } from '@classytic/primitives/events';
 
 // ─── Outbox (transactional event durability — host-composed) ────────────────
-// Re-exports the OutboxStore contract from @classytic/primitives/outbox so
-// hosts can wire any compatible implementation (arc's MongoOutboxStore,
-// custom Kafka-backed store, etc.) without an adapter — see PACKAGE_RULES
-// §5.5 + §P8. Ships `MemoryOutboxStore` for tests + dev wiring; production
-// durability belongs to the host. Revenue's `dispatch()` helper
+// The OutboxStore contract (types + `InvalidOutboxEventError` /
+// `OutboxOwnershipError`) is owned by `@classytic/primitives/outbox` (>=0.13)
+// — import it DIRECTLY from there. Revenue does NOT re-export the contract
+// (arc 2.24+ already re-exports the SAME primitives identity for its
+// `EventOutbox` relay, so cross-package `instanceof` holds on one class). This
+// package ships only the package-owned dev/test `MemoryOutboxStore`;
+// production durability belongs to the host. Revenue's `dispatch()` helper
 // ([`src/repositories/base.repository.ts`](src/repositories/base.repository.ts#L175))
-// calls `outbox.save(event, { session })` BEFORE `events.publish(event)`
-// when an outbox is wired; otherwise events flow only to `eventTransport`.
-export type {
-  OutboxStore,
-  OutboxWriteOptions,
-  OutboxClaimOptions,
-  OutboxAcknowledgeOptions,
-  OutboxFailOptions,
-  OutboxFailureContext,
-  OutboxFailureDecision,
-  OutboxFailurePolicy,
-  OutboxErrorInfo,
-} from '@classytic/primitives/outbox';
-export {
-  InvalidOutboxEventError,
-  OutboxOwnershipError,
-} from '@classytic/primitives/outbox';
+// calls `outbox.save(event, { session })` BEFORE `events.publish(event)` when
+// an outbox is wired; otherwise events flow only to `eventTransport`. See
+// PACKAGE_RULES §P4 + §P8.
 export { MemoryOutboxStore } from './events/outbox-store.js';
 export { InProcessRevenueBus } from './events/in-process-bus.js';
 export type { InProcessRevenueBusOptions } from './events/in-process-bus.js';
@@ -86,7 +74,7 @@ export type { RevenueRepositories, RepositoryPluginBundle } from './repositories
 
 // ─── Providers ───
 // Revenue owns only the abstract `PaymentProvider` contract + the registry.
-// All payment-gateway data shapes (`CreateIntentParams`, `PaymentIntent`,
+// All payment-gateway data shapes (`CreateIntentParams`, `ProviderIntent`,
 // `PaymentResult`, `RefundResult`, `WebhookEvent`, `ProviderCapabilities`)
 // live in `@classytic/primitives/payment-gateway`. Hosts and provider
 // packages MUST import them from primitives directly — no re-exports
@@ -94,11 +82,21 @@ export type { RevenueRepositories, RepositoryPluginBundle } from './repositories
 // tree-shaking and the dep graph).
 //
 //   import type {
-//     CreateIntentParams, PaymentIntent, PaymentResult,
+//     CreateIntentParams, ProviderIntent, PaymentResult,
 //     RefundResult, WebhookEvent, ProviderCapabilities,
 //   } from '@classytic/primitives/payment-gateway';
 export { PaymentProvider } from './providers/base.js';
 export { ProviderRegistry, createProviderRegistry } from './providers/registry.js';
+/**
+ * The three-valued outcome shim. Every engine-side provider call should route through
+ * `executeProviderCommand` so a timeout becomes `unknown` rather than a retry-able
+ * `declined` — see the file header for why that asymmetry is deliberate.
+ */
+export {
+  executeProviderCommand,
+  isDeclineError,
+  isUnknownOutcomeError,
+} from './providers/execute-command.js';
 
 // ─── Bank-feed providers (3.0) ───
 export {

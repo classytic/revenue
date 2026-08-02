@@ -65,6 +65,7 @@ async function buyerPays(amount: number, orderId: string) {
   const txn = await engine.repositories.transaction.createPaymentIntent({
     amount,
     gateway: 'fake', methodKind: 'card',
+    idempotencyKey: `pi_${orderId}`,
     data: { customerId: `buyer_${orderId}`, sourceId: orderId, sourceModel: 'Order' },
     metadata: { orderId },
   });
@@ -170,7 +171,7 @@ describe('Scenario: Marketplace Order — Escrow + Split', () => {
     const refund = await engine.repositories.transaction.refund(
       String(payment._id),
       null,
-      { reason: 'dispute_refund' },
+      { reason: 'dispute_refund', idempotencyKey: 'rf_order_disputed' },
     );
     expect(refund.flow).toBe('outflow');
     expect(refund.amount).toBe(40000);

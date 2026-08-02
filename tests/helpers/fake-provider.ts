@@ -10,7 +10,7 @@
 import { PaymentProvider } from '../../revenue/src/index.js';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
@@ -44,7 +44,7 @@ export class FakeProvider extends PaymentProvider {
     this.nextError = new Error(message);
   }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
     if (this.nextError) {
       const err = this.nextError;
       this.nextError = null;

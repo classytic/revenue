@@ -13,7 +13,7 @@
  *     methods to drive the payment lifecycle.
  *
  * **What lives in primitives** (re-imported here for provider authors):
- *   - `CreateIntentParams`, `PaymentIntent`, `PaymentResult`,
+ *   - `CreateIntentParams`, `ProviderIntent`, `PaymentResult`,
  *     `RefundResult`, `WebhookEvent`, `ProviderCapabilities`
  *
  * Provider packages MUST peer-dep on `@classytic/primitives` and
@@ -25,13 +25,13 @@
  * ```ts
  * // @classytic/revenue-stripe — peerDeps: @classytic/primitives only
  * import type {
- *   CreateIntentParams, PaymentIntent, PaymentResult,
+ *   CreateIntentParams, ProviderIntent, PaymentResult,
  *   RefundResult, WebhookEvent, ProviderCapabilities,
  * } from '@classytic/primitives/payment-gateway';
  *
  * export class StripeProvider {
  *   readonly name = 'stripe';
- *   async createIntent(params: CreateIntentParams): Promise<PaymentIntent> { ... }
+ *   async createIntent(params: CreateIntentParams): Promise<ProviderIntent> { ... }
  *   async verifyPayment(id: string): Promise<PaymentResult> { ... }
  *   async getStatus(id: string): Promise<PaymentResult> { ... }
  *   async refund(id: string, amount?: number, opts?): Promise<RefundResult> { ... }
@@ -49,19 +49,28 @@
 
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   ProviderCapabilities,
+  PaymentProviderPort,
   RefundResult,
   WebhookEvent,
 } from '@classytic/primitives/payment-gateway';
 
 /**
- * Abstract `PaymentProvider` — the contract revenue's repositories
- * consume. Provider implementations may extend this for the default
- * config plumbing, or just satisfy the structural shape.
+ * Abstract `PaymentProvider` — config plumbing over `PaymentProviderPort`.
+ *
+ * The CONTRACT now lives in `@classytic/primitives/payment-gateway` as
+ * `PaymentProviderPort`, so an adapter can be written against it with no runtime dependency
+ * on this package. This class remains for the conveniences it actually provides — config
+ * capture and the default-currency accessor — and existing adapters that extend it are
+ * unaffected.
+ *
+ * **New adapters should `implement PaymentProviderPort` instead**, and depend only on
+ * primitives. The `implements` clause below is what keeps the two from drifting: if the port
+ * gains a member, this class stops compiling.
  */
-export abstract class PaymentProvider {
+export abstract class PaymentProvider implements PaymentProviderPort {
   public readonly config: Record<string, unknown>;
   public readonly name: string;
   private _defaultCurrency: string = 'USD';
@@ -81,13 +90,23 @@ export abstract class PaymentProvider {
     this._defaultCurrency = currency;
   }
 
-  abstract createIntent(params: CreateIntentParams): Promise<PaymentIntent>;
+  abstract createIntent(params: CreateIntentParams): Promise<ProviderIntent>;
   abstract verifyPayment(intentId: string): Promise<PaymentResult>;
   abstract getStatus(intentId: string): Promise<PaymentResult>;
   abstract refund(
     paymentId: string,
     amount?: number | null,
-    options?: { reason?: string },
+    options?: {
+      reason?: string;
+      /**
+       * Caller-supplied idempotency key. Providers that support it (Stripe,
+       * Razorpay, …) MUST forward it to the gateway so a retried or concurrent
+       * first-time refund of the same logical operation is deduped at the
+       * source — no double reversal. Providers without gateway idempotency may
+       * ignore it (the engine still guards with a unique index + pre-check).
+       */
+      idempotencyKey?: string;
+    },
   ): Promise<RefundResult>;
   abstract handleWebhook(
     payload: unknown,

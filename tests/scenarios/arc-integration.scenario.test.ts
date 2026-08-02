@@ -33,13 +33,12 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
+import type { OutboxStore, OutboxWriteOptions } from '@classytic/primitives/outbox';
 import {
   createRevenue,
   REVENUE_EVENTS,
   TRANSACTION_STATUS,
   type DomainEvent,
-  type OutboxStore,
-  type OutboxWriteOptions,
 } from '../../revenue/src/index.js';
 
 const TIMEOUT = 15000;
@@ -124,12 +123,16 @@ describe('Scenario: Arc integration parity', () => {
     await warmModels(engine);
     try {
       const seen: DomainEvent[] = [];
+      // primitives >=0.13: `EventTransport.subscribe` is optional (publish-only
+      // transports omit it). The in-process bus this engine wires always has it.
+      if (!engine.events.subscribe) throw new Error('event transport does not support subscribe');
       const unsubscribe = await engine.events.subscribe('revenue:payment.*', (e) => {
         seen.push(e);
       });
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 2500,
         gateway: 'fake', methodKind: 'card',
+        idempotencyKey: 'pi_cust_arc',
         data: { customerId: 'cust_arc' },
       });
       await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
@@ -163,7 +166,7 @@ describe('Scenario: Arc integration parity', () => {
 
     try {
       const payment = await engine.repositories.transaction.createPaymentIntent({
-        amount: 10_000, gateway: 'fake', methodKind: 'card', data: { customerId: 'cust_refund' },
+        amount: 10_000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'pi_cust_refund', data: { customerId: 'cust_refund' },
       });
       const verified = await engine.repositories.transaction.verify(
         payment.gateway!.paymentIntentId as string,
@@ -173,7 +176,7 @@ describe('Scenario: Arc integration parity', () => {
       const refund = await engine.repositories.transaction.refund(
         String(verified._id),
         null,
-        { reason: 'requested_by_customer' },
+        { reason: 'requested_by_customer', idempotencyKey: 'rf_cust_refund' },
       );
       expect(refund.type).toBe('refund');
 
@@ -220,6 +223,7 @@ describe('Scenario: Arc integration parity', () => {
             {
               amount: 1234,
               gateway: 'fake', methodKind: 'card',
+              idempotencyKey: 'pi_cust_host_tx',
               data: { customerId: 'cust_host_tx' },
             },
             { actorId: 'test', session },

@@ -1,5 +1,5 @@
 /**
- * `verifyPayment` / `getStatus` — read PaymentIntent state and map to
+ * `verifyPayment` / `getStatus` — read ProviderIntent state and map to
  * the engine's narrow `PaymentResult.status` union.
  *
  * Stripe's status set is wider than the engine's, so we collapse:

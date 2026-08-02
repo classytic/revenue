@@ -1,5 +1,5 @@
 /**
- * `refund` — reverses a captured PaymentIntent.
+ * `refund` — reverses a captured ProviderIntent.
  *
  * Accepts the same `paymentId` shape revenue gives us (the Stripe
  * `pi_…` id). Optional `amount` for partial refunds; omitted = full.
@@ -11,6 +11,7 @@
  */
 
 import type Stripe from 'stripe';
+import type { PaymentCommandContext } from '@classytic/primitives/payment-gateway';
 import type { RefundResult } from '@classytic/primitives/payment-gateway';
 import type { StripeRefundOptions } from '../types.js';
 
@@ -22,7 +23,8 @@ export interface RefundDeps {
 export async function refund(
   deps: RefundDeps,
   paymentId: string,
-  amount?: number | null,
+  amount: number | null | undefined,
+  command: PaymentCommandContext,
   options: StripeRefundOptions = {},
 ): Promise<RefundResult> {
   const createParams: Stripe.RefundCreateParams = {
@@ -35,7 +37,20 @@ export async function refund(
   if (options.refundApplicationFee !== undefined)
     createParams.refund_application_fee = options.refundApplicationFee;
 
-  const refundObj = await deps.stripe.refunds.create(createParams);
+  /**
+   * The idempotency key is forwarded to STRIPE, not merely accepted.
+   *
+   * It previously was not — the port documented Stripe as the provider that "MUST forward
+   * it" and this adapter dropped it silently, so a retried refund created a SECOND one at
+   * the gateway. The engine's local claim stopped a retry it could see; it could do nothing
+   * about a client or proxy retrying the HTTP request underneath.
+   *
+   * Stripe replays the original response for 24h against the same key, which is precisely
+   * the window a timeout-driven retry falls in.
+   */
+  const refundObj = await deps.stripe.refunds.create(createParams, {
+    idempotencyKey: command.idempotencyKey,
+  });
 
   return {
     id: refundObj.id,

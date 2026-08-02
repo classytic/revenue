@@ -7,11 +7,18 @@ import {
 } from './transaction.schema.js';
 import { buildSubscriptionSchema, type SubscriptionDocument } from './subscription.schema.js';
 import { buildSettlementSchema, type SettlementDocument } from './settlement.schema.js';
+import { buildPaymentAttemptSchema, type PaymentAttemptDocument } from './payment-attempt.schema.js';
 import type { ResolvedTenantConfig } from '@classytic/repo-core/tenant';
 import { injectTenantField } from './inject-tenant.js';
 
 export interface RevenueModels {
   Transaction: Model<TransactionDocument>;
+  /**
+   * Per-provider-attempt log for payment-flow transactions (phase 3). Core —
+   * always registered alongside Transaction: it is written BEFORE the provider
+   * call so an orphaned/unknown intent is always visible. See payment-attempt.schema.ts.
+   */
+  PaymentAttempt: Model<PaymentAttemptDocument>;
   Subscription?: Model<SubscriptionDocument>;
   Settlement?: Model<SettlementDocument>;
 }
@@ -22,7 +29,7 @@ export interface RevenueSchemaOptions {
   settlement?: { extraFields?: Record<string, unknown>; extraIndexes?: Array<{ fields: Record<string, 1 | -1>; options?: Record<string, unknown> }> };
 }
 
-export const REVENUE_MODEL_NAMES = ['Transaction', 'Subscription', 'Settlement'] as const;
+export const REVENUE_MODEL_NAMES = ['Transaction', 'PaymentAttempt', 'Subscription', 'Settlement'] as const;
 
 /**
  * Default physical collection names (see PACKAGE_RULES.md §20.1). Prefixed
@@ -30,6 +37,7 @@ export const REVENUE_MODEL_NAMES = ['Transaction', 'Subscription', 'Settlement']
  */
 const DEFAULT_COLLECTIONS = {
   Transaction: 'revenue_transactions',
+  PaymentAttempt: 'revenue_payment_attempts',
   Subscription: 'revenue_subscriptions',
   Settlement: 'revenue_settlements',
 } as const;
@@ -148,8 +156,14 @@ export function createRevenueModels(options: CreateModelsOptions): RevenueModels
     }
   }
 
+  // PaymentAttempt — core, always registered (phase 3). Written before the
+  // provider call so an orphaned/unknown intent is always a visible row.
+  const attemptSchema = buildPaymentAttemptSchema({ scoped: scope.enabled });
+  injectTenantField(attemptSchema, scope);
+
   const models: RevenueModels = {
     Transaction: connection.model<TransactionDocument>('Transaction', txnSchema, prefix + DEFAULT_COLLECTIONS.Transaction),
+    PaymentAttempt: connection.model<PaymentAttemptDocument>('PaymentAttempt', attemptSchema, prefix + DEFAULT_COLLECTIONS.PaymentAttempt),
   };
 
   if (modules.subscription !== false) {

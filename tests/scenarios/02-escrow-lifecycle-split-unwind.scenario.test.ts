@@ -86,6 +86,7 @@ describe('Scenario 02 — Escrow lifecycle with partial release, split, late ref
     // Day 0: buyer pays
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 10000, gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'pi_order_D1',
       data: { customerId: 'buyer_dispute', sourceId: 'order_D1', sourceModel: 'Order' },
       metadata: { orderId: 'order_D1' },
     });
@@ -144,7 +145,7 @@ describe('Scenario 02 — Escrow lifecycle with partial release, split, late ref
     const refund = await engine.repositories.transaction.refund(
       String(txn._id),
       null,
-      { reason: 'chargeback_dispute' },
+      { reason: 'chargeback_dispute', idempotencyKey: 'rf_order_D1' },
     );
     expect(refund.flow).toBe('outflow');
     expect(refund.amount).toBe(10000);
@@ -178,6 +179,7 @@ describe('Scenario 02 — Escrow lifecycle with partial release, split, late ref
 
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 5000, gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'pi_buyer_no_hold',
       data: { customerId: 'buyer_no_hold' },
     });
     await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);

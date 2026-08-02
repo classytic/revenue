@@ -35,11 +35,12 @@ import {
   createRevenue,
   PaymentProvider,
   REVENUE_EVENTS,
+  IntentOutcomeUnknownError,
   type DomainEvent,
 } from '../../revenue/src/index.js';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
@@ -58,7 +59,7 @@ class FlakyPrimary extends PaymentProvider {
 
   failFirstNCreateCalls(n: number) { this.failUntil = n; }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
     this.intentAttempts += 1;
     if (this.intentAttempts <= this.failUntil) {
       throw new Error('stripe gateway 503 service unavailable');
@@ -101,7 +102,7 @@ class FallbackSslcz extends PaymentProvider {
   private store = new Map<string, { amount: number }>();
   constructor() { super({}); }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
     this.intentAttempts += 1;
     const id = `sslcz_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const amount = params.amount.amount;
@@ -164,14 +165,18 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
     try {
       const idemKey = 'order_OX42'; // host's order id — stable across providers
 
-      // Attempt 1: primary fails hard, no transaction created
+      // Attempt 1: primary throws a raw 503. The three-valued classifier maps an
+      // un-decorated throw to `unknown` (the gateway MAY have created an intent we
+      // never recorded — see this scenario's own header), so createPaymentIntent
+      // raises IntentOutcomeUnknownError, not the raw 503. No transaction is written
+      // (the throw precedes the persist), which the count assertion below confirms.
       await expect(
         engine.repositories.transaction.createPaymentIntent({
           amount: 100000, gateway: 'stripe', methodKind: 'card',
           data: { customerId: 'buyer_fo' },
           idempotencyKey: idemKey,
         }),
-      ).rejects.toThrow(/503/i);
+      ).rejects.toThrow(IntentOutcomeUnknownError);
 
       const postFailureCount = await engine.repositories.transaction.count({
         idempotencyKey: idemKey,

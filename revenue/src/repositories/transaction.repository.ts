@@ -1,9 +1,13 @@
 import { Repository, withTransaction, type PluginType, type BatchOperationsMethods } from '@classytic/mongokit';
 import type { ClientSession, Model } from 'mongoose';
+import { Types } from 'mongoose';
 import type { TransactionDocument } from '../models/transaction.schema.js';
+import type { PaymentAttemptDocument } from '../models/payment-attempt.schema.js';
 import type { RevenueContext } from '../core/context.js';
 import type { RevenueBridges } from '../bridges/revenue-bridges.js';
 import type { ProviderRegistry } from '../providers/registry.js';
+import { executeProviderCommand } from '../providers/execute-command.js';
+import { buildPaymentCommandContext } from '../providers/command-context.js';
 import type { BankFeedProviderRegistry, FetchTransactionsParams } from '../providers/bank-feed.js';
 import type {
   BankImportReport,
@@ -29,16 +33,49 @@ import {
 } from '../core/state-machines.js';
 import {
   BankFeedImportError,
+  ConfigurationError,
   MethodKindLockedError,
   TransactionNotFoundError,
   ValidationError,
+  WebhookSignatureError,
   WrongTransactionKindError,
+  IntentOutcomeUnknownError,
+  RefundOutcomeUnknownError,
 } from '../core/errors.js';
 import { calculateCommission, reverseCommission } from '../shared/calculators/commission.js';
 import { reverseTax } from '../shared/calculators/tax.js';
 import { calculateSplits, calculateOrganizationPayout } from '../shared/calculators/splits.js';
 
 import { fromSet, isTransitionRace } from './transition-support.js';
+
+/**
+ * Common webhook-signature header names across gateways (Stripe, GitHub-style
+ * HMAC, generic). Read case-insensitively so a host can forward headers in any
+ * casing. Returns `''` when none present — the provider's
+ * `verifyWebhookSignature` decides whether a missing signature is acceptable
+ * (the base accept-all default says yes; a real gateway override says no).
+ */
+const WEBHOOK_SIGNATURE_HEADERS = [
+  'stripe-signature',
+  'x-signature',
+  'x-webhook-signature',
+  'x-hub-signature-256',
+  'x-hub-signature',
+  'x-razorpay-signature',
+  'verify-signature',
+] as const;
+
+function extractWebhookSignature(headers?: Record<string, string>): string {
+  if (!headers) return '';
+  const lower: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
+  for (const name of WEBHOOK_SIGNATURE_HEADERS) {
+    const val = lower[name];
+    if (typeof val === 'string' && val.length > 0) return val;
+  }
+  return '';
+}
+
 /**
  * Deps for {@link TransactionRepository}. Extends {@link BaseRevenueRepoDeps}
  * (events / outbox? / logger?) with provider/bridge/config wiring specific
@@ -55,6 +92,24 @@ export interface TransactionRepoDeps extends BaseRevenueRepoDeps {
   bridges: RevenueBridges;
   commission?: CommissionConfig;
   defaultCurrency: string;
+  /**
+   * Whether field-strategy tenant scoping is active on this engine
+   * (`scope.enabled && scope.strategy === 'field'`). When `true`, verbs
+   * that upsert without going through the multi-tenant plugin's required
+   * check — `import()` builds raw `bulkWrite` filters — MUST refuse a
+   * missing `ctx.organizationId` rather than silently write an unscoped
+   * row. Set once by `createRevenue` at inject time. Defaults to `false`
+   * (single-tenant / scoping-off) when omitted.
+   */
+  tenantScopeEnabled?: boolean;
+  /**
+   * PaymentAttempt model (phase 3). Written BEFORE the provider call in
+   * `createPaymentIntent`, so its `_id` is a durable anchor (and a
+   * collision-free idempotency key when the caller supplies none) and an
+   * orphaned/unknown intent is always a visible row. Core — always injected by
+   * `createRevenue`; the create path requires it.
+   */
+  paymentAttemptModel?: Model<PaymentAttemptDocument>;
 }
 
 /**
@@ -148,6 +203,48 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     }
   }
 
+  /**
+   * Phase 1–2 gate for any verb that moves money through a provider.
+   *
+   * Two failures this refuses, both silent today:
+   *
+   *   1. **Monetary idempotency keys collide.** With no caller key the key was derived
+   *      from `org:amount:currency` (create) or `refund:<txnId>` (refund). Two distinct
+   *      BDT 1,000 sales — or two legitimate partial refunds of one payment — then share a
+   *      provider key, and a gateway that honours idempotency replays the FIRST for the
+   *      SECOND. Payment identity must never come from monetary attributes; until phase 3
+   *      persists a durable intent/refund id BEFORE the provider call, the CALLER must
+   *      supply a key derived from the order/invoice/checkout/refund command id.
+   *   2. **Scope reaches the provider unvalidated.** On a tenant-scoped engine there may be
+   *      no DB write before the external call, so `ctx.organizationId` was cast to `string`
+   *      rather than checked — the provider could be contacted before MongoKit could reject
+   *      a missing branch. Assert it here, before any provider I/O.
+   *
+   * Returns the validated key so the caller passes it straight through, never a fallback.
+   */
+  private requireMoneyCommandContext(
+    operation: 'create-intent' | 'refund',
+    idempotencyKey: string | undefined,
+    ctx: RevenueContext,
+  ): string {
+    if (this.deps.tenantScopeEnabled && !ctx.organizationId) {
+      throw new ValidationError(
+        `organizationId is required for ${operation} on a tenant-scoped engine — ` +
+          'refusing to contact the payment provider without branch scope',
+        { operation },
+      );
+    }
+    if (!idempotencyKey) {
+      throw new ValidationError(
+        `idempotencyKey is required for ${operation}: a key derived from monetary ` +
+          'attributes collides across distinct sales/refunds and can make the provider ' +
+          'replay a prior payment. Pass a key based on the order/invoice/checkout/refund id.',
+        { operation },
+      );
+    }
+    return idempotencyKey;
+  }
+
   // ─── Domain: Create Payment Intent ───
 
   /** Creates transaction + calls provider. Returns the created transaction doc. */
@@ -182,12 +279,133 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
 
     // Provider call (skip for free)
     let gatewayData: Record<string, unknown> = { type: params.gateway };
+    let effectiveIdempotencyKey = params.idempotencyKey;
+    let createAttemptId: Types.ObjectId | undefined;
     if (params.amount > 0) {
-      const intent = await provider.createIntent({
-        amount: { amount: params.amount, currency },
+      const attemptModel = this.deps.paymentAttemptModel;
+      if (!attemptModel) {
+        throw new ConfigurationError(
+          'PaymentAttempt model is not wired — createRevenue must register it (phase 3 core).',
+        );
+      }
+      // Scope BEFORE any provider I/O. The attempt write below would reject a
+      // missing org on a tenant-scoped engine anyway, but assert it explicitly so
+      // the failure is a clean 4xx rather than a driver error mid-flight.
+      if (this.deps.tenantScopeEnabled && !ctx.organizationId) {
+        throw new ValidationError(
+          'organizationId is required for create-intent on a tenant-scoped engine — ' +
+            'refusing to contact the payment provider without branch scope',
+          { operation: 'create-intent' },
+        );
+      }
+
+      /**
+       * DURABLE ATTEMPT BEFORE THE PROVIDER CALL (phase 3).
+       *
+       * The provider call still precedes the Transaction, but no longer precedes
+       * ANY local record. We mint the attempt id up front, persist a `pending`
+       * PaymentAttempt, and — when the caller supplies no key — derive the provider
+       * idempotency key from that id. So a timeout leaves a VISIBLE row to reconcile
+       * instead of an invisible orphan, and two distinct sales can never collide on
+       * a monetary-derived key. This REPLACES the phase-1-2 require-a-caller-key
+       * stopgap; a caller key is still honoured (and preferred) when supplied.
+       */
+      createAttemptId = new Types.ObjectId();
+      const intentKey = params.idempotencyKey ?? `attempt:${createAttemptId.toString()}`;
+      effectiveIdempotencyKey = intentKey;
+      await attemptModel.create({
+        _id: createAttemptId,
+        ...(ctx.organizationId ? { organizationId: ctx.organizationId } : {}),
+        operation: 'create-intent',
+        provider: params.gateway,
         methodKind: params.methodKind,
-        metadata: params.metadata, ...params.paymentData,
+        idempotencyKey: intentKey,
+        amount: params.amount,
+        currency,
+        outcome: 'pending',
+      } as never);
+
+      const intentCommand = buildPaymentCommandContext({
+        operation: 'create-intent',
+        subjectId: intentKey,
+        organizationId: ctx.organizationId as string,
+        idempotencyKey: intentKey,
       });
+      const intentOutcome = await executeProviderCommand(
+        () =>
+          provider.createIntent(
+            {
+              amount: { amount: params.amount, currency },
+              methodKind: params.methodKind,
+              metadata: params.metadata, ...params.paymentData,
+            },
+            intentCommand,
+          ),
+        {
+          command: intentCommand,
+        /**
+         * The RAW provider error goes to the log, never into the result.
+         *
+         * `ProviderCommandResult.causeCode` is a closed set precisely because it is persisted
+         * and shown to operators, and vendor errors carry URLs, tokens and request fragments.
+         * But discarding the detail entirely is the opposite mistake — "payment skipped,
+         * cause: unclassified" is unactionable. This seam is where the detail survives.
+         */
+        onDiagnostic: (error, ctxCommand) =>
+          this.deps.logger?.error(
+            '[revenue] provider command failed',
+            {
+              requestId: ctxCommand?.requestId,
+              merchantReference: ctxCommand?.merchantReference,
+              organizationId: ctxCommand?.organizationId,
+            },
+            error,
+          ),
+        },
+      );
+
+      if (intentOutcome.outcome !== 'confirmed') {
+        /**
+         * Neither a confirmed intent nor a clean decline can be treated the same way here.
+         *
+         * `declined` is safe: nothing was created upstream, so failing the call is honest.
+         * `unknown` is NOT — the gateway may hold a live intent we never recorded. We raise a
+         * distinct error so a caller cannot mistake it for a decline and immediately retry;
+         * the idempotency key makes the eventual retry safe AT the gateway, and the
+         * `PaymentAttempt` row (stamped just below) makes the orphan visible to US.
+         */
+        // Record the terminal attempt outcome — durable evidence of a decline or an
+        // unobserved (unknown) intent. Non-silent: a failed stamp is logged, not swallowed.
+        const stamp: Record<string, unknown> = { outcome: intentOutcome.outcome };
+        if (intentOutcome.outcome === 'declined') {
+          stamp.declineReason = intentOutcome.error.reason;
+        } else {
+          if (intentOutcome.causeCode !== undefined) stamp.causeCode = intentOutcome.causeCode;
+          if (intentOutcome.providerReference !== undefined) {
+            stamp.providerReference = intentOutcome.providerReference;
+          }
+        }
+        await attemptModel
+          .updateOne({ _id: createAttemptId }, { $set: stamp })
+          .catch((err: unknown) =>
+            this.deps.logger?.error(
+              '[revenue] payment attempt outcome stamp failed',
+              { attemptId: createAttemptId?.toString() },
+              err,
+            ),
+          );
+
+        if (intentOutcome.outcome === 'declined') {
+          throw new ValidationError(
+            `Payment intent declined by provider: ${intentOutcome.error.reason}`,
+            { reason: intentOutcome.error.reason, retryable: intentOutcome.error.retryable },
+          );
+        }
+        throw new IntentOutcomeUnknownError(intentCommand.idempotencyKey, {
+          ...(intentOutcome.causeCode !== undefined ? { causeCode: intentOutcome.causeCode } : {}),
+        });
+      }
+      const intent = intentOutcome.value;
       gatewayData = {
         type: params.gateway,
         sessionId: intent.sessionId,
@@ -198,6 +416,27 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
           instructions: intent.instructions,
         },
       };
+      // Attempt confirmed — record the gateway identifiers on the durable row.
+      await attemptModel
+        .updateOne(
+          { _id: createAttemptId },
+          {
+            $set: {
+              outcome: 'confirmed',
+              gateway: {
+                sessionId: intent.sessionId,
+                paymentIntentId: intent.paymentIntentId ?? intent.id,
+              },
+            },
+          },
+        )
+        .catch((err: unknown) =>
+          this.deps.logger?.error(
+            '[revenue] payment attempt confirm stamp failed',
+            { attemptId: createAttemptId?.toString() },
+            err,
+          ),
+        );
     }
 
     const transaction = await this.create(
@@ -217,11 +456,26 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
         commission: commission ?? undefined,
         sourceId: params.data?.sourceId,
         sourceModel: params.data?.sourceModel as string,
-        idempotencyKey: params.idempotencyKey,
+        idempotencyKey: effectiveIdempotencyKey,
         metadata: params.metadata,
       } as any,
       this.optsFromCtx(ctx),
     );
+
+    // Link the durable attempt to the transaction it produced. Non-silent — a
+    // failed link leaves an attempt with no `transactionId`, which the
+    // reconciliation worklist reads as "confirmed intent, transaction unknown".
+    if (createAttemptId) {
+      await this.deps.paymentAttemptModel
+        ?.updateOne({ _id: createAttemptId }, { $set: { transactionId: transaction._id } })
+        .catch((err: unknown) =>
+          this.deps.logger?.error(
+            '[revenue] payment attempt transaction link failed',
+            { attemptId: createAttemptId?.toString(), transactionId: String(transaction._id) },
+            err,
+          ),
+        );
+    }
 
     await this.dispatch(
       createEvent(
@@ -301,6 +555,57 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
     return updated as TransactionDocument;
   }
 
+  /**
+   * Operator-driven payment failure — declines a payment-flow transaction the
+   * gateway never confirmed (e.g. a manual-payment claim an operator rejects).
+   * The sibling of `verify()`: same machine-gated CAS to a terminal status and
+   * the same `revenue:payment.failed` event, but with NO provider read — the
+   * decision is the operator's, not the gateway's.
+   *
+   * The CAS is the guard: it fails-closed on an already-verified (illegal
+   * `verified → failed`) or already-failed (terminal) row, so callers no longer
+   * hand-check status before a raw update.
+   */
+  async fail(
+    id: string,
+    data: { reason: string; failedBy?: string },
+    ctx: RevenueContext = {},
+  ): Promise<TransactionDocument> {
+    const transaction = await this.getById(id, this.optsFromCtx(ctx)) as TransactionDocument | null;
+    if (!transaction) throw new TransactionNotFoundError(id);
+
+    // Machine-gated CAS — same as verify(). An illegal source (already-verified
+    // / terminal) throws InvalidStateTransitionError natively, which hosts map
+    // to 409; no hand-checked status guard needed.
+    const updated = (await this.applyTransition(
+      String(transaction._id),
+      TRANSACTION_STATE_MACHINE,
+      {
+        from: transaction.status,
+        to: TRANSACTION_STATUS.FAILED,
+        set: {
+          failedAt: new Date(),
+          failureReason: data.reason,
+          ...(data.failedBy !== undefined ? { verifiedBy: data.failedBy } : {}),
+        },
+        history: false,
+      },
+      this.optsFromCtx(ctx) as never,
+    )) as TransactionDocument;
+
+    await this.dispatch(
+      createEvent(
+        REVENUE_EVENTS.PAYMENT_FAILED,
+        { transaction: updated, reason: data.reason, ...(data.failedBy !== undefined ? { failedBy: data.failedBy } : {}) },
+        ctx,
+        { resource: 'transaction', resourceId: (updated as TransactionDocument).publicId },
+      ),
+      ctx,
+    );
+
+    return updated as TransactionDocument;
+  }
+
   // ─── Domain: Refund ───
 
   /**
@@ -318,22 +623,251 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
   async refund(
     transactionId: string,
     amount?: number | null,
-    options: { reason?: string } = {},
+    options: { reason?: string; idempotencyKey?: string } = {},
     ctx: RevenueContext = {},
   ): Promise<TransactionDocument> {
+    // Phase 1–2 gate: a missing key would derive `refund:<txnId>`, so a second
+    // legitimate partial refund reuses the first's provider key and is deduped
+    // upstream. Require a caller key (derived from the refund command id) and
+    // validate branch scope before any DB read or provider call.
+    const refundKey = this.requireMoneyCommandContext('refund', options.idempotencyKey, ctx);
+
     const transaction = await this.getById(transactionId, this.optsFromCtx(ctx)) as TransactionDocument | null;
     if (!transaction) throw new TransactionNotFoundError(transactionId);
 
+    // Idempotent replay — a refund already produced for this key returns the
+    // existing refund transaction instead of charging the gateway again
+    // (mirrors create()'s idempotency). This is what makes a refund safely
+    // RETRYABLE: a caller that crashed after the money moved re-invokes with
+    // the same key and gets the recorded refund, never a double reversal.
+    if (options.idempotencyKey) {
+      const existingRefund = await this.getByQuery(
+        { idempotencyKey: options.idempotencyKey, type: 'refund' },
+        this.optsFromCtx(ctx, { throwOnNotFound: false }),
+      );
+      if (existingRefund) return existingRefund as TransactionDocument;
+    }
+
     const refundAmount = amount ?? transaction.amount;
+
+    // ── Over-refund guards (HIGH) ──
+    // Reject non-positive amounts and any refund that would push the
+    // cumulative refunded total past the captured amount. These are the
+    // in-memory pre-checks on the read snapshot (clean ValidationError on
+    // the common path); the atomic `where` guard on the CAS below is the
+    // concurrency-safe enforcement for the `partially_refunded` self-loop.
+    if (refundAmount <= 0) {
+      throw new ValidationError('refund amount must be positive', { refundAmount });
+    }
     const existingRefunded = transaction.refundedAmount ?? 0;
     const totalAfterRefund = existingRefunded + refundAmount;
+    if (totalAfterRefund > transaction.amount) {
+      throw new ValidationError('refund exceeds captured amount', {
+        amount: transaction.amount,
+        alreadyRefunded: existingRefunded,
+        requested: refundAmount,
+      });
+    }
     const isPartialRefund = totalAfterRefund < transaction.amount;
     const newStatus = isPartialRefund ? TRANSACTION_STATUS.PARTIALLY_REFUNDED : TRANSACTION_STATUS.REFUNDED;
-    TRANSACTION_STATE_MACHINE.validate(transaction.status as any, newStatus as any, transactionId);
+
+    // ── Claim-before-call CAS (CRITICAL — double-refund race) ──
+    // Mirrors the bank-feed verbs' `applyTransition` discipline: gate the
+    // original-doc status write with an ATOMIC machine-gated CAS on
+    // `{ status: <current> }` BEFORE touching the gateway. The old code
+    // validated state in memory then called `provider.refund()` outside any
+    // guard, so two concurrent refunds both passed and reversed the gateway
+    // twice. Now only the CAS winner reaches the provider call.
+    //
+    // The `$inc` + `where` guard makes the cumulative cap atomic for the
+    // `partially_refunded → partially_refunded` self-loop — there the status
+    // CAS alone does not serialize (the state is unchanged), so a concurrent
+    // pair could otherwise both slip through. On a FIRST refund the field is
+    // unset (no schema default), so the `$lte` guard — which would not match a
+    // missing field — is applied only once a prior partial has stamped it; the
+    // first refund is serialized by the `verified/completed → …` status CAS.
+    const capGuard =
+      existingRefunded > 0
+        ? { refundedAmount: { $lte: transaction.amount - refundAmount } }
+        : undefined;
+
+    let claimed: TransactionDocument;
+    try {
+      claimed = (await this.applyTransition(
+        String(transaction._id),
+        TRANSACTION_STATE_MACHINE,
+        {
+          from: transaction.status,
+          to: newStatus,
+          set: { refundedAt: new Date() },
+          inc: { refundedAmount: refundAmount },
+          ...(capGuard ? { where: capGuard } : {}),
+          history: false,
+        },
+        this.optsFromCtx(ctx) as never,
+      )) as TransactionDocument;
+    } catch (err) {
+      if (isTransitionRace(err)) {
+        // Lost the claim race, or the cumulative cap was hit atomically. If an
+        // idempotency key was supplied, a retry converges on the winner's
+        // already-recorded refund once it exists.
+        if (options.idempotencyKey) {
+          const winner = await this.getByQuery(
+            { idempotencyKey: options.idempotencyKey, type: 'refund' },
+            this.optsFromCtx(ctx, { throwOnNotFound: false }),
+          );
+          if (winner) return winner as TransactionDocument;
+        }
+        throw new ValidationError(
+          `Transaction ${transactionId} refund could not be claimed ` +
+            '(concurrent refund in progress or refund cap reached)',
+          { transactionId, requested: refundAmount },
+        );
+      }
+      throw err;
+    }
 
     const provider = this.deps.providers.get(transaction.method);
     const paymentId = transaction.gateway?.paymentIntentId ?? transaction.gateway?.sessionId ?? transactionId;
-    await provider.refund(paymentId as string, refundAmount, { reason: options.reason });
+    // Forward the idempotency key so a gateway that honours it (Stripe-style)
+    // dedups a concurrent / retried first-time call at the source — no double
+    // charge even before the local refund row exists. We are the unique CAS
+    // winner, so this fires exactly once per logical refund.
+    /**
+     * The provider call, routed through the three-valued classifier.
+     *
+     * This used to be a bare try/catch that rolled the claim back on ANY error. That is
+     * correct for a decline and catastrophic for a timeout: a timed-out reversal may well
+     * have been processed upstream, and releasing the claim frees the amount for a second
+     * refund. The customer gets their money twice and the books do not show why.
+     */
+    const refundCommand = buildPaymentCommandContext({
+      operation: 'refund',
+      subjectId: String(transaction._id),
+      organizationId: transaction.organizationId as string,
+      merchantReference: String(transaction._id),
+      idempotencyKey: refundKey,
+    });
+    const outcome = await executeProviderCommand(
+      () =>
+        provider.refund(paymentId as string, refundAmount, refundCommand, {
+          ...(options.reason !== undefined ? { reason: options.reason } : {}),
+        }),
+      {
+        providerReference: paymentId as string,
+        command: refundCommand,
+      /**
+       * The RAW provider error goes to the log, never into the result.
+       *
+       * `ProviderCommandResult.causeCode` is a closed set precisely because it is persisted
+       * and shown to operators, and vendor errors carry URLs, tokens and request fragments.
+       * But discarding the detail entirely is the opposite mistake — "payment skipped,
+       * cause: unclassified" is unactionable. This seam is where the detail survives.
+       */
+      onDiagnostic: (error, ctxCommand) =>
+        this.deps.logger?.error(
+          '[revenue] provider command failed',
+          {
+            requestId: ctxCommand?.requestId,
+            merchantReference: ctxCommand?.merchantReference,
+            organizationId: ctxCommand?.organizationId,
+          },
+          error,
+        ),
+      },
+    );
+
+    if (outcome.outcome === 'unknown') {
+      /**
+       * OUTCOME NEVER OBSERVED — keep the claim.
+       *
+       * Retaining the `refundedAmount` increment is what prevents the double refund: the
+       * next attempt fails the cap check, exactly as a completed refund would. The stamp
+       * records WHY the amount is held so reconciliation (and a human) can see it is
+       * awaiting an answer rather than settled.
+       */
+      // Persist the reconciliation marker. The claim (`refundedAmount` increment) is
+      // already committed and prevents a double refund; the marker is what makes the
+      // held amount VISIBLE as awaiting an answer rather than settled. This write must
+      // NOT be swallowed: if it fails (throw) or matches nothing (status moved), the
+      // unknown outcome becomes invisible, so surface it loudly before the caller sees
+      // the (correct) unknown error. A full atomic claim+marker write is phase 3's job.
+      let markerPersisted = false;
+      try {
+        const stamped = await this.findOneAndUpdate(
+          { _id: transaction._id, status: newStatus },
+          {
+            $set: {
+              refundReconciliation: {
+                state: 'unknown',
+                at: new Date(),
+                ...(outcome.providerReference !== undefined
+                  ? { providerReference: outcome.providerReference }
+                  : {}),
+                ...(outcome.causeCode !== undefined ? { causeCode: outcome.causeCode } : {}),
+              },
+            },
+          },
+          { returnDocument: 'after' },
+        );
+        markerPersisted = stamped != null;
+      } catch (persistErr) {
+        this.deps.logger?.error(
+          '[revenue] refund reconciliation marker persist FAILED — unknown outcome now invisible',
+          { transactionId: String(transaction._id), refundAmount },
+          persistErr,
+        );
+      }
+      if (!markerPersisted) {
+        this.deps.logger?.error(
+          '[revenue] refund reconciliation marker not applied (status changed?) — unknown outcome now invisible',
+          { transactionId: String(transaction._id), refundAmount, expectedStatus: newStatus },
+        );
+      }
+
+      throw new RefundOutcomeUnknownError(String(transaction._id), refundAmount, {
+        ...(outcome.providerReference !== undefined
+          ? { providerReference: outcome.providerReference }
+          : {}),
+        ...(outcome.causeCode !== undefined ? { causeCode: outcome.causeCode } : {}),
+      });
+    }
+
+    if (outcome.outcome === 'declined') {
+      // A DECISION by the gateway: no money moved, so releasing the claim is correct.
+      // But the release must be CONFIRMED: if the rollback throws or matches nothing,
+      // the claim is still held and we cannot honestly tell the caller "declined, retry"
+      // — a retry would hit the stale cap. Escalate to UNKNOWN so the caller reconciles
+      // instead of retrying. Never swallow the failure.
+      let released = false;
+      try {
+        const rolledBack = await this.findOneAndUpdate(
+          { _id: transaction._id, status: newStatus },
+          {
+            $set: { status: transaction.status },
+            $inc: { refundedAmount: -refundAmount },
+            ...(existingRefunded === 0 ? { $unset: { refundedAt: 1 } } : {}),
+          },
+          { returnDocument: 'after' },
+        );
+        released = rolledBack != null;
+      } catch (rollbackErr) {
+        this.deps.logger?.error(
+          '[revenue] refund claim rollback FAILED after decline — claim still held',
+          { transactionId: String(transaction._id), refundAmount },
+          rollbackErr,
+        );
+      }
+      if (!released) {
+        // Claim not confirmed released → the safe contract is "unknown, do not retry".
+        throw new RefundOutcomeUnknownError(String(transaction._id), refundAmount);
+      }
+
+      throw new ValidationError(
+        `Refund declined by provider for transaction ${transactionId}: ${outcome.error.reason}`,
+        { transactionId, reason: outcome.error.reason, retryable: outcome.error.retryable },
+      );
+    }
 
     const reversedCommission = reverseCommission(transaction.commission as any, transaction.amount, refundAmount);
     const reversedTax = transaction.tax ? reverseTax(
@@ -360,27 +894,30 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
         gateway: transaction.gateway, commission: reversedCommission ?? undefined,
         relatedTransactionId: transaction._id,
         sourceId: transaction.sourceId, sourceModel: transaction.sourceModel,
-        verifiedAt: new Date(), metadata: { reason: options.reason },
+        verifiedAt: new Date(),
+        // Persist the key so the partial-unique `idempotencyKey` index is the
+        // last-resort guard against a concurrent same-key race, and the
+        // pre-check above can replay this refund on a retry.
+        ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+        metadata: { reason: options.reason },
       } as any, writeOpts);
 
-      await this.update(
-        transactionId,
-        { status: newStatus, refundedAmount: existingRefunded + refundAmount, refundedAt: new Date() },
-        writeOpts,
-      );
-
+      // The original-doc status + cumulative refundedAmount were already
+      // written atomically by the claim-before-call CAS above; this
+      // transaction only persists the refund child + its outbox event so the
+      // two land together (P8).
       const event = createEvent(
         REVENUE_EVENTS.PAYMENT_REFUNDED,
-        { transaction, refundTransaction: refundTxn, refundAmount, reason: options.reason, isPartialRefund },
+        { transaction: claimed, refundTransaction: refundTxn, refundAmount, reason: options.reason, isPartialRefund },
         ctx,
-        { resource: 'transaction', resourceId: (transaction as any).publicId },
+        { resource: 'transaction', resourceId: (claimed as any).publicId },
       );
       await this.saveToOutbox(event, session);
       pendingEvents.push(event);
       return refundTxn;
     });
 
-    await this.deps.bridges.ledger?.onRefundProcessed?.(transaction as any, refundTransaction as any, ctx);
+    await this.deps.bridges.ledger?.onRefundProcessed?.(claimed as any, refundTransaction as any, ctx);
     await this.deps.bridges.notification?.onRefundProcessed?.(refundTransaction as any, ctx);
 
     for (const ev of pendingEvents) await this.publishToTransport(ev);
@@ -393,6 +930,18 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
   /** Handles provider webhook. Returns the updated transaction doc (or null if not found). */
   async handleWebhook(providerName: string, payload: unknown, headers?: Record<string, string>, ctx: RevenueContext = {}): Promise<TransactionDocument | null> {
     const provider = this.deps.providers.get(providerName);
+
+    // Signature gate (MED). The provider contract's `verifyWebhookSignature`
+    // defaults to accept-all on the base class, so providers that don't
+    // implement HMAC verification keep working unchanged — but a real gateway
+    // that overrides it now HAS its signature enforced BEFORE we parse the
+    // payload or mutate any transaction. Least-breaking: enforcement is opt-in
+    // per provider (via the override), not a hard fail-closed default that
+    // would break every manual / dev provider.
+    if (!provider.verifyWebhookSignature(payload, extractWebhookSignature(headers))) {
+      throw new WebhookSignatureError(providerName);
+    }
+
     const webhookEvent = await provider.handleWebhook(payload, headers);
 
     const readOpts = this.optsFromCtx(ctx, { throwOnNotFound: false });
@@ -688,6 +1237,19 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
           '`\'card\'` for a Stripe balance, `\'wallet\'` for PayPal, `\'cryptocurrency\'` for an exchange).',
       );
     }
+    // Tenant-scope guard (MED). `import()` builds raw `bulkWrite` filters that
+    // bypass the multi-tenant plugin's `required` check, so when scoping is
+    // enabled a missing `ctx.organizationId` would silently upsert an
+    // UNSCOPED bank row (invisible to every tenant-scoped read, and a
+    // cross-org leak on a shared `externalId`). Fail loud instead. Single-
+    // tenant / scoping-off engines leave `tenantScopeEnabled` false and pass.
+    if (this.deps.tenantScopeEnabled && ctx.organizationId === undefined) {
+      throw new BankFeedImportError(
+        'Tenant scoping is enabled but `ctx.organizationId` is missing on import() — ' +
+          'refusing to upsert unscoped bank rows. Pass the organization in the operation context.',
+      );
+    }
+
     const startedAt = Date.now();
     if (!Array.isArray(rows) || rows.length === 0) {
       return { inserted: 0, updated: 0, skipped: 0, errors: [], durationMs: 0 };
@@ -985,7 +1547,7 @@ export class TransactionRepository extends RevenueRepositoryBase<TransactionDocu
    * unknown — the canonical use case is hosted-checkout (Stripe
    * Checkout, PayPal redirect, Razorpay Checkout) where the customer
    * picks their payment method on the gateway's UI, AFTER the host has
-   * already created the PaymentIntent + Transaction with
+   * already created the ProviderIntent + Transaction with
    * `methodKind: 'other'`.
    *
    * Call this from your verification / webhook handler once you know

@@ -11,7 +11,11 @@
  */
 
 import type Stripe from 'stripe';
-import type { CreateIntentParams, PaymentIntent } from '@classytic/primitives/payment-gateway';
+import type {
+  CreateIntentParams,
+  PaymentCommandContext,
+  ProviderIntent,
+} from '@classytic/primitives/payment-gateway';
 import type { StripeIntentOptions } from '../types.js';
 
 export interface CreateIntentDeps {
@@ -40,7 +44,8 @@ export function computeApplicationFee(
 export async function createIntent(
   deps: CreateIntentDeps,
   params: CreateIntentParams,
-): Promise<PaymentIntent> {
+  command: PaymentCommandContext,
+): Promise<ProviderIntent> {
   const amountValue = params.amount.amount;
   const currency = (params.amount.currency ?? deps.defaultCurrency).toLowerCase();
 
@@ -80,7 +85,15 @@ export async function createIntent(
     }
   }
 
-  const intent = await deps.stripe.paymentIntents.create(createParams);
+  /**
+   * Idempotency forwarded to Stripe — same reasoning as `refund`, and it matters more here:
+   * `createIntent` runs BEFORE the local transaction is persisted, so a timed-out create is
+   * the one case where we have no local record to dedupe against at all. Stripe's 24h replay
+   * window is the only thing standing between a retry and a second live intent.
+   */
+  const intent = await deps.stripe.paymentIntents.create(createParams, {
+    idempotencyKey: command.idempotencyKey,
+  });
 
   return {
     id: intent.id,

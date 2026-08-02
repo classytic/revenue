@@ -85,7 +85,7 @@ export async function createCheckoutSession(
       piData.on_behalf_of = input.connectedAccountId;
       // Application fee % isn't supported on PI data — for one-off Connect
       // charges with a percentage fee, use createIntent from /lib/charges
-      // (it sets application_fee_amount on the PaymentIntent directly).
+      // (it sets application_fee_amount on the ProviderIntent directly).
     }
     params.payment_intent_data = piData;
   }

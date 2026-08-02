@@ -1,6 +1,8 @@
-import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 import { PAYMENT_METHOD_KIND, type PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
+import { minorAmount, moneyFields } from '@classytic/validation/money';
+// The monetization wire enum is the shared seam — same values catalog + primitives use.
+import { revenueMonetizationTypeSchema } from '@classytic/validation/monetization';
 
 const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
   PaymentMethodKind,
@@ -8,14 +10,13 @@ const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
 ];
 
 export const paymentIntentSchema = z.object({
-  amount: z.number().int().min(1),
-  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
+  ...moneyFields('positive'),
   gateway: z.string(),
   methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES),
   customerId: z.string().optional(),
   sourceId: z.string().optional(),
   sourceModel: z.string().optional(),
-  monetizationType: z.enum(['purchase', 'subscription', 'free']).default('purchase'),
+  monetizationType: revenueMonetizationTypeSchema.default('purchase'),
   planKey: z.string().optional(),
   paymentData: z.record(z.string(), z.unknown()).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -29,7 +30,7 @@ export const paymentVerifySchema = z.object({
 
 export const refundSchema = z.object({
   transactionId: z.string(),
-  amount: z.number().int().min(1).optional(),
+  amount: minorAmount('positive').optional(),
   reason: z.string().optional(),
 });
 

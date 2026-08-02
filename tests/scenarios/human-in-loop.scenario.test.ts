@@ -79,6 +79,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 500000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'hitl-bank-transfer-order_bank_01',
       data: { customerId: 'buyer_99', sourceId: 'order_bank_01', sourceModel: 'Order' },
       metadata: {
         paymentMethod: 'bank_transfer',
@@ -107,6 +108,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 750000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'hitl-fraud-legit-order_hv_1',
       data: { customerId: 'highvalue_buyer', sourceId: 'order_hv_1', sourceModel: 'Order' },
       metadata: { riskScore: 72, requiresReview: true },
     });
@@ -139,6 +141,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
     const txn = await engine.repositories.transaction.createPaymentIntent({
       amount: 250000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'hitl-fraud-refund-order_sus',
       data: { customerId: 'suspicious_account', sourceId: 'order_sus', sourceModel: 'Order' },
       metadata: { riskScore: 94 },
     });
@@ -165,7 +168,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
     const refund = await engine.repositories.transaction.refund(
       String(txn._id),
       null,
-      { reason: 'fraud_confirmed_stolen_card' },
+      { reason: 'fraud_confirmed_stolen_card', idempotencyKey: 'hitl-refund-order_sus' },
     );
 
     expect(refund.flow).toBe('outflow');
@@ -225,6 +228,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
     const purchase = await engine.repositories.transaction.createPaymentIntent({
       amount: 1500000,
       gateway: 'fake', methodKind: 'card',
+      idempotencyKey: 'hitl-vip-purchase-order_vip',
       data: { customerId: 'vip_buyer', sourceId: 'order_vip', sourceModel: 'Order' },
     });
     await engine.repositories.transaction.verify(
@@ -238,6 +242,7 @@ describe('Scenario: Human-in-the-Loop Verification', () => {
       null,
       {
         reason: 'approved_by_supervisor_escalation',
+        idempotencyKey: 'hitl-refund-order_vip',
       },
     );
 

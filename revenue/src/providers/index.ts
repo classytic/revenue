@@ -1,11 +1,11 @@
 // Revenue owns only the abstract `PaymentProvider` contract + the registry.
-// Payment-gateway data shapes (`CreateIntentParams`, `PaymentIntent`,
+// Payment-gateway data shapes (`CreateIntentParams`, `ProviderIntent`,
 // `PaymentResult`, `RefundResult`, `WebhookEvent`, `ProviderCapabilities`)
 // live in `@classytic/primitives/payment-gateway`. Hosts MUST import
 // them from primitives directly — no re-exports per PACKAGE_RULES P2.
 //
 //   import type {
-//     CreateIntentParams, PaymentIntent, PaymentResult,
+//     CreateIntentParams, ProviderIntent, PaymentResult,
 //     RefundResult, WebhookEvent, ProviderCapabilities,
 //   } from '@classytic/primitives/payment-gateway';
 export { PaymentProvider } from './base.js';

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { ManualProvider } from '@classytic/revenue-manual';
-import type { CreateIntentParams } from '@classytic/primitives/payment-gateway';
+import type { CreateIntentParams, PaymentCommandContext } from '@classytic/primitives/payment-gateway';
+
+/** Minimal command envelope for the money-moving provider calls (§3.4). */
+const cmd = (idempotencyKey = 'test-key'): PaymentCommandContext => ({
+  idempotencyKey,
+  requestId: 'rq_test',
+  merchantReference: 'mref_test',
+  organizationId: 'org_test',
+});
 
 describe('ManualProvider', () => {
   const provider = new ManualProvider({ defaultCurrency: 'BDT' });
@@ -10,7 +18,7 @@ describe('ManualProvider', () => {
       amount: { amount: 50000, currency: 'BDT' },
       metadata: {},
     };
-    const intent = await provider.createIntent(params);
+    const intent = await provider.createIntent(params, cmd());
 
     expect(intent.provider).toBe('manual');
     expect(intent.status).toBe('requires_payment_method');
@@ -23,7 +31,7 @@ describe('ManualProvider', () => {
       amount: { amount: 1000 } as CreateIntentParams['amount'],
       metadata: {},
     };
-    const intent = await provider.createIntent(params);
+    const intent = await provider.createIntent(params, cmd());
     expect(intent.amount.currency).toBe('BDT');
   });
 
@@ -34,14 +42,14 @@ describe('ManualProvider', () => {
   });
 
   it('refund returns succeeded with correct amount', async () => {
-    const result = await provider.refund('pay_123', 10000, { currency: 'BDT', reason: 'Test' });
+    const result = await provider.refund('pay_123', 10000, cmd(), { currency: 'BDT', reason: 'Test' });
     expect(result.status).toBe('succeeded');
     expect(result.amount).toEqual({ amount: 10000, currency: 'BDT' });
     expect(result.reason).toBe('Test');
   });
 
   it('refund defaults amount to 0 when not provided', async () => {
-    const result = await provider.refund('pay_123');
+    const result = await provider.refund('pay_123', undefined, cmd());
     expect(result.amount!.amount).toBe(0);
   });
 
@@ -61,7 +69,7 @@ describe('ManualProvider', () => {
     const intent = await provider.createIntent({
       amount: { amount: 25000, currency: 'BDT' },
       metadata: {},
-    });
+    }, cmd());
     expect(intent.instructions).toContain('25000');
     expect(intent.instructions).toContain('BDT');
   });
@@ -70,7 +78,7 @@ describe('ManualProvider', () => {
     const intent = await provider.createIntent({
       amount: { amount: 500, currency: 'USD' },
       metadata: { paymentInstructions: 'Pay via bKash to 01711000000' },
-    });
+    }, cmd());
     expect(intent.instructions).toBe('Pay via bKash to 01711000000');
   });
 });

@@ -16,11 +16,13 @@
  * For SaaS subs use `/saas`. For marketplaces use `/connect`.
  */
 
+import type { PaymentCommandContext } from '@classytic/primitives/payment-gateway';
+import type { AssertStripeProvider } from '../lib/provider-base.js';
+import { StripeProviderBase } from '../lib/provider-base.js';
 import type Stripe from 'stripe';
-import { PaymentProvider } from '@classytic/revenue';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   ProviderCapabilities,
   RefundResult,
@@ -32,7 +34,7 @@ import { refund } from '../lib/refund.js';
 import { stripePaymentIntentToKind } from '../lib/method-kind.js';
 import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
 
-export class StripeCheckoutProvider extends PaymentProvider {
+export class StripeCheckoutProvider extends StripeProviderBase {
   public override readonly name: string = 'stripe-checkout';
 
   public readonly stripe: Stripe;
@@ -50,15 +52,18 @@ export class StripeCheckoutProvider extends PaymentProvider {
   }
 
   /**
-   * Creates a Checkout Session (instead of a bare PaymentIntent). Returns
-   * the engine's PaymentIntent shape with the session ID slot populated
+   * Creates a Checkout Session (instead of a bare ProviderIntent). Returns
+   * the engine's ProviderIntent shape with the session ID slot populated
    * — the engine persists this as the Transaction's gateway id and
    * matches it on the webhook event.
    *
    * Callers MUST pass `returnUrl` on `CreateIntentParams` (mapped to
    * Stripe's `success_url`), OR configure `successUrl` on the provider.
    */
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(
+    params: CreateIntentParams,
+    command: PaymentCommandContext,
+  ): Promise<ProviderIntent> {
     const amountValue = params.amount.amount;
     const currency = (params.amount.currency ?? this.defaultCurrency).toLowerCase();
     const successUrl = params.returnUrl ?? this.defaultSuccessUrl;
@@ -95,6 +100,16 @@ export class StripeCheckoutProvider extends PaymentProvider {
       success_url: successUrl,
       cancel_url: cancelUrl,
       metadata: toStringMetadata(params.metadata),
+    }, {
+      /**
+       * Idempotency forwarded to Stripe.
+       *
+       * A Checkout Session is billable intent: a retried create without this yields a SECOND
+       * session and a second payment link for one order. Stripe replays the original
+       * response for 24h against the same key — exactly the window a timeout-driven retry
+       * lands in.
+       */
+      idempotencyKey: command.idempotencyKey,
     });
 
     return {
@@ -108,7 +123,7 @@ export class StripeCheckoutProvider extends PaymentProvider {
           : session.payment_intent?.id ?? null,
       sessionId: session.id,
       // `url` is the value the host redirects to. Surface via clientSecret
-      // slot since the engine's PaymentIntent type doesn't have a `url`.
+      // slot since the engine's ProviderIntent type doesn't have a `url`.
       clientSecret: session.url ?? undefined,
       metadata: params.metadata ?? {},
       raw: session,
@@ -130,13 +145,15 @@ export class StripeCheckoutProvider extends PaymentProvider {
 
   async refund(
     paymentId: string,
-    amount?: number | null,
+    amount: number | null | undefined,
+    command: PaymentCommandContext,
     options: StripeRefundOptions = {},
   ): Promise<RefundResult> {
     return refund(
       { stripe: this.stripe, defaultCurrency: this.defaultCurrency },
       paymentId,
       amount,
+      command,
       options,
     );
   }
@@ -177,7 +194,7 @@ export class StripeCheckoutProvider extends PaymentProvider {
           : event.type.startsWith('payment_intent.')
             ? obj.id
             : undefined;
-    // `checkout.session.completed` ships the expanded PaymentIntent on
+    // `checkout.session.completed` ships the expanded ProviderIntent on
     // `payment_intent` when the session has one — pull the kind from
     // there so hosts get the customer's actual selection.
     let methodKind: ReturnType<typeof stripePaymentIntentToKind> | undefined;
@@ -212,7 +229,7 @@ export class StripeCheckoutProvider extends PaymentProvider {
     }
   }
 
-  override getCapabilities(): ProviderCapabilities {
+  getCapabilities(): ProviderCapabilities {
     return {
       supportsWebhooks: true,
       supportsRefunds: true,
@@ -257,3 +274,12 @@ function toStringMetadata(
 }
 
 export default StripeCheckoutProvider;
+
+/**
+ * Compile-time proof that `StripeCheckoutProvider` satisfies `PaymentProviderPort`.
+ *
+ * The base no longer forces it — it is not abstract over the port's members — so without
+ * this a missing or mistyped method would only surface when the registry rejected it, or
+ * worse, at the first live payment.
+ */
+export type StripeCheckoutProviderSatisfiesPort = AssertStripeProvider<StripeCheckoutProvider>;

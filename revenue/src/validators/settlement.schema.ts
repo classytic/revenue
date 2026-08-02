@@ -1,5 +1,5 @@
-import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
+import { moneyFields } from '@classytic/validation/money';
 
 export const settlementBaseSchema = z.object({
   publicId: z.string().optional(),
@@ -9,8 +9,7 @@ export const settlementBaseSchema = z.object({
   type: z.enum(['split_payout', 'platform_withdrawal', 'manual_payout', 'escrow_release']),
   status: z.string().default('pending'),
   payoutMethod: z.enum(['bank_transfer', 'mobile_wallet', 'platform_balance', 'crypto', 'check', 'manual']),
-  amount: z.number().int().min(0),
-  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)'),
+  ...moneyFields('nonneg'),
   sourceTransactionIds: z.array(z.string()).default([]),
   sourceSplitIds: z.array(z.string()).default([]),
   bankTransferDetails: z.object({

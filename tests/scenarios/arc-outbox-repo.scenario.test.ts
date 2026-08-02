@@ -30,13 +30,12 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
+import type { OutboxStore, OutboxWriteOptions } from '@classytic/primitives/outbox';
 import {
   createRevenue,
   REVENUE_EVENTS,
   TRANSACTION_STATUS,
   type DomainEvent,
-  type OutboxStore,
-  type OutboxWriteOptions,
 } from '../../revenue/src/index.js';
 
 const TIMEOUT = 15000;
@@ -125,6 +124,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 4200,
         gateway: 'fake', methodKind: 'card',
+        idempotencyKey: 'pay-c_repo',
         data: { customerId: 'c_repo' },
       });
       await engine.repositories.transaction.verify(
@@ -179,7 +179,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
 
     try {
       const payment = await engine.repositories.transaction.createPaymentIntent({
-        amount: 9999, gateway: 'fake', methodKind: 'card', data: { customerId: 'c_session' },
+        amount: 9999, gateway: 'fake', methodKind: 'card', idempotencyKey: 'pay-c_session', data: { customerId: 'c_session' },
       });
       const verified = await engine.repositories.transaction.verify(
         payment.gateway!.paymentIntentId as string,
@@ -187,7 +187,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
       expect(verified.status).toBe(TRANSACTION_STATUS.VERIFIED);
 
       const refund = await engine.repositories.transaction.refund(
-        String(verified._id), null, { reason: 'session-bound proof' },
+        String(verified._id), null, { reason: 'session-bound proof', idempotencyKey: 'refund-c_session' },
       );
       expect(refund.type).toBe('refund');
 

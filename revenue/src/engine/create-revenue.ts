@@ -148,6 +148,11 @@ export async function createRevenue(config: RevenueConfig): Promise<RevenueEngin
     commission,
     defaultCurrency: config.defaultCurrency,
     logger: config.logger,
+    // Field-strategy tenant scoping — lets `import()` refuse an unscoped
+    // upsert when the host enabled scoping but forgot `ctx.organizationId`.
+    tenantScopeEnabled: scope.enabled && scope.strategy === 'field',
+    // Phase 3: the per-attempt durable record written before provider I/O.
+    paymentAttemptModel: models.PaymentAttempt,
   });
 
   if (repositories.subscription) {

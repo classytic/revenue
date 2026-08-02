@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   sourcemap: false,
   minify: false,
-  external: ['@classytic/revenue', 'nanoid'],
+  external: ['@classytic/primitives'],
 });

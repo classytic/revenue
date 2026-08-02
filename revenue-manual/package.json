@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue-manual",
-  "version": "0.3.1",
+  "version": "1.0.0",
   "description": "Manual payment provider for @classytic/revenue - Reference implementation",
   "type": "module",
   "sideEffects": false,
@@ -24,7 +24,10 @@
   "contributors": [
     "Sadman Chowdhury (https://github.com/siam923)"
   ],
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/classytic/revenue.git"
@@ -47,15 +50,11 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@classytic/revenue": ">=2.1.0",
-    "@classytic/primitives": ">=0.11.0"
+    "@classytic/primitives": ">=0.20.0"
   },
   "devDependencies": {
     "tsdown": "^0.20.3",
     "typescript": "^5.6.3"
-  },
-  "dependencies": {
-    "nanoid": "^5.1.6"
   },
   "engines": {
     "node": ">=18.0.0"

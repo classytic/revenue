@@ -231,8 +231,28 @@ export interface TransactionDocument {
 
   // ─── Refunds + cross-references (unchanged) ───
   relatedTransactionId?: mongoose.Types.ObjectId;
+  /** CONFIRMED refunded total (minor units) — moved here only after the provider confirms. */
   refundedAmount?: number;
+  /**
+   * RESERVED-but-unconfirmed refund total (phase 3). A refund reserves against this
+   * before the provider call; on confirmation it moves to `refundedAmount`, on decline
+   * it is released, on an unknown outcome it stays held (preventing a double refund)
+   * while the durable refund `PaymentAttempt` carries the `unknown` state. The cap is
+   * `refundedAmount + pendingRefundAmount + next <= amount`.
+   */
+  pendingRefundAmount?: number;
   refundedAt?: Date;
+  /**
+   * @deprecated Phase 3 moved the unknown-refund state onto the refund `PaymentAttempt`.
+   * No longer WRITTEN; retained for back-compat reads of pre-phase-3 rows until the 3d
+   * data migration strips it.
+   */
+  refundReconciliation?: {
+    state: 'unknown';
+    at: Date;
+    providerReference?: string;
+    causeCode?: string;
+  };
   failureReason?: string;
   failedAt?: Date;
   verifiedAt?: Date;
@@ -327,7 +347,20 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
     // Self-reference — refund / split / release children + bank↔gateway cross-link.
     relatedTransactionId: { type: Schema.Types.ObjectId, ref: 'Transaction' },
     refundedAmount: { type: Number },
+    // Phase 3: reserved-but-unconfirmed refund total (see the interface field).
+    pendingRefundAmount: { type: Number },
     refundedAt: { type: Date },
+    /**
+     * @deprecated Phase 3 moved the unknown-refund state onto the refund
+     * `PaymentAttempt`. No longer written; kept for back-compat reads of
+     * pre-phase-3 rows until the 3d data migration strips it.
+     */
+    refundReconciliation: {
+      state: { type: String, enum: ['unknown'] },
+      at: { type: Date },
+      providerReference: { type: String },
+      causeCode: { type: String },
+    },
     failureReason: { type: String },
     failedAt: { type: Date },
     verifiedAt: { type: Date },

@@ -36,7 +36,7 @@ import {
 } from '../../revenue/src/index.js';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   RefundResult,
   WebhookEvent,
@@ -51,7 +51,7 @@ class CountingProvider extends PaymentProvider {
 
   constructor() { super({}); }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
     const id = `cnt_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const amount = params.amount.amount;
     const currency = params.amount.currency ?? 'USD';
@@ -121,6 +121,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 5000, gateway: 'counter', methodKind: 'card',
+        idempotencyKey: 'pay-cust_replay',
         data: { customerId: 'cust_replay' },
       });
       const sessionId = txn.gateway!.sessionId as string;
@@ -201,6 +202,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
     try {
       const txn = await engine.repositories.transaction.createPaymentIntent({
         amount: 5000, gateway: 'counter', methodKind: 'card',
+        idempotencyKey: 'pay-cust_concurrent_replay',
         data: { customerId: 'cust_concurrent_replay' },
       });
       const sessionId = txn.gateway!.sessionId as string;
@@ -246,10 +248,10 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
 
     try {
       const a = await engine.repositories.transaction.createPaymentIntent({
-        amount: 1000, gateway: 'counter', methodKind: 'card', data: { customerId: 'cust_A' },
+        amount: 1000, gateway: 'counter', methodKind: 'card', idempotencyKey: 'pay-cust_A', data: { customerId: 'cust_A' },
       });
       const b = await engine.repositories.transaction.createPaymentIntent({
-        amount: 2000, gateway: 'counter', methodKind: 'card', data: { customerId: 'cust_B' },
+        amount: 2000, gateway: 'counter', methodKind: 'card', idempotencyKey: 'pay-cust_B', data: { customerId: 'cust_B' },
       });
 
       // Chaotic order: A/B/A/A/B/A — each event.id unique to its transaction.

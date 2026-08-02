@@ -6,22 +6,43 @@
  * Perfect for: Cash, bank transfers, mobile money without API
  *
  * Use this as a template for building:
- * - @classytic/revenue-stripe
- * - @classytic/revenue-sslcommerz
- * - @classytic/revenue-bkash
+ * - @classytic/revenue-stripe          (a vendor with its own release cadence)
+ * - @classytic/revenue-bd              (a COUNTRY PACK — bKash, Nagad, SSLCommerz and any
+ *                                       other BD method live as adapters INSIDE it, the
+ *                                       same shape as carrier-bd's Pathao/RedX/Steadfast.
+ *                                       Not one package per provider.)
  * - Your custom provider
  */
 
-import { PaymentProvider } from '@classytic/revenue';
+import { createHash } from 'node:crypto';
+import { ProviderStatusUnavailableError } from '@classytic/primitives/payment-gateway';
+
+/**
+ * Derive a stable, bounded provider id from an idempotency key.
+ *
+ * The key is caller-supplied and may carry PII (an email-based order ref),
+ * punctuation, or unbounded length — none of which belongs verbatim in an id we
+ * store and echo. A SHA-256 prefix is deterministic (a retry with the same key
+ * yields the same id — the whole point of the manual provider as last-line
+ * dedupe) while being fixed-width and opaque.
+ */
+function manualProviderId(prefix: 'manual' | 'refund', idempotencyKey: string): string {
+  const digest = createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32);
+  return `${prefix}_${digest}`;
+}
+import type {
+  DefaultCurrencyAware,
+  PaymentCommandContext,
+  PaymentProviderPort,
+} from '@classytic/primitives/payment-gateway';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   ProviderCapabilities,
   RefundResult,
   WebhookEvent,
 } from '@classytic/primitives/payment-gateway';
-import { nanoid } from 'nanoid';
 
 /**
  * Configuration options for ManualProvider
@@ -51,19 +72,61 @@ interface PaymentInfo {
  * Reference implementation for building payment providers
  * Perfect for: Cash, bank transfers, mobile money without API
  */
-export class ManualProvider extends PaymentProvider {
-  public override readonly name: string = 'manual';
+/**
+ * Implements the PORT directly — no `extends PaymentProvider`, and therefore no runtime
+ * dependency on `@classytic/revenue`.
+ *
+ * That import was a class, not a type, so this package could not be installed or versioned
+ * without the engine even though it needs nothing from it. Everything the base supplied was
+ * config capture and a default-currency holder; both are inlined below, and
+ * `setDefaultCurrency` stays as an OPT-IN convenience the registry feature-detects rather
+ * than a port requirement.
+ */
+export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware {
+  public readonly name: string = 'manual';
+  public readonly config: ManualProviderConfig;
+  private _defaultCurrency = 'USD';
 
   constructor(config: ManualProviderConfig = {}) {
-    super(config);
+    this.config = config;
+    if (typeof config.defaultCurrency === 'string') {
+      this._defaultCurrency = config.defaultCurrency;
+    }
+  }
+
+  get defaultCurrency(): string {
+    return this._defaultCurrency;
+  }
+
+  /**
+   * OPT-IN, not part of `PaymentProviderPort`.
+   *
+   * A default currency is engine configuration and every `Money` already carries its own;
+   * requiring the mutator on the port would make every adapter stateful and unshareable
+   * across accounts. The registry feature-detects this.
+   */
+  setDefaultCurrency(currency: string): void {
+    this._defaultCurrency = currency;
   }
 
   /**
    * Create manual payment intent
    * Returns instructions for manual payment
    */
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
-    const intentId = `manual_${nanoid(16)}`;
+  async createIntent(
+    params: CreateIntentParams,
+    command: PaymentCommandContext,
+  ): Promise<ProviderIntent> {
+    /**
+     * DERIVED from the command's idempotency key, not random.
+     *
+     * There is no gateway here to dedupe a retry, so this provider is the last line of
+     * defence: two creates carrying the same key must yield the SAME intent id. A random id
+     * would make an ordinary retry look like a second, distinct payment to every downstream
+     * consumer, and manual methods are precisely where retries happen — an operator
+     * re-submitting a form that appeared to hang.
+     */
+    const intentId = manualProviderId('manual', command.idempotencyKey);
     const amountValue = params.amount.amount;
     const currency = params.amount.currency ?? this.defaultCurrency;
 
@@ -100,10 +163,26 @@ export class ManualProvider extends PaymentProvider {
   }
 
   /**
-   * Get payment status
+   * Get payment status — this provider REFUSES to answer, deliberately.
+   *
+   * It used to delegate to `verifyPayment`, which returns `succeeded` unconditionally. So
+   * the status of a payment that was never created, or is still awaiting approval, read as
+   * succeeded. Any reconciliation or retry path consulting it would have taken a false
+   * positive as confirmation that money had arrived.
+   *
+   * The provider is STATELESS. It has no store, makes no network call, and holds no record
+   * of any intent — so it genuinely cannot know, and the honest answer is to say so.
+   * `executeProviderCommand` classifies this as `{ outcome: 'unknown' }`.
+   *
+   * That is not a gap: for a manual method there IS no external money-movement authority,
+   * so the stored transaction is the authority (payments-architecture.md §1). The engine
+   * must read the record rather than ask a provider that was never told.
+   *
+   * `verifyPayment` remains meaningful because it is only ever called from an approval
+   * action — there, "an admin has just confirmed this" is a real fact this provider carries.
    */
-  async getStatus(intentId: string): Promise<PaymentResult> {
-    return this.verifyPayment(intentId);
+  async getStatus(_intentId: string): Promise<PaymentResult> {
+    throw new ProviderStatusUnavailableError('manual');
   }
 
   /**
@@ -111,10 +190,18 @@ export class ManualProvider extends PaymentProvider {
    */
   async refund(
     _paymentId: string,
-    amount?: number | null,
-    options: ManualRefundOptions = {}
+    amount: number | null | undefined,
+    command: PaymentCommandContext,
+    options: ManualRefundOptions = {},
   ): Promise<RefundResult> {
-    const refundId = `refund_${nanoid(16)}`;
+    /**
+     * The id is DERIVED from the command's idempotency key, not random.
+     *
+     * A manual refund has no gateway to dedupe against, so this provider is the last line:
+     * two calls carrying the same key must produce the same refund id, or a retry looks like
+     * a second, distinct reversal to everything downstream — the ledger included.
+     */
+    const refundId = manualProviderId('refund', command.idempotencyKey);
     const currency = options.currency ?? this.defaultCurrency;
 
     return {
@@ -141,7 +228,19 @@ export class ManualProvider extends PaymentProvider {
   /**
    * Get provider capabilities
    */
-  override getCapabilities(): ProviderCapabilities {
+  /**
+   * This provider has NO webhook transport, so there is no signature to verify.
+   *
+   * Stated explicitly rather than inherited. It was previously a silent `return true` on the
+   * shared base — a blanket "accept every signature" that any adapter forgetting to override
+   * would have picked up without noticing. For a real gateway that is a forged-webhook hole;
+   * here it is correct only because nothing ever calls it.
+   */
+  verifyWebhookSignature(_payload: unknown, _signature: string): boolean {
+    return true;
+  }
+
+  getCapabilities(): ProviderCapabilities {
     return {
       supportsWebhooks: false,
       supportsRefunds: true,

@@ -66,6 +66,7 @@ async function payAndActivate(customerId: string, amount: number, planKey: strin
     gateway: 'fake', methodKind: 'card',
     monetizationType: 'subscription',
     planKey,
+    idempotencyKey: `${customerId}-${planKey}`,
     data: { customerId },
   });
   await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
@@ -172,7 +173,7 @@ describe('Scenario: SaaS Subscription Lifecycle', () => {
     const refund = await engine.repositories.transaction.refund(
       String(txn._id),
       2000,
-      { reason: 'subscription_proration' },
+      { reason: 'subscription_proration', idempotencyKey: `refund-${String(txn._id)}` },
     );
     expect(refund.amount).toBe(2000);
     const original = await engine.repositories.transaction.getById(String(txn._id));
@@ -191,6 +192,7 @@ describe('Scenario: SaaS Subscription Lifecycle', () => {
       gateway: 'fake', methodKind: 'card',
       monetizationType: 'subscription',
       planKey: 'monthly',
+      idempotencyKey: `${String(sub._id)}-period-2`,
       data: { customerId: 'user_renewals', sourceId: String(sub._id), sourceModel: 'Subscription' },
       metadata: { period: 2, subscriptionId: String(sub._id) },
     });
@@ -202,6 +204,7 @@ describe('Scenario: SaaS Subscription Lifecycle', () => {
       gateway: 'fake', methodKind: 'card',
       monetizationType: 'subscription',
       planKey: 'monthly',
+      idempotencyKey: `${String(sub._id)}-period-3`,
       data: { customerId: 'user_renewals', sourceId: String(sub._id), sourceModel: 'Subscription' },
       metadata: { period: 3, subscriptionId: String(sub._id) },
     });

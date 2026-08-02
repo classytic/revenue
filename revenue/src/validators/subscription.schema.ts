@@ -1,13 +1,15 @@
-import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
+import { currencyCode, minorAmount } from '@classytic/validation/money';
 
 export const subscriptionBaseSchema = z.object({
   publicId: z.string().optional(),
   organizationId: z.string().optional(),
   customerId: z.string().nullish(),
   planKey: z.string(),
-  amount: z.number().int().min(0),
-  currency: z.string().regex(CURRENCY_PATTERN, 'ISO 4217 (3 uppercase letters)').optional(),
+  amount: minorAmount('nonneg'),
+  // Currency is OPTIONAL here (unlike the standard moneyFields shape) —
+  // some legacy free-tier subscriptions never set one.
+  currency: currencyCode.optional(),
   status: z.string().default('pending'),
   isActive: z.boolean().default(false),
   transactionId: z.string().nullish(),

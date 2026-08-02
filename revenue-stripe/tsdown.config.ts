@@ -12,5 +12,5 @@ export default defineConfig({
   dts: true,
   sourcemap: false,
   minify: false,
-  external: ['@classytic/revenue', '@classytic/primitives', 'stripe', 'nanoid'],
+  external: ['@classytic/primitives', 'stripe', 'nanoid'],
 });

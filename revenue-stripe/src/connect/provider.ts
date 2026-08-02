@@ -9,11 +9,13 @@
  * them to the engine's contract.
  */
 
+import type { PaymentCommandContext } from '@classytic/primitives/payment-gateway';
+import type { AssertStripeProvider } from '../lib/provider-base.js';
+import { StripeProviderBase } from '../lib/provider-base.js';
 import type Stripe from 'stripe';
-import { PaymentProvider } from '@classytic/revenue';
 import type {
   CreateIntentParams,
-  PaymentIntent,
+  ProviderIntent,
   PaymentResult,
   ProviderCapabilities,
   RefundResult,
@@ -29,7 +31,7 @@ import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
 
 const DEFAULT_PLATFORM_FEE_PERCENT = 1;
 
-export class StripeConnectProvider extends PaymentProvider {
+export class StripeConnectProvider extends StripeProviderBase {
   public override readonly name: string = 'stripe';
 
   /** Stripe SDK instance — public so advanced callers can drop down. */
@@ -49,7 +51,10 @@ export class StripeConnectProvider extends PaymentProvider {
     if (config.defaultCurrency) this.setDefaultCurrency(config.defaultCurrency);
   }
 
-  async createIntent(params: CreateIntentParams): Promise<PaymentIntent> {
+  async createIntent(
+    params: CreateIntentParams,
+    command: PaymentCommandContext,
+  ): Promise<ProviderIntent> {
     return createIntent(
       {
         stripe: this.stripe,
@@ -57,6 +62,7 @@ export class StripeConnectProvider extends PaymentProvider {
         platformFeePercent: this.platformFeePercent,
       },
       params,
+      command,
     );
   }
 
@@ -71,13 +77,15 @@ export class StripeConnectProvider extends PaymentProvider {
 
   async refund(
     paymentId: string,
-    amount?: number | null,
+    amount: number | null | undefined,
+    command: PaymentCommandContext,
     options: StripeRefundOptions = {},
   ): Promise<RefundResult> {
     return refund(
       { stripe: this.stripe, defaultCurrency: this.defaultCurrency },
       paymentId,
       amount,
+      command,
       options,
     );
   }
@@ -153,7 +161,7 @@ export class StripeConnectProvider extends PaymentProvider {
     }
   }
 
-  override getCapabilities(): ProviderCapabilities {
+  getCapabilities(): ProviderCapabilities {
     return {
       supportsWebhooks: true,
       supportsRefunds: true,
@@ -163,7 +171,7 @@ export class StripeConnectProvider extends PaymentProvider {
   }
 
   /**
-   * Convenience: turn a verified-by-webhook PaymentIntent into a
+   * Convenience: turn a verified-by-webhook ProviderIntent into a
    * PaymentResult without an extra Stripe round-trip. Useful for
    * `payment_intent.succeeded` handlers that want to settle the
    * Transaction immediately.
@@ -174,3 +182,12 @@ export class StripeConnectProvider extends PaymentProvider {
 }
 
 export default StripeConnectProvider;
+
+/**
+ * Compile-time proof that `StripeConnectProvider` satisfies `PaymentProviderPort`.
+ *
+ * The base no longer forces it — it is not abstract over the port's members — so without
+ * this a missing or mistyped method would only surface when the registry rejected it, or
+ * worse, at the first live payment.
+ */
+export type StripeConnectProviderSatisfiesPort = AssertStripeProvider<StripeConnectProvider>;

@@ -155,7 +155,14 @@ export const TRANSACTION_STATE_MACHINE = new StateMachine<TransactionStatusValue
     [TRANSACTION_STATUS.COMPLETED, new Set([
       TRANSACTION_STATUS.REFUNDED, TRANSACTION_STATUS.PARTIALLY_REFUNDED,
     ])],
-    [TRANSACTION_STATUS.PARTIALLY_REFUNDED, new Set([TRANSACTION_STATUS.REFUNDED])],
+    [TRANSACTION_STATUS.PARTIALLY_REFUNDED, new Set([
+      // Self-edge — a legitimate 2nd (3rd, …) partial refund keeps the row
+      // `partially_refunded` while the cumulative refunded amount grows toward
+      // `amount`. Remaining-balance semantics: the refund verb flips to
+      // `refunded` only once the running total reaches the captured amount.
+      TRANSACTION_STATUS.PARTIALLY_REFUNDED,
+      TRANSACTION_STATUS.REFUNDED,
+    ])],
     [TRANSACTION_STATUS.FAILED, new Set([])],
     [TRANSACTION_STATUS.REFUNDED, new Set([])],
     [TRANSACTION_STATUS.CANCELLED, new Set([])],
