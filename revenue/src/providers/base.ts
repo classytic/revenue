@@ -114,12 +114,29 @@ export abstract class PaymentProvider implements PaymentProviderPort {
   ): Promise<WebhookEvent>;
 
   /**
-   * Default: accept all signatures (manual / dev provider). Real
-   * gateways MUST override with HMAC / timing-safe verification.
+   * Does this payload REALLY come from the provider?
+   *
+   * ## Abstract on purpose — there is no default, and there must not be
+   *
+   * This was `return true` on the base class, documented as "least-breaking:
+   * enforcement is opt-in per provider". That is accept-every-signature for anyone
+   * who forgets to override, on the one call that transitions a payment: an
+   * unauthenticated POST to `/webhooks/payments/:provider` could mark a transaction
+   * succeeded. `TransactionRepository.handleWebhook` calls this BEFORE parsing the
+   * payload or mutating anything, so it is the only thing standing there.
+   *
+   * "Opt-in enforcement" reads as pragmatic and inverts the safe default: the
+   * provider that forgot is exactly the one that needed the check. Abstract makes the
+   * compiler ask every implementer, and a provider with genuinely no signature to
+   * verify (manual, dev, bank-feed) answers `true` EXPLICITLY, in its own file, where
+   * that decision is reviewable.
+   *
+   * Return `true` only on a positive match. Returning `true` because no signature
+   * header was present is the same bug one layer down.
+   *
+   * @param signature Raw header value, or `''` when the request carried none.
    */
-  verifyWebhookSignature(_payload: unknown, _signature: string): boolean {
-    return true;
-  }
+  abstract verifyWebhookSignature(payload: unknown, signature: string): boolean;
 
   getCapabilities(): ProviderCapabilities {
     return {

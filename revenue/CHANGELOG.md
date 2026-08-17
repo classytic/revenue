@@ -4,13 +4,69 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## 3.0.0 - 2026-07-29
+## 2.9.0 — 2026-08-17
+
+**Version note (2026-08-16).** This span was briefly numbered 2.8.3 / 2.9.0 / 3.0.0 / 3.0.1
+in the working tree. It is ONE unreleased release off the published `2.8.2`, and it is
+**2.9.0**: `3.0.0` is reserved for the move to **mongoose 10 + mongokit 4**, which is the
+next actual breaking change. The relicense below is deliberately NOT the major — a licence
+term is not a semver API break, and spending the major on it would leave the DB-stack break
+without one. Nothing was ever published above 2.8.2 (`npm view @classytic/revenue versions`),
+so the renumber breaks no installed consumer; the declared ranges in be-prod,
+`@spinekit/revenue` and `@spinekit/accounting` moved down with it.
 
 ### Changed
 - **License:** relicensed from MIT to the **Classytic Source-Available License** (Community & Commercial). Evaluation/development use remains free; production use now requires a commercial license from Classytic LLC. See `LICENSE`.
-- Major bump marks the license change; versions published before 3.0.0 remain under their original MIT terms.
+- Versions published up to and including **2.8.2** remain under their original MIT terms; this release is the first under the new licence. (This bullet said "major bump marks the license change" while the span was numbered 3.0.0 — see the version note above for why the major is reserved instead.)
 
-## 2.9.0 - 2026-07-24 (unpublished)
+### Fixed — every canonical payment event was rejected by every consumer
+
+`canonicalInstant` was `z.iso.datetime()` (a string) while the builders in
+`canonical-payment-events.ts` emit `occurredAt: Date` — the type
+`@classytic/primitives/events/payment-events` declares, correctly, as the
+in-process shape. The two are INDEPENDENT declarations of one contract and never
+meet in a type position, so `tsc --noEmit` was rc 0 with 0 errors while
+consumers rejected **100% of deliveries**.
+
+The narrowing rested on a false premise, written into the docblock it replaced:
+"a subscriber receives JSON: the event is persisted to the outbox and relayed, so
+`occurredAt` arrives serialised." A Mongo-backed outbox does not serialise —
+`@classytic/mongokit/outbox` stores the envelope as `Schema.Types.Mixed` ("the
+event, verbatim, as the relay will republish it"), so a `Date` round-trips
+through BSON as a `Date`. And the transaction repositories publish TWICE
+(`saveToOutbox` in-transaction, `publishToTransport` after commit), so the
+in-process path never serialised either. **Both paths deliver a `Date`.**
+
+Observed live on 2026-08-16 in a commerce deployment: a refund executed, the
+customer was refunded, the RMA stamped `settledAt` — and `@spinekit/accounting`
+logged `posting: payload validation failed — skipping` (WARN, no throw, no
+dead-letter) once per delivery path. **No revenue or output-VAT reversal journal
+entry was ever posted.** A refunded sale overstates both and carries the
+overstatement into the VAT return. `payment.succeeded` and `payment.failed`
+share `canonicalInstant` and were equally affected.
+
+- `canonicalInstant` is a `z.union([z.iso.datetime(), z.date()])` — what the
+  original docblock described, restored. The union is kept rather than plain
+  `z.date()` so a future HTTP/Kafka relay, which does serialise, cannot
+  reproduce this bug with the paths swapped.
+- `defineRevenueEvent` now converts with `z.toJSONSchema(schema, {
+  unrepresentable: 'any' })`. It ran with zod's default `'throw'` and runs
+  EAGERLY at module load, so a single `z.date()` anywhere threw
+  `Date cannot be represented in JSON Schema` at import — that pressure is what
+  narrowed the schema in the first place. The DOCS projection must never dictate
+  the VALIDATION contract; this matches `@classytic/arc`'s own converter for
+  every non-throw mode.
+
+### Added
+- `tests/builder-payload-satisfies-schema.test.ts` — every canonical builder's
+  output is parsed by the event's own `zodSchema`, in BOTH the live (`Date`) and
+  serialised (`JSON.parse(JSON.stringify(...))`) shapes. The pre-existing
+  `canonical-payment-events.test.ts` asserted builder output against the
+  primitive TYPE only, which is why it stayed green through this bug.
+  Both mechanisms falsified independently: re-narrowing the union fails the three
+  LIVE assertions with the exact production message
+  (`Invalid input: expected string, received Date`), and restoring the default
+  converter throws at import (`Test Files 1 failed`, `Tests no tests`).
 
 ### Added — idempotent refunds
 

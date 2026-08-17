@@ -41,7 +41,6 @@ export interface SettlementDocument {
   retryCount: number;
   notes?: string;
   metadata?: Record<string, unknown>;
-  deletedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -77,7 +76,6 @@ export function buildSettlementSchema(config: RevenueSchemaConfig): Schema<Settl
     retryCount: { type: Number, default: 0 },
     notes: { type: String },
     metadata: { type: Schema.Types.Mixed },
-    deletedAt: { type: Date, default: null },
   };
 
   if (config.extraFields) Object.assign(fields, config.extraFields);
@@ -95,7 +93,7 @@ export function buildSettlementSchema(config: RevenueSchemaConfig): Schema<Settl
     { publicId: 1 },
     {
       unique: true,
-      partialFilterExpression: { deletedAt: null, publicId: { $type: 'string' } },
+      partialFilterExpression: { publicId: { $type: 'string' } },
     },
   );
 

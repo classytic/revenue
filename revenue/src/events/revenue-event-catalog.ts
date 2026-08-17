@@ -33,6 +33,7 @@
  * });
  * ```
  */
+import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
 import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 import type { DomainEvent } from '@classytic/primitives/events';
@@ -84,7 +85,27 @@ function defineRevenueEvent<TSchema extends z.ZodType>(input: {
     name,
     version,
     description,
-    schema: z.toJSONSchema(zodSchema) as RevenueEventSchema,
+    /**
+     * `unrepresentable: 'any'` — the DOCUMENTATION projection must never
+     * constrain the VALIDATION contract.
+     *
+     * This ran with zod's defaults, i.e. `unrepresentable: 'throw'`, and it runs
+     * EAGERLY at module load: one `z.date()` anywhere in any event schema below
+     * threw `Date cannot be represented in JSON Schema` at import and took the
+     * whole package down. So the schemas were written to whatever this line
+     * tolerated rather than to what the transport actually delivers — and that
+     * is how `canonicalInstant` was narrowed from a working union to a
+     * string-only form that rejects every event this system emits (see its
+     * docblock).
+     *
+     * `schema` is the human/registry-facing JSON Schema; `zodSchema` is the
+     * source of truth every `.safeParse()` uses. Under `'any'`, a type JSON
+     * Schema cannot express degrades to `{}` in the DOCS while runtime
+     * validation stays exact — which is the correct trade in that order. This
+     * matches what `@classytic/arc`'s own converter does for every non-throw
+     * mode.
+     */
+    schema: z.toJSONSchema(zodSchema, { unrepresentable: 'any' }) as RevenueEventSchema,
     zodSchema,
     create(payload, meta) {
       return createPrimitiveEvent(name, payload, { resource: 'revenue', ...meta });
@@ -133,11 +154,6 @@ const settlementRef = z.object({
 
 // ─── Payment ──────────────────────────────────────────────────────────────
 
-const paymentVerifiedSchema = z.object({
-  transaction: transactionRef,
-  paymentResult: z.record(z.string(), z.unknown()).optional(),
-  verifiedBy: z.string().optional(),
-});
 
 const paymentFailedSchema = z.object({
   transaction: transactionRef,
@@ -162,13 +178,6 @@ const paymentRequiresActionSchema = z.object({
 // The old shape (money-shaped refundAmount + required originalAmount) never
 // matched a real emission — the drift was invisible until hosts wired the
 // outbox/transport and subscribers started validating real payloads.
-const paymentRefundedSchema = z.object({
-  transaction: transactionRef,
-  refundTransaction: transactionRef,
-  refundAmount: z.number().nonnegative(),
-  reason: z.string().optional(),
-  isPartialRefund: z.boolean(),
-});
 
 const paymentAuthorizedSchema = z.object({
   transaction: transactionRef,
@@ -396,11 +405,19 @@ const transactionRemovedByFeedSchema = z.object({
 
 // ─── Inferred payload types (exported for host subscribers) ──────────────
 
-export type PaymentVerifiedPayload = z.infer<typeof paymentVerifiedSchema>;
+/**
+ * RETIRED payload aliases now point at the CANONICAL schemas.
+ *
+ * These were `z.infer` of the old document-shaped schemas. Left pointing there
+ * they would keep every consumer compiling against a payload nothing emits —
+ * the type would agree with the code and disagree with reality, which is worse
+ * than a break because nothing surfaces it.
+ */
+export type PaymentSucceededPayload = z.infer<typeof paymentSucceededCanonicalSchema>;
 export type PaymentFailedPayload = z.infer<typeof paymentFailedSchema>;
 export type PaymentProcessingPayload = z.infer<typeof paymentProcessingSchema>;
 export type PaymentRequiresActionPayload = z.infer<typeof paymentRequiresActionSchema>;
-export type PaymentRefundedPayload = z.infer<typeof paymentRefundedSchema>;
+export type PaymentRefundedPayload = z.infer<typeof paymentRefundedCanonicalSchema>;
 export type PaymentAuthorizedPayload = z.infer<typeof paymentAuthorizedSchema>;
 export type PaymentCapturedPayload = z.infer<typeof paymentCapturedSchema>;
 export type PaymentAuthVoidedPayload = z.infer<typeof paymentAuthVoidedSchema>;
@@ -435,18 +452,115 @@ export type TransactionJournalizedPayload = z.infer<typeof transactionJournalize
 export type TransactionRejectedPayload = z.infer<typeof transactionRejectedSchema>;
 export type TransactionRemovedByFeedPayload = z.infer<typeof transactionRemovedByFeedSchema>;
 
-// ─── Event definitions ────────────────────────────────────────────────────
+/**
+ * Canonical payload schemas — the RUNTIME half of the primitives contract.
+ *
+ * These mirror `@classytic/primitives/payment-events` so a host can validate at
+ * the boundary. The compile-time half is the exported TypeScript payloads; the
+ * builders in `canonical-payment-events.ts` are typed against THOSE, so a schema
+ * that drifts from the interface fails in the builder tests rather than silently
+ * accepting a wrong shape at runtime.
+ */
+const canonicalMoney = z.object({ amount: z.number(), currency: z.string() });
 
-export const PaymentVerified = defineRevenueEvent({
-  name: REVENUE_EVENTS.PAYMENT_VERIFIED,
-  description: 'A payment transaction was verified by its provider.',
-  zodSchema: paymentVerifiedSchema,
+/**
+ * An instant AS IT ACTUALLY ARRIVES — a `Date` on every path this system has,
+ * and an ISO string for any transport that genuinely serialises.
+ *
+ * ## What was wrong, and why nothing said so
+ *
+ * This was narrowed to `z.iso.datetime()` on the belief — written into the
+ * docblock it replaced — that "a subscriber receives JSON: the event is
+ * persisted to the outbox and relayed, so `occurredAt` arrives serialised."
+ *
+ * **That premise is false for a Mongo-backed outbox.** The row stores the
+ * envelope as `Schema.Types.Mixed` ("the event, verbatim, as the relay will
+ * republish it" — `@classytic/mongokit/outbox`), so a JS `Date` persists as a
+ * BSON Date and is read back as a JS `Date`. Nothing serialises it. And the
+ * repositories publish TWICE — `saveToOutbox` inside the transaction plus
+ * `publishToTransport` after commit — so a subscriber gets a live object on the
+ * fast path too.
+ *
+ * Result: the builders emit `Date` (the primitive payload types declare `Date`,
+ * correctly, as the in-process type), this schema demanded `string`, and the
+ * consumer therefore rejected **100% of deliveries on 100% of paths**. Observed
+ * live on 2026-08-16: a refund executed, the customer was refunded, `settledAt`
+ * was stamped, and spine-accounting logged `posting: payload validation failed —
+ * skipping` twice — once per delivery path, both `received Date`. No revenue or
+ * output-VAT reversal was ever posted, and nothing threw. A refunded sale
+ * overstates both and carries it into the VAT return.
+ *
+ * The union is what the ORIGINAL docblock described, and removing it is what
+ * broke this. It is restored, and the reason it was removed is closed at source:
+ * `defineRevenueEvent` now converts with `unrepresentable: 'any'`, so a shape
+ * JSON Schema cannot express degrades in the DOCS instead of dictating the
+ * validation contract. Measured against zod 4.4.3 — the union parses both a
+ * `Date` and an ISO string, and emits a clean `anyOf` under `'any'`.
+ *
+ * Keep it a union rather than "just `z.date()`": a future HTTP/Kafka relay does
+ * serialise, and a schema that then rejected the replayed form would reproduce
+ * this bug with the paths swapped. Consumers that read the field should accept
+ * both (`new Date(v)` is correct for either).
+ */
+const canonicalInstant = z.union([z.iso.datetime(), z.date()]);
+
+const paymentSucceededCanonicalSchema = z.object({
+  eventType: z.literal(PAYMENT_EVENT_TYPE.SUCCEEDED),
+  paymentId: z.string(),
+  providerRef: z.string().optional(),
+  providerCode: z.string(),
+  amount: canonicalMoney,
+  methodKind: z.string(),
+  methodCode: z.string().optional(),
+  occurredAt: canonicalInstant,
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const PaymentFailed = defineRevenueEvent({
-  name: REVENUE_EVENTS.PAYMENT_FAILED,
-  description: 'A payment verification failed.',
-  zodSchema: paymentFailedSchema,
+const paymentFailedCanonicalSchema = paymentSucceededCanonicalSchema.extend({
+  eventType: z.literal(PAYMENT_EVENT_TYPE.FAILED),
+  reason: z.string(),
+  reasonCode: z.string().optional(),
+});
+
+const paymentRefundedCanonicalSchema = z.object({
+  eventType: z.literal(PAYMENT_EVENT_TYPE.REFUNDED),
+  paymentId: z.string(),
+  refundId: z.string(),
+  providerRef: z.string().optional(),
+  providerCode: z.string(),
+  refundedAmount: canonicalMoney,
+  originalAmount: canonicalMoney,
+  isPartial: z.boolean(),
+  reason: z.string().optional(),
+  occurredAt: canonicalInstant,
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+// ─── Event definitions ────────────────────────────────────────────────────
+
+/**
+ * ## Portable outcomes — the CANONICAL contract
+ *
+ * `PaymentSucceeded` / `PaymentFailedEvent` / `PaymentRefunded` are GONE in 4.x. They
+ * declared `revenue:payment.*` names carrying revenue's own document shape, and
+ * nothing emits those any more. Leaving the declarations behind would describe a
+ * stream that does not exist — worse than deleting them, because a host would
+ * bind a handler that never fires and nothing would error.
+ *
+ * The replacements below name the canonical events and validate the primitive
+ * payloads, so a host keeps the same declarative wiring
+ * (`event: X, payloadSchema: X.zodSchema`) while consuming a contract that does
+ * not mention revenue.
+ */
+export const PaymentSucceeded = defineRevenueEvent({
+  name: PAYMENT_EVENT_TYPE.SUCCEEDED,
+  description: 'Funds confirmed received — the trigger for AR settlement and fulfilment unlocks.',
+  zodSchema: paymentSucceededCanonicalSchema,
+});
+
+export const PaymentFailedEvent = defineRevenueEvent({
+  name: PAYMENT_EVENT_TYPE.FAILED,
+  description: 'A payment attempt failed before clearing — the obligation remains unsettled.',
+  zodSchema: paymentFailedCanonicalSchema,
 });
 
 export const PaymentProcessing = defineRevenueEvent({
@@ -462,9 +576,9 @@ export const PaymentRequiresAction = defineRevenueEvent({
 });
 
 export const PaymentRefunded = defineRevenueEvent({
-  name: REVENUE_EVENTS.PAYMENT_REFUNDED,
-  description: 'A payment transaction was (partially or fully) refunded.',
-  zodSchema: paymentRefundedSchema,
+  name: PAYMENT_EVENT_TYPE.REFUNDED,
+  description: 'Money returned to the customer — carries originalAmount so remaining refundable needs no lookup.',
+  zodSchema: paymentRefundedCanonicalSchema,
 });
 
 export const PaymentAuthorized = defineRevenueEvent({
@@ -676,8 +790,8 @@ export const TransactionRemovedByFeed = defineRevenueEvent({
  * when `eventPlugin({ validateMode: 'reject' })` is set.
  */
 export const revenueEventDefinitions: ReadonlyArray<RevenueEventDefinition> = [
-  PaymentVerified,
-  PaymentFailed,
+  PaymentSucceeded,
+  PaymentFailedEvent,
   PaymentProcessing,
   PaymentRequiresAction,
   PaymentRefunded,

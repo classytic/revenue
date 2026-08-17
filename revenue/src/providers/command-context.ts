@@ -34,7 +34,8 @@ function nextRequestId(): string {
 export function buildPaymentCommandContext(input: {
   operation: string;
   subjectId: string;
-  organizationId: string;
+  /** Optional — absent on an unscoped (single-tenant / company-global) engine. */
+  organizationId?: string;
   merchantReference?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
@@ -43,7 +44,7 @@ export function buildPaymentCommandContext(input: {
     idempotencyKey: input.idempotencyKey ?? `${input.operation}:${input.subjectId}`,
     requestId: nextRequestId(),
     merchantReference: input.merchantReference ?? input.subjectId,
-    organizationId: input.organizationId,
+    ...(input.organizationId !== undefined ? { organizationId: input.organizationId } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
   };
 }

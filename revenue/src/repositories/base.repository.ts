@@ -14,7 +14,7 @@
  *   1. **Thread request context into mongokit options.** Every domain
  *      verb that touches the DB (read or write) ends with a mongokit
  *      method whose options bag is what `multiTenantPlugin`,
- *      `softDeletePlugin`, the audit plugins, and `withTransaction`
+ *      the audit plugins, and `withTransaction`
  *      read from. {@link optsFromCtx} centralises that translation
  *      using mongokit's typed extractor — adding a new canonical field
  *      to `RevenueContext` is now a single line, not three.
@@ -119,7 +119,7 @@ export abstract class RevenueRepositoryBase<
 
   /**
    * Wire engine-managed deps. Called exactly once per repository
-   * instance during {@link createRevenue} bootstrap. Subclasses with
+   * instance during {@link defineRevenue} bootstrap. Subclasses with
    * extra steps (caching, prebuilding state machine maps) override and
    * call `super.inject(deps)`.
    */
@@ -152,10 +152,12 @@ export abstract class RevenueRepositoryBase<
       ...extra,
       ...repoOptionsFromCtx(ctx as unknown as Record<string, unknown>),
     };
-    // Revenue-specific flag — not part of mongokit's canonical set, but
-    // the multi-tenant plugin's `skipWhen` reads it to allow superadmin
-    // cross-org reads.
-    if (ctx._bypassTenant === true) out._bypassTenant = true;
+    // Superadmin cross-org bypass. `RevenueContext._bypassTenant` is a caller-facing
+    // convenience; it maps to mongokit's CANONICAL per-call escape hatch `bypassTenant`
+    // (what `systemContext()` also emits), so the multi-tenant plugin's native handling
+    // applies — no revenue-local `skipWhen` callback duplicating that policy. Trusted
+    // maintenance paths (the reconciliation scanner) pass `systemContext()` directly.
+    if (ctx._bypassTenant === true) out.bypassTenant = true;
     return out;
   }
 

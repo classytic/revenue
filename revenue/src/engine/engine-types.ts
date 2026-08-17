@@ -1,19 +1,29 @@
-import type { Connection } from 'mongoose';
+/**
+ * Engine types for @classytic/revenue.
+ *   - `RevenueShape` / `RevenueRuntime` — describe/bind inputs (see define-revenue.ts)
+ *   - `RevenueEngine`   — frozen output (`models`, `repositories`, `providers`, `events`, `config`)
+ *   - `ResolvedRevenueConfig` — defaults applied at bind
+ *
+ * The construction API is describe/bind: `defineRevenue(shape).bind(connection, runtime)`.
+ * There is no `createRevenue` wrapper and no flat `RevenueConfig`.
+ */
+import type { CurrencyCode } from '@classytic/primitives/currency';
 import type { RevenueContext } from '../core/context.js';
-import type { RevenueBridges } from '../bridges/revenue-bridges.js';
-import type { PaymentProviderPort } from '@classytic/primitives/payment-gateway';
-import type {
-  BankFeedProvider,
-  BankFeedProviderRegistry,
-} from '../providers/bank-feed.js';
-import type { RevenueModels, RevenueSchemaOptions } from '../models/create-models.js';
-import type { RevenueRepositories, RepositoryPluginBundle } from '../repositories/create-repositories.js';
+import type { BankFeedProviderRegistry } from '../providers/bank-feed.js';
+import type { RevenueModels } from '../models/create-models.js';
+import type { RevenueRepositories } from '../repositories/create-repositories.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { EventTransport } from '@classytic/primitives/events';
-import type { OutboxStore } from '@classytic/primitives/outbox';
-import type { TenantConfig } from '@classytic/repo-core/tenant';
+import type { ResolvedTenantConfig } from '@classytic/repo-core/tenant';
 
 export type { RevenueContext };
+
+export interface RevenueLogger {
+  info: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  debug: (...args: unknown[]) => void;
+}
 
 export interface CommissionConfig {
   defaultRate: number;
@@ -32,36 +42,24 @@ export interface RetryConfig {
  * MongoDB index on the `Transaction` collection. Defaults are tuned for
  * "moderate use" — required indexes are on, dashboard indexes are on,
  * heavy reconciliation indexes are off.
- *
- * Toggle these to match real usage. Index builds are non-trivial on a
- * collection with millions of rows; turning unused ones off saves disk +
- * write amplification.
  */
 export interface BankFeedIndexConfig {
   /**
    * `(orgId, bankAccountId, externalId)` partial unique index. Required
-   * for `import()` to enforce idempotent re-import — turning this off
-   * means a Plaid drain that retries can produce duplicate rows.
-   *
-   * Default: `true`. Disable only if you don't use `import()` /
-   * `drainSync()` / `parseAndImport()`.
+   * for `import()` to enforce idempotent re-import. Default: `true`.
    */
   idempotentImport?: boolean | undefined;
 
   /**
    * `(bankAccountId, postedDate -1)` partial — drives the treasurer
-   * dashboard ("show me last 30 days of transactions for account X").
-   * Cheap; on by default.
+   * dashboard. Cheap; on by default.
    */
   byAccount?: boolean | undefined;
 
   /**
    * `(kind, amount, postedDate)` and `(kind, amount, createdAt)` —
    * back the cross-reference query in `findMatchCandidates`. Two
-   * compound indexes; turn on when you actively reconcile bank
-   * deposits to gateway charges.
-   *
-   * Default: `false`. Enable when running a recon dashboard.
+   * compound indexes; on when you actively reconcile. Default: `false`.
    */
   matchCandidates?: boolean | undefined;
 }
@@ -76,202 +74,56 @@ export interface BankFeedModuleConfig {
   indexes?: BankFeedIndexConfig | undefined;
 }
 
-export interface RevenueConfig {
-  connection: Connection;
-  defaultCurrency: string;
-  /**
-   * Event transport — structurally compatible with `@classytic/arc`'s
-   * `EventTransport`. Drop in any arc transport (Memory/Redis/Kafka) and it
-   * works without an adapter. When omitted, the engine uses
-   * `InProcessRevenueBus` (a ~50-line match of arc's `MemoryEventTransport`).
-   */
-  eventTransport?: EventTransport | undefined;
-  /**
-   * Host-owned transactional outbox store (PACKAGE_RULES §5.5 + P8).
-   * Structurally identical to `@classytic/arc`'s `OutboxStore` by design —
-   * primitives is the source of truth for the contract and arc mirrors it.
-   *
-   * **Host responsibility.** Revenue does NOT ship a durable store. Arc 2.10
-   * only ships `MemoryOutboxStore` (dev) + the `OutboxStore` interface — the
-   * host wires durability. The canonical production wiring uses arc's
-   * `repositoryAsOutboxStore` adapter over a mongokit `Repository`:
-   *
-   * ```ts
-   * import mongoose, { Schema } from 'mongoose';
-   * import {
-   *   Repository,
-   *   methodRegistryPlugin,
-   *   batchOperationsPlugin,
-   * } from '@classytic/mongokit';
-   * import { EventOutbox, repositoryAsOutboxStore } from '@classytic/arc/events';
-   * import { createRevenue } from '@classytic/revenue';
-   *
-   * // Arc owns the on-disk doc shape — strict:false forwards every field
-   * // (see arc's events.mdx "Why strict: false").
-   * const OutboxModel = mongoose.model(
-   *   'ArcOutbox',
-   *   new Schema({}, { strict: false, timestamps: false, _id: false }),
-   *   'event_outbox',
-   * );
-   *
-   * // Required plugins: the adapter calls `create` / `findAll` /
-   * // `findOneAndUpdate` (base Repository) + `deleteMany` (batchOperations).
-   * const outboxRepo = new Repository(OutboxModel, [
-   *   methodRegistryPlugin(),
-   *   batchOperationsPlugin(),
-   * ]);
-   * const outbox = repositoryAsOutboxStore(outboxRepo);
-   *
-   * const engine = await createRevenue({
-   *   connection: mongoose.connection,
-   *   defaultCurrency: 'USD',
-   *   outbox,                       // revenue's dispatch saves here
-   *   eventTransport: app.events,   // arc transport for in-process subscribers
-   *   // ...
-   * });
-   *
-   * // Relay + DLQ live in the host, not the package:
-   * const relay = new EventOutbox({ store: outbox, transport: app.events });
-   * setInterval(() => relay.relay(), 1_000);
-   * ```
-   *
-   * **Session-bound atomicity.** Revenue's transactional verbs (`refund`,
-   * `release`, `split`) open a mongokit `withTransaction` and pass the
-   * mongoose `ClientSession` into `outbox.save(event, { session })`, so the
-   * outbox row commits atomically with the business writes. Non-transactional
-   * verbs (`createPaymentIntent`, `verify`, `handleWebhook`, `hold`) forward
-   * `ctx.session` when the host is coordinating its own transaction — pass
-   * `{ session }` in `RevenueContext` to participate.
-   *
-   * **Non-arc hosts.** Any `OutboxStore` works — implement the three-method
-   * floor (`save` / `getPending` / `acknowledge`) over Postgres / Redis /
-   * Kafka / SQS. When omitted, events flow to `eventTransport` only
-   * (durability becomes transport-level, not at-least-once).
-   */
-  outbox?: OutboxStore | undefined;
-  modules?: {
-    subscription?: boolean | undefined;
-    escrow?: boolean | undefined;
-    settlement?: boolean | undefined;
-    commission?: CommissionConfig | boolean | undefined;
-    /**
-     * Bank-feed / accounting-feed module (3.0). Default: enabled (the
-     * schema fields are always present so the discriminator works
-     * uniformly). Disabling this suppresses the auto-wiring of
-     * `bankFeedProviders`, the bulk-write plugin, AND every bank-feed
-     * index — set to `false` for hosts that purely use the payment-
-     * flow lifecycle and want to omit those costs.
-     *
-     * Pass an object to fine-tune which bank-feed indexes are built.
-     * Examples:
-     *   `{ bankFeed: { indexes: { matchCandidates: true } } }`
-     *     — turn on cross-ref indexes for an active recon dashboard.
-     *   `{ bankFeed: { indexes: { idempotentImport: false, byAccount: false } } }`
-     *     — host doesn't use `import()` and doesn't need treasurer dashboards.
-     */
-    bankFeed?: boolean | BankFeedModuleConfig | undefined;
-  } | undefined;
-  /**
-   * Keyed by the name the engine will resolve them under.
-   *
-   * Typed as the PORT, not this package's `PaymentProvider` class — an adapter that depends
-   * only on `@classytic/primitives` must be composable here, which is the entire reason the
-   * contract moved. Several keys may point at ONE instance (a country pack aliasing its
-   * manual methods); that is expected and supported.
-   */
-  providers?: Record<string, PaymentProviderPort> | undefined;
-  /**
-   * Bank-feed providers — Plaid, fin-io OFX/CAMT/MT940/CSV, QBO/Xero CDC
-   * adapters. Wired into `engine.bankFeedProviders` and consumed by
-   * `transactionRepository.drainSync()` and `parseAndImport()`.
-   *
-   * @example
-   * ```ts
-   * import { PlaidBankFeedProvider } from '@classytic/revenue-plaid';
-   * import { FinIoBankFeedProvider } from '@classytic/revenue-fin-io';
-   *
-   * const engine = await createRevenue({
-   *   ...,
-   *   bankFeedProviders: {
-   *     plaid: new PlaidBankFeedProvider({ clientId, secret }),
-   *     ofx:   new FinIoBankFeedProvider(),
-   *   },
-   * });
-   * ```
-   */
-  bankFeedProviders?: Record<string, BankFeedProvider> | undefined;
-  bridges?: RevenueBridges | undefined;
-  repositoryPlugins?: RepositoryPluginBundle | undefined;
-  schemaOptions?: RevenueSchemaOptions | undefined;
-  /**
-   * Tenant scope configuration. Delegates to `@classytic/primitives`'
-   * `TenantConfig`. Field names match mongokit's `MultiTenantOptions` so
-   * the resolved config forwards directly into `multiTenantPlugin(...)`.
-   *
-   * - `undefined` / `true` → default field strategy, ObjectId storage.
-   * - `false` → single-tenant (no plugin, field still present, not required).
-   * - `{ fieldType: 'string' }` → string orgIds (UUID/slug hosts).
-   * - `{ strategy: 'custom', resolve: ... }` → composite / derived scope.
-   *
-   * See PACKAGE_RULES.md §9.
-   */
-  scope?: TenantConfig | boolean | undefined;
-  commission?: CommissionConfig | undefined;
-  retry?: RetryConfig | undefined;
-  circuitBreaker?: boolean | undefined;
-  /**
-   * Set `false` to disable Mongoose auto-index on boot. Indexes are then
-   * managed explicitly via `engine.syncIndexes()` or a deploy-time script.
-   */
-  autoIndex?: boolean | Partial<Record<'Transaction' | 'Subscription' | 'Settlement', boolean>> | undefined;
-  /**
-   * Optional prefix prepended to every physical collection this package
-   * creates (see PACKAGE_RULES.md §20.1). Unset → default names
-   * (`revenue_transactions`, `revenue_subscriptions`, `revenue_settlements`).
-   * Model names and `ref:` populate are unaffected.
-   */
+/** Resolved module set after defaults are applied at describe time. */
+export interface ResolvedRevenueModules {
+  subscription: boolean;
+  escrow: boolean;
+  settlement: boolean;
+  bankFeed: boolean;
+}
+
+/**
+ * The engine's resolved configuration snapshot (frozen). Describe-time shape decisions plus the
+ * bind-time default currency — enough to introspect what the engine was built with, without
+ * leaking runtime collaborators (transport/providers/bridges) that have their own accessors.
+ */
+export interface ResolvedRevenueConfig {
+  scope: ResolvedTenantConfig;
+  modules: ResolvedRevenueModules;
+  /** Validated + branded at bind. Raw config input is a plain string. */
+  defaultCurrency: CurrencyCode;
   collectionPrefix?: string | undefined;
-  /**
-   * When true, existing Mongoose models with revenue's names are deleted
-   * from the connection before re-registering. Hot-reload / test fixtures
-   * only. Default `false` — collision throws `RevenueModelCollisionError`.
-   * Hosts that need two revenue engines should use two Mongoose connections
-   * (`mongoose.createConnection(...)`). See PACKAGE_RULES.md §21.
-   */
-  forceRecreate?: boolean | undefined;
-  logger?: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; debug: (...args: unknown[]) => void } | undefined;
+  forceRecreate: boolean;
 }
 
 /**
  * RevenueEngine — no service facade.
  *
- * Repositories ARE the domain layer. CRUD is inherited from mongokit.
- * Domain verbs (verify, refund, hold, activate, etc.) live on repositories.
- * Arc's BaseController/adapter plugs into repositories directly.
+ * Repositories ARE the domain layer. CRUD is inherited from mongokit. Domain verbs
+ * (verify, refund, hold, activate, etc.) live on repositories. Arc's BaseController/adapter
+ * plugs into repositories directly.
  *
- * `events` is structurally compatible with `@classytic/arc`'s
- * `EventTransport`. Hosts subscribe glob-style:
- *
- *     await revenue.events.subscribe('revenue:payment.*', handler);
- *
- * and the same transport can be wired into the outbox relay for durable
- * delivery (see mongokit's `outbox-recipe.ts`). See PACKAGE_RULES §13.
+ * `events` is structurally compatible with `@classytic/arc`'s `EventTransport`. Hosts subscribe
+ * glob-style: `await revenue.events.subscribe('revenue:payment.*', handler)`. See PACKAGE_RULES §13.
  */
 export interface RevenueEngine {
-  config: Readonly<RevenueConfig>;
+  /** Resolved configuration snapshot (frozen). */
+  config: Readonly<ResolvedRevenueConfig>;
   models: RevenueModels;
   repositories: RevenueRepositories;
   providers: ProviderRegistry;
   /**
-   * Bank-feed providers registry (3.0). Populated when `bankFeed`
-   * module is enabled and `bankFeedProviders` config is non-empty.
-   * Used by `transactionRepository.drainSync()` and
-   * `parseAndImport()`. Hosts can `register` providers at runtime too
-   * (e.g. after the engine boots, to add a per-tenant Plaid client).
+   * Bank-feed providers registry (3.0). Populated when the `bankFeed`
+   * module is enabled and `bankFeedProviders` runtime is non-empty. Hosts can
+   * `register` providers at runtime too.
    */
   bankFeedProviders: BankFeedProviderRegistry;
   events: EventTransport;
-  /** Explicitly build all schema-declared indexes. Non-destructive. */
+  /** Explicitly build all schema-declared indexes. Non-destructive. Never called by `bind()`. */
   syncIndexes(): Promise<void>;
-  destroy(): Promise<void>;
+  /**
+   * Release resources owned by this engine. Idempotent. The kernel-standard lifecycle name.
+   * Closes ONLY an internally-created transport — a host-supplied `eventTransport` is never closed.
+   */
+  close(): Promise<void>;
 }

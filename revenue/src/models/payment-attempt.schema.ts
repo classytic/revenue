@@ -51,7 +51,6 @@ export interface PaymentAttemptDocument {
   };
   providerReference?: string;
   metadata?: Record<string, unknown>;
-  deletedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -72,7 +71,6 @@ export function buildPaymentAttemptSchema(config: RevenueSchemaConfig): Schema<P
     gateway: { type: Schema.Types.Mixed },
     providerReference: { type: String },
     metadata: { type: Schema.Types.Mixed },
-    deletedAt: { type: Date, default: null },
   };
 
   if (config.extraFields) Object.assign(fields, config.extraFields);
@@ -81,17 +79,32 @@ export function buildPaymentAttemptSchema(config: RevenueSchemaConfig): Schema<P
 
   // Lookups — tenant field auto-prepended by injectTenantField when scoped.
   schema.index({ transactionId: 1, createdAt: 1 }, { sparse: true });
-  schema.index({ idempotencyKey: 1 });
-  // Reconciliation worklist: find attempts that never resolved.
-  schema.index({ outcome: 1, createdAt: 1 });
-  // `$type: 'string'` excludes deleted + transient-null rows so one null
-  // publicId can't block the unique index build (mirrors the other schemas).
+  /**
+   * ATOMIC COMMAND-IDENTITY CLAIM. A money command is uniquely one
+   * (operation, provider, idempotencyKey) — plus `organizationId`, which
+   * `injectTenantField` prepends when the engine is scoped (declared here, before
+   * injection, precisely so it participates). Creating the attempt IS the claim:
+   * two concurrent requests with the same key to the same provider race on this
+   * index; the loser gets a duplicate-key error and loads the winner's attempt
+   * instead of calling the provider a second time. `provider` is in the key so a
+   * FAILOVER to a different provider under the same order key is a distinct claim
+   * (not a false dup), while a same-provider retry is deduped.
+   */
   schema.index(
-    { publicId: 1 },
+    { operation: 1, provider: 1, idempotencyKey: 1 },
     {
       unique: true,
-      partialFilterExpression: { deletedAt: null, publicId: { $type: 'string' } },
+      partialFilterExpression: { idempotencyKey: { $type: 'string' } },
+      name: 'attempt_command_identity',
     },
+  );
+  // Reconciliation worklist: find attempts that never resolved.
+  schema.index({ outcome: 1, createdAt: 1 });
+  // `$type: 'string'` excludes transient-null rows so one null publicId
+  // can't block the unique index build (mirrors the other schemas).
+  schema.index(
+    { publicId: 1 },
+    { unique: true, partialFilterExpression: { publicId: { $type: 'string' } } },
   );
 
   if (config.extraIndexes) {

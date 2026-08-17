@@ -1,17 +1,36 @@
 export class RevenueError extends Error {
+  /**
+   * Canonical `HttpError.status` (`@classytic/repo-core/errors`) — the field
+   * arc's global handler actually reads.
+   *
+   * This exists because `httpStatus` below did NOT work. Arc keys on `status`,
+   * so a field named `httpStatus` was invisible to it: every revenue error
+   * reached the client as `arc.internal_error` / 500, INCLUDING the three that
+   * carefully declared 409/409/401. The statuses were written, documented, and
+   * silently ignored — a webhook with a bad signature answered 500 instead of
+   * 401, so a caller could not tell "your signature is wrong" from "our server
+   * fell over", and no retry policy could distinguish them either.
+   *
+   * The comment on `httpStatus` said hosts read it and it "defaults to 500 in
+   * the host's error mapper when unset" — but be-prod ships no error mapper at
+   * all, so nothing ever read it. Mirroring it into `status` here is what makes
+   * every one of these work, in every host, with no host wiring.
+   */
+  readonly status: number;
+
   constructor(
     message: string,
     public readonly code: string,
     public readonly details?: Record<string, unknown>,
     /**
-     * Suggested HTTP status. Hosts that surface RevenueError over HTTP
-     * (Arc, raw Express) read this to set the response code. Optional —
-     * defaults to 500 in the host's error mapper when unset.
+     * Suggested HTTP status, retained as the authoring surface — subclasses
+     * pass it here and {@link status} mirrors it. Unset means 500.
      */
     public readonly httpStatus?: number,
   ) {
     super(message);
     this.name = 'RevenueError';
+    this.status = httpStatus ?? 500;
   }
 }
 
@@ -34,56 +53,56 @@ export class UnmanagedSessionError extends RevenueError {
 
 export class ValidationError extends RevenueError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'VALIDATION_ERROR', details);
+    super(message, 'VALIDATION_ERROR', details, 422);
     this.name = 'ValidationError';
   }
 }
 
 export class ConfigurationError extends RevenueError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'CONFIGURATION_ERROR', details);
+    super(message, 'CONFIGURATION_ERROR', details, 500);
     this.name = 'ConfigurationError';
   }
 }
 
 export class ProviderNotFoundError extends RevenueError {
   constructor(providerName: string) {
-    super(`Payment provider '${providerName}' not found`, 'PROVIDER_NOT_FOUND', { providerName });
+    super(`Payment provider '${providerName}' not found`, 'PROVIDER_NOT_FOUND', { providerName }, 404);
     this.name = 'ProviderNotFoundError';
   }
 }
 
 export class TransactionNotFoundError extends RevenueError {
   constructor(transactionId: string) {
-    super(`Transaction '${transactionId}' not found`, 'TRANSACTION_NOT_FOUND', { transactionId });
+    super(`Transaction '${transactionId}' not found`, 'TRANSACTION_NOT_FOUND', { transactionId }, 404);
     this.name = 'TransactionNotFoundError';
   }
 }
 
 export class SubscriptionNotFoundError extends RevenueError {
   constructor(subscriptionId: string) {
-    super(`Subscription '${subscriptionId}' not found`, 'SUBSCRIPTION_NOT_FOUND', { subscriptionId });
+    super(`Subscription '${subscriptionId}' not found`, 'SUBSCRIPTION_NOT_FOUND', { subscriptionId }, 404);
     this.name = 'SubscriptionNotFoundError';
   }
 }
 
 export class SettlementNotFoundError extends RevenueError {
   constructor(settlementId: string) {
-    super(`Settlement '${settlementId}' not found`, 'SETTLEMENT_NOT_FOUND', { settlementId });
+    super(`Settlement '${settlementId}' not found`, 'SETTLEMENT_NOT_FOUND', { settlementId }, 404);
     this.name = 'SettlementNotFoundError';
   }
 }
 
 export class PaymentIntentCreationError extends RevenueError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'PAYMENT_INTENT_CREATION_ERROR', details);
+    super(message, 'PAYMENT_INTENT_CREATION_ERROR', details, 502);
     this.name = 'PaymentIntentCreationError';
   }
 }
 
 export class ProviderCapabilityError extends RevenueError {
   constructor(provider: string, capability: string) {
-    super(`Provider '${provider}' does not support '${capability}'`, 'PROVIDER_CAPABILITY_ERROR', { provider, capability });
+    super(`Provider '${provider}' does not support '${capability}'`, 'PROVIDER_CAPABILITY_ERROR', { provider, capability }, 501);
     this.name = 'ProviderCapabilityError';
   }
 }
@@ -94,28 +113,49 @@ export class InvalidStateTransitionError extends RevenueError {
       `Invalid ${resourceType} state transition: ${from} → ${to} (resource: ${resourceId})`,
       'INVALID_STATE_TRANSITION',
       { resourceType, resourceId, from, to },
+      422,
     );
     this.name = 'InvalidStateTransitionError';
   }
 }
 
+/**
+ * `split()` found the parent already carrying splits — the payout set exists.
+ *
+ * Thrown from INSIDE the transaction so the losing caller's commission rows roll
+ * back rather than double-paying every recipient. A retry after a partial failure
+ * lands here too, which is correct: the first attempt either committed in full or
+ * committed nothing.
+ */
+export class AlreadySplitError extends RevenueError {
+  constructor(transactionId: string) {
+    super(
+      `Transaction '${transactionId}' has already been split`,
+      'ALREADY_SPLIT',
+      { transactionId },
+      409,
+    );
+    this.name = 'AlreadySplitError';
+  }
+}
+
 export class AlreadyVerifiedError extends RevenueError {
   constructor(transactionId: string) {
-    super(`Transaction '${transactionId}' is already verified`, 'ALREADY_VERIFIED', { transactionId });
+    super(`Transaction '${transactionId}' is already verified`, 'ALREADY_VERIFIED', { transactionId }, 409);
     this.name = 'AlreadyVerifiedError';
   }
 }
 
 export class RefundNotSupportedError extends RevenueError {
   constructor(provider: string) {
-    super(`Provider '${provider}' does not support refunds`, 'REFUND_NOT_SUPPORTED', { provider });
+    super(`Provider '${provider}' does not support refunds`, 'REFUND_NOT_SUPPORTED', { provider }, 501);
     this.name = 'RefundNotSupportedError';
   }
 }
 
 export class PaymentVerificationError extends RevenueError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'PAYMENT_VERIFICATION_ERROR', details);
+    super(message, 'PAYMENT_VERIFICATION_ERROR', details, 422);
     this.name = 'PaymentVerificationError';
   }
 }
@@ -124,7 +164,7 @@ export class PaymentVerificationError extends RevenueError {
 
 export class BankFeedImportError extends RevenueError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'BANK_FEED_IMPORT_ERROR', details);
+    super(message, 'BANK_FEED_IMPORT_ERROR', details, 422);
     this.name = 'BankFeedImportError';
   }
 }
@@ -135,6 +175,7 @@ export class WrongTransactionKindError extends RevenueError {
       `Transaction '${transactionId}' is kind '${actual}', not '${expected}'`,
       'WRONG_TRANSACTION_KIND',
       { transactionId, expected, actual },
+      409,
     );
     this.name = 'WrongTransactionKindError';
   }
@@ -164,11 +205,11 @@ export class MethodKindLockedError extends RevenueError {
  * `verifyWebhookSignature` rejects the payload. 401 because the request
  * failed authentication of its origin.
  *
- * The base `PaymentProvider.verifyWebhookSignature` defaults to accept-all,
- * so providers that do NOT override it never produce this error — signature
- * enforcement is opt-in per provider (least-breaking). Real gateways
- * (Stripe/Razorpay/…) MUST override with HMAC/timing-safe verification, at
- * which point this gate fires before any transaction is mutated.
+ * `PaymentProvider.verifyWebhookSignature` is ABSTRACT, so every provider has
+ * stated its answer and this gate is reachable for all of them. It previously
+ * defaulted to accept-all on the base class, which meant a provider that forgot to
+ * override could never produce this error — the one that forgot being precisely the
+ * one that needed it.
  */
 export class WebhookSignatureError extends RevenueError {
   constructor(provider: string) {
@@ -188,6 +229,7 @@ export class BankFeedProviderNotFoundError extends RevenueError {
       `Bank-feed provider '${providerName}' not registered. Use \`engine.bankFeedProviders.register(name, provider)\`.`,
       'BANK_FEED_PROVIDER_NOT_FOUND',
       { providerName },
+      404,
     );
     this.name = 'BankFeedProviderNotFoundError';
   }
@@ -205,6 +247,8 @@ export class BankFeedProviderNotFoundError extends RevenueError {
  * retry. Callers that catch this must not release the claim themselves.
  */
 export class RefundOutcomeUnknownError extends Error {
+  readonly code = 'REFUND_OUTCOME_UNKNOWN';
+  readonly status = 502;
   readonly transactionId: string;
   readonly amount: number;
   readonly providerReference?: string;
@@ -241,6 +285,8 @@ export class RefundOutcomeUnknownError extends Error {
  * `PaymentAttempt`'s job (phase 3).
  */
 export class IntentOutcomeUnknownError extends Error {
+  readonly code = 'INTENT_OUTCOME_UNKNOWN';
+  readonly status = 502;
   readonly idempotencyKey: string;
   readonly causeCode?: string;
 

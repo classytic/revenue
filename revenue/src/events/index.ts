@@ -5,8 +5,8 @@
  * Usage:
  *
  *   // Accept any arc-compatible transport, default to the local fallback
- *   const revenue = await createRevenue({
- *     connection: mongoose.connection,
+ *   const revenue = defineRevenue({ scope: false }).bind(mongoose.connection, {
+ *     defaultCurrency: 'USD',
  *     eventTransport: new MemoryEventTransport(), // from @classytic/arc
  *   });
  *
@@ -26,8 +26,8 @@ export { REVENUE_EVENTS, type RevenueEventName } from './event-constants.js';
 // `revenueEventDefinitions` directly with Arc's registry.
 export {
   revenueEventDefinitions,
-  PaymentVerified,
-  PaymentFailed,
+  PaymentSucceeded,
+  PaymentFailedEvent,
   PaymentProcessing,
   PaymentRequiresAction,
   PaymentRefunded,
@@ -63,7 +63,7 @@ export type {
   RevenueEventDefinition,
   RevenueEventPayloadOf,
   RevenueEventSchema,
-  PaymentVerifiedPayload,
+  PaymentSucceededPayload,
   PaymentFailedPayload,
   PaymentProcessingPayload,
   PaymentRequiresActionPayload,

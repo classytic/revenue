@@ -38,7 +38,6 @@ export interface SubscriptionDocument {
   renewalTransactionId?: mongoose.Types.ObjectId;
   renewalCount: number;
   metadata?: Record<string, unknown>;
-  deletedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,7 +70,6 @@ export function buildSubscriptionSchema(config: RevenueSchemaConfig): Schema<Sub
     renewalTransactionId: { type: Schema.Types.ObjectId, ref: txnRef },
     renewalCount: { type: Number, default: 0 },
     metadata: { type: Schema.Types.Mixed },
-    deletedAt: { type: Date, default: null },
   };
 
   if (config.extraFields) Object.assign(fields, config.extraFields);
@@ -89,7 +87,7 @@ export function buildSubscriptionSchema(config: RevenueSchemaConfig): Schema<Sub
     { publicId: 1 },
     {
       unique: true,
-      partialFilterExpression: { deletedAt: null, publicId: { $type: 'string' } },
+      partialFilterExpression: { publicId: { $type: 'string' } },
     },
   );
 

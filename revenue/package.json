@@ -1,7 +1,7 @@
 {
   "name": "@classytic/revenue",
-  "version": "3.0.0",
-  "description": "Payment lifecycle engine \u2014 transactions, subscriptions, escrow, settlements, commissions. MongoKit-powered, Arc-compatible, framework-agnostic.",
+  "version": "2.9.0",
+  "description": "Payment lifecycle engine — transactions, subscriptions, escrow, settlements, commissions. MongoKit-powered, Arc-compatible, framework-agnostic.",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.mjs",
@@ -52,7 +52,7 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "tsdown",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "test": "cd .. && vitest run",
     "release:push": "node -e \"require('child_process').execSync('npm run push -- main',{cwd:require('node:path').resolve('..'),stdio:'inherit'})\"",
     "release:tag": "node -e \"const v=require('./package.json').version,p=require('node:path').resolve('..'),{execSync:e}=require('child_process'),r=c=>e(c,{cwd:p,stdio:'inherit'});r('git tag -a revenue-v'+v+' -m revenue-v'+v);r('npm run push -- revenue-v'+v)\"",
@@ -103,10 +103,10 @@
     "LICENSE"
   ],
   "peerDependencies": {
-    "@classytic/mongokit": ">=3.22.2",
-    "@classytic/primitives": ">=0.20.0",
-    "@classytic/repo-core": ">=0.13.0",
-    "@classytic/validation": ">=0.2.0",
+    "@classytic/mongokit": ">=3.33.0",
+    "@classytic/primitives": ">=0.23.0",
+    "@classytic/repo-core": ">=0.24.0",
+    "@classytic/validation": ">=0.4.0",
     "mongoose": ">=9.4.1",
     "zod": ">=4.0.0"
   },
@@ -116,12 +116,13 @@
   "devDependencies": {
     "@classytic/dev-tools": "^0.2.0",
     "@classytic/mongokit": "^3.25.0",
-    "@classytic/primitives": "^0.20.0",
-    "@classytic/repo-core": "^0.14.0",
-    "@classytic/validation": "^0.2.0",
+    "@classytic/primitives": ">=0.23.0",
+    "@classytic/repo-core": ">=0.24.0",
+    "@classytic/validation": ">=0.4.0",
     "@types/node": "^22.8.7",
     "mongoose": "^9.4.1",
-    "tsdown": "^0.20.3",
+    "publint": "^0.3.23",
+    "tsdown": "^0.22.14",
     "typescript": "^5.6.3",
     "zod": "^4.1.13"
   }

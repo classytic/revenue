@@ -98,6 +98,30 @@ export class StateMachine<TState extends string> {
     return [...(this.inner.transitions[from] ?? [])];
   }
 
+  /**
+   * Every status that may legally transition INTO `to` — the reverse lookup.
+   *
+   * Primitives owns this and documents its purpose precisely: "Pair with a repo's
+   * multi-source `claim({ from: machine.validSources(to), to })` when the target is
+   * fixed but the caller doesn't yet know the current state". This wrapper simply
+   * never re-exposed it, so every repository verb was left doing
+   * `validate(readStatus, target)` and then writing — a read-then-write window with
+   * the machine's own rule stranded on the wrong side of it.
+   *
+   * Putting `validSources(target)` in the claim filter moves that rule INTO the write:
+   * the database authorizes the transition, any legal predecessor may win, and there
+   * is no window. One round-trip, and the machine stays the single authority on which
+   * transitions are legal.
+   */
+  validSources(to: TState): readonly TState[] {
+    return this.inner.validSources(to);
+  }
+
+  /** Every status reachable FROM `from`. The forward twin of {@link validSources}. */
+  validTargets(from: TState): readonly TState[] {
+    return this.inner.validTargets(from);
+  }
+
   isTerminalState(state: TState): boolean {
     return this.inner.isTerminal(state);
   }

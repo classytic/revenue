@@ -1,8 +1,21 @@
 export const REVENUE_EVENTS = {
   // Payment
-  PAYMENT_VERIFIED: 'revenue:payment.verified',
-  PAYMENT_FAILED: 'revenue:payment.failed',
-  PAYMENT_REFUNDED: 'revenue:payment.refunded',
+  /**
+   * RETIRED in 4.0.0 — `PAYMENT_VERIFIED`, `PAYMENT_FAILED`, `PAYMENT_REFUNDED`.
+   *
+   * These were portable payment OUTCOMES carrying revenue's own document shape.
+   * They now publish the canonical `@classytic/primitives/payment-events`
+   * contract as `payment.succeeded` / `payment.failed` / `payment.refunded`,
+   * built by `events/canonical-payment-events.ts`.
+   *
+   * The constants are DELETED rather than deprecated: a name nothing emits is a
+   * stream a host can still bind a handler to, and that handler never fires and
+   * never errors. There is no alias and no compatibility projector — one
+   * authoritative fact per outcome, or a consumer subscribed to both processes
+   * the same refund twice.
+   *
+   * The intermediate states below are NOT outcomes and keep their names.
+   */
   PAYMENT_REQUIRES_ACTION: 'revenue:payment.requires_action',
   PAYMENT_PROCESSING: 'revenue:payment.processing',
   PAYMENT_AUTHORIZED: 'revenue:payment.authorized',

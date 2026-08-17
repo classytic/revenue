@@ -269,8 +269,6 @@ export interface TransactionDocument {
   idempotencyKey?: string;
   metadata?: Record<string, unknown>;
 
-  // ─── Soft-delete + timestamps (unchanged) ───
-  deletedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -368,7 +366,9 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
     webhook: { type: Schema.Types.Mixed },
     idempotencyKey: { type: String },
     metadata: { type: Schema.Types.Mixed },
-    deletedAt: { type: Date, default: null },
+    // NO `deletedAt` (2026-08-14): soft delete was removed outright. Deletes are honest;
+    // undo -> a restore surface (never existed), retention -> the host's purge-window
+    // predicate, referential safety -> cascade onDelete:'restrict', lifecycle end -> STATUS.
   };
 
   if (config.extraFields) {

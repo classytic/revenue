@@ -7,7 +7,7 @@ import { createEvent } from '../events/helpers.js';
 import { REVENUE_EVENTS } from '../events/event-constants.js';
 import { SUBSCRIPTION_STATUS } from '../enums/subscription.enums.js';
 import { SUBSCRIPTION_STATE_MACHINE } from '../core/state-machines.js';
-import { SubscriptionNotFoundError } from '../core/errors.js';
+import { InvalidStateTransitionError, SubscriptionNotFoundError } from '../core/errors.js';
 import { RevenueRepositoryBase, type BaseRevenueRepoDeps } from './base.repository.js';
 
 /**
@@ -203,16 +203,41 @@ export class SubscriptionRepository extends RevenueRepositoryBase<
       subscriptionId,
     );
 
-    const updated = await this.update(
+    /**
+     * The machine's own reverse lookup rides the WRITE's filter.
+     *
+     * `validate()` above checks a status this call READ; the write then applied
+     * unconditionally, so a subscription cancelled or expired in between was still
+     * flipped to PAUSED — reactivating billing on a dead subscription, with
+     * `isActive: false` making it look dormant rather than wrong. `validSources`
+     * is the pairing primitives documents for exactly this.
+     */
+    const updated = await this.claim(
       subscriptionId,
       {
-        status: SUBSCRIPTION_STATUS.PAUSED,
-        isActive: false,
-        pausedAt: new Date(),
-        pauseReason: options.reason,
+        from: SUBSCRIPTION_STATE_MACHINE.validSources(SUBSCRIPTION_STATUS.PAUSED as never),
+        to: SUBSCRIPTION_STATUS.PAUSED,
       },
-      this.optsFromCtx(ctx, { throwOnNotFound: true }),
+      {
+        $set: {
+          isActive: false,
+          pausedAt: new Date(),
+          pauseReason: options.reason,
+        },
+      },
+      opts,
     );
+    if (!updated) {
+      const current = (await this.getById(subscriptionId, opts)) as SubscriptionDocument | null;
+      if (!current) throw new SubscriptionNotFoundError(subscriptionId);
+      if (current.status === SUBSCRIPTION_STATUS.PAUSED) return current; // idempotent retry
+      throw new InvalidStateTransitionError(
+        'subscription',
+        subscriptionId,
+        String(current.status),
+        String(SUBSCRIPTION_STATUS.PAUSED),
+      );
+    }
     if (!updated) throw new SubscriptionNotFoundError(subscriptionId);
 
     await this.dispatch(

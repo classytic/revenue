@@ -14,7 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   revenueEventDefinitions,
-  PaymentVerified,
+  PaymentSucceeded,
   PaymentRefunded,
   MonetizationCreated,
   SubscriptionActivated,
@@ -62,45 +62,73 @@ describe('revenueEventDefinitions', () => {
 });
 
 describe('Zod schemas — happy paths', () => {
-  it('PaymentVerified accepts a minimal transaction payload', () => {
-    const r = PaymentVerified.zodSchema.safeParse({
+  it('PaymentSucceeded validates the CANONICAL payload', () => {
+    // The wire form: `occurredAt` is an ISO string because the event is
+    // persisted to the outbox and relayed as JSON. See `canonicalInstant`.
+    const r = PaymentSucceeded.zodSchema.safeParse({
+      eventType: 'payment.succeeded',
+      paymentId: 'txn_1',
+      providerCode: 'stripe',
+      amount: { amount: 1000, currency: 'BDT' },
+      methodKind: 'card',
+      occurredAt: new Date().toISOString(),
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('PaymentSucceeded REJECTS the retired document-shaped payload', () => {
+    // The old shape carried `{ transaction, verifiedBy }` with the raw
+    // document. Accepting it would mean the migration changed the name and
+    // not the contract.
+    const r = PaymentSucceeded.zodSchema.safeParse({
       transaction: { publicId: 'txn_1', status: 'verified', methodKind: 'card' },
       verifiedBy: 'user_1',
     });
-    expect(r.success).toBe(true);
+    expect(r.success).toBe(false);
   });
 
-  it('PaymentVerified accepts new 0.8.0 kinds (mobile_money, bnpl)', () => {
+  it('PaymentSucceeded accepts every method kind', () => {
     for (const methodKind of ['mobile_money', 'bnpl', 'direct_debit', 'instant_bank_transfer', 'gift_card'] as const) {
-      const r = PaymentVerified.zodSchema.safeParse({
-        transaction: { publicId: `txn_${methodKind}`, status: 'verified', methodKind },
-        verifiedBy: 'user_1',
+      const r = PaymentSucceeded.zodSchema.safeParse({
+        eventType: 'payment.succeeded',
+        paymentId: `txn_${methodKind}`,
+        providerCode: 'manual',
+        amount: { amount: 500, currency: 'BDT' },
+        methodKind,
+        occurredAt: new Date().toISOString(),
       });
-      expect(r.success, `methodKind=${methodKind}`).toBe(true);
+      expect(r.success, methodKind).toBe(true);
     }
   });
 
-  it('PaymentRefunded matches the dispatch shape: numeric refundAmount + isPartialRefund boolean', () => {
-    // Mirrors transaction.repository refund()'s ACTUAL emission:
-    // { transaction, refundTransaction, refundAmount: number, reason?, isPartialRefund }
+  it('PaymentRefunded carries MONEY and both sides of the amount', () => {
+    // `refundAmount: number` is gone: a bare amount cannot be interpreted in a
+    // multi-currency deployment. `originalAmount` is present so a consumer can
+    // compute remaining refundable without reading a revenue document.
     const r = PaymentRefunded.zodSchema.safeParse({
-      transaction: { publicId: 'txn_1', methodKind: 'card' },
-      refundTransaction: { publicId: 'txn_refund_1', methodKind: 'card' },
-      refundAmount: 500,
-      isPartialRefund: true,
-      reason: 'customer request',
+      eventType: 'payment.refunded',
+      paymentId: 'txn_1',
+      refundId: 'txn_refund_1',
+      providerCode: 'stripe',
+      refundedAmount: { amount: 500, currency: 'BDT' },
+      originalAmount: { amount: 1000, currency: 'BDT' },
+      isPartial: true,
+      occurredAt: new Date().toISOString(),
     });
     expect(r.success).toBe(true);
   });
 
-  it('PaymentRefunded accepts a bare-identity ref (host test fixtures publish only _id)', () => {
+  it('PaymentRefunded REJECTS a bare numeric refundAmount', () => {
     const r = PaymentRefunded.zodSchema.safeParse({
-      transaction: { _id: 'aaaaaaaaaaaaaaaaaaaaaaaa' },
-      refundTransaction: { _id: 'bbbbbbbbbbbbbbbbbbbbbbbb' },
+      eventType: 'payment.refunded',
+      paymentId: 'txn_1',
+      refundId: 'r1',
+      providerCode: 'stripe',
       refundAmount: 500,
-      isPartialRefund: false,
+      isPartialRefund: true,
+      occurredAt: new Date().toISOString(),
     });
-    expect(r.success).toBe(true);
+    expect(r.success).toBe(false);
   });
 
   it('MonetizationCreated requires monetizationType + transaction', () => {
@@ -241,12 +269,19 @@ describe('Zod schemas — rejection paths', () => {
 });
 
 describe('DomainEvent envelope', () => {
-  it('PaymentVerified.create() emits a well-formed DomainEvent', () => {
-    const event = PaymentVerified.create(
-      { transaction: { publicId: 'txn_1', status: 'verified', methodKind: 'card' }, verifiedBy: 'u_1' },
+  it('PaymentSucceeded.create() emits a well-formed DomainEvent', () => {
+    const event = PaymentSucceeded.create(
+      {
+        eventType: 'payment.succeeded',
+        paymentId: 'txn_1',
+        providerCode: 'stripe',
+        amount: { amount: 1000, currency: 'BDT' },
+        methodKind: 'card',
+        occurredAt: new Date().toISOString(),
+      },
       { organizationId: 'org_1', correlationId: 'c_1' },
     );
-    expect(event.type).toBe('revenue:payment.verified');
+    expect(event.type).toBe('payment.succeeded');
     expect(event.meta.organizationId).toBe('org_1');
     expect(event.meta.id).toBeTruthy();
   });
@@ -282,7 +317,10 @@ describe('Arc EventRegistry structural compatibility', () => {
     const registry = makeArcLikeRegistry();
     for (const def of revenueEventDefinitions) registry.register(def);
     expect(registry.catalog()).toHaveLength(revenueEventDefinitions.length);
-    expect(registry.get('revenue:payment.verified')?.version).toBe(1);
+    // A canonical outcome and a revenue-internal fact both register — the
+    // registry does not care about the prefix, which is what lets one stream
+    // carry both audiences.
+    expect(registry.get('payment.succeeded')?.version).toBe(1);
     expect(registry.get('revenue:escrow.split')?.version).toBe(1);
     expect(registry.get('revenue:settlement.failed')?.version).toBe(1);
   });

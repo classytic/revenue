@@ -23,10 +23,13 @@ export interface RevenueContext extends OperationContext {
   /**
    * Platform-admin bypass for tenant scoping.
    *
-   * When `true`, the `multiTenantPlugin` wired by `createRevenue` skips
-   * injecting the tenant filter/data field for this single call — so
-   * `repo.getAll({}, { _bypassTenant: true })` can span organizations for
-   * superadmin dashboards, audits, and cross-branch reports.
+   * A caller-facing convenience that maps to mongokit's canonical per-call escape
+   * hatch: `optsFromCtx` translates `ctx._bypassTenant === true` to `bypassTenant: true`
+   * in the options bag, which the `multiTenantPlugin` wired by `defineRevenue` honors
+   * natively (skipping tenant filter/data injection for that single call, and emitting an
+   * `after:tenant-bypass` audit event) — so a superadmin dashboard, audit, or cross-branch
+   * report can span organizations. Trusted maintenance code may instead pass mongokit's
+   * `systemContext()` (which IS `{ bypassTenant: true }`) directly.
    *
    * **The repo does NOT authorize this flag.** Setting it is the caller's
    * responsibility and MUST be gated behind a platform-role check at the

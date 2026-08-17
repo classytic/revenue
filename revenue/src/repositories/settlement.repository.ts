@@ -7,7 +7,7 @@ import { createEvent } from '../events/helpers.js';
 import { REVENUE_EVENTS } from '../events/event-constants.js';
 import { SETTLEMENT_STATUS } from '../enums/settlement.enums.js';
 import { SETTLEMENT_STATE_MACHINE } from '../core/state-machines.js';
-import { SettlementNotFoundError } from '../core/errors.js';
+import { InvalidStateTransitionError, SettlementNotFoundError } from '../core/errors.js';
 import { RevenueRepositoryBase, type BaseRevenueRepoDeps } from './base.repository.js';
 
 /**
@@ -351,37 +351,74 @@ export class SettlementRepository extends RevenueRepositoryBase<
     const settlement = (await this.getById(settlementId, opts)) as SettlementDocument | null;
     if (!settlement) throw new SettlementNotFoundError(settlementId);
 
+    /**
+     * CAS on the status this call OBSERVED — the validate above is read-then-write.
+     *
+     * A settlement moves PROCESSING → COMPLETED or → FAILED. Both `complete()` and
+     * `fail()` read, decide, then write unconditionally, so a `fail()` racing a
+     * `complete()` overwrote a COMPLETED settlement with FAILED and dispatched
+     * SETTLEMENT_FAILED for a payout that had already gone out. Nothing threw: the
+     * state machine had validated against a status that was true a moment earlier.
+     *
+     * `from: settlement.status` pins the observed state without changing WHICH
+     * transitions are legal — the machine above still decides that. The retry branch
+     * deliberately keeps its existing behaviour (it bypasses the machine by design),
+     * but its counter becomes an atomic `$inc`: two concurrent retries previously both
+     * read the same `retryCount` and wrote the same +1, so the retry budget under-
+     * counted exactly when retries were flying.
+     */
+    const target = options.retry ? SETTLEMENT_STATUS.PENDING : SETTLEMENT_STATUS.FAILED;
+    let patch: Record<string, unknown>;
+
     if (options.retry) {
-      await this.update(
-        settlementId,
-        {
-          status: SETTLEMENT_STATUS.PENDING,
-          retryCount: (settlement.retryCount ?? 0) + 1,
+      patch = {
+        $inc: { retryCount: 1 },
+        $set: {
           failureReason: reason,
           failureCode: options.code,
           scheduledAt: new Date(Date.now() + 3600000),
         },
-        opts,
-      );
+      };
     } else {
       SETTLEMENT_STATE_MACHINE.validate(
         settlement.status as never,
         SETTLEMENT_STATUS.FAILED as never,
         settlementId,
       );
-      await this.update(
+      patch = {
+        $set: { failedAt: new Date(), failureReason: reason, failureCode: options.code },
+      };
+    }
+
+    /**
+     * `from` is the machine's OWN reverse lookup, not the status this call happened to
+     * read. Any legal predecessor may win and the database authorizes the transition,
+     * so there is no read-then-write window at all — primitives documents exactly this
+     * pairing on `validSources`. The retry branch keeps `from: settlement.status`
+     * because it deliberately bypasses the machine (PROCESSING → PENDING is not a
+     * declared transition), so the machine has no opinion to borrow there.
+     */
+    const legalFrom = options.retry
+      ? [settlement.status as never]
+      : SETTLEMENT_STATE_MACHINE.validSources(SETTLEMENT_STATUS.FAILED as never);
+
+    const claimed = await this.claim(settlementId, { from: legalFrom, to: target }, patch, opts);
+
+    if (!claimed) {
+      const current = (await this.getById(settlementId, opts)) as SettlementDocument | null;
+      if (!current) throw new SettlementNotFoundError(settlementId);
+      // Already where this call wanted it — a retried caller, not a conflict. Return
+      // WITHOUT re-dispatching; a second SETTLEMENT_FAILED is the duplicated fact.
+      if (current.status === target) return current;
+      throw new InvalidStateTransitionError(
+        'settlement',
         settlementId,
-        {
-          status: SETTLEMENT_STATUS.FAILED,
-          failedAt: new Date(),
-          failureReason: reason,
-          failureCode: options.code,
-        },
-        opts,
+        String(current.status),
+        String(target),
       );
     }
 
-    const updated = (await this.getById(settlementId, opts)) as SettlementDocument;
+    const updated = claimed as SettlementDocument;
 
     await this.dispatch(
       createEvent(

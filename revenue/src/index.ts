@@ -1,14 +1,39 @@
 // ─── Engine ───
-export { createRevenue } from './engine/create-revenue.js';
+// ONE construction API: describe with `defineRevenue(shape)`, then `.bind(connection, runtime)`.
+export {
+  defineRevenue,
+  type RevenueBlueprint,
+  type RevenueShape,
+  type RevenueRuntime,
+} from './engine/define-revenue.js';
+// The bind-time capability gate. Exported so a host wiring a CUSTOM repository
+// can run the same check, and so the falsification suite can drive it directly.
+export {
+  assertRevenueCapabilities,
+  RevenueCapabilityError,
+  REVENUE_REQUIRED_CAPABILITIES,
+  type AssertRevenueCapabilitiesOptions,
+} from './engine/ensure-ready.js';
 export type {
-  RevenueConfig,
   RevenueEngine,
   RevenueContext,
+  RevenueLogger,
+  ResolvedRevenueConfig,
+  ResolvedRevenueModules,
   CommissionConfig,
   RetryConfig,
   BankFeedIndexConfig,
   BankFeedModuleConfig,
 } from './engine/engine-types.js';
+
+// ─── Models ───
+// The single authoritative model spec. Bind it with `.bind(connection)`.
+export {
+  defineRevenueModels,
+  type DefineRevenueModelsConfig,
+  type RevenueAutoIndex,
+  REVENUE_MODEL_NAMES,
+} from './models/create-models.js';
 
 // ─── Events ───
 // Transport shapes are plain `DomainEvent` / `EventTransport` / `EventHandler`,
@@ -58,11 +83,25 @@ export * from './enums/bank-feed.enums.js';
 // ─── Models ───
 export type { RevenueModels, RevenueSchemaOptions } from './models/create-models.js';
 export type { TransactionDocument } from './models/transaction.schema.js';
+export type { PaymentAttemptDocument } from './models/payment-attempt.schema.js';
 export type { SubscriptionDocument } from './models/subscription.schema.js';
 export type { SettlementDocument } from './models/settlement.schema.js';
 
+// ─── Phase 3: PaymentAttempt backfill (one attempt per existing payment_flow txn) ───
+export {
+  backfillCreatePaymentAttempts,
+  type BackfillPaymentAttemptsOptions,
+  type BackfillPaymentAttemptsResult,
+} from './backfill/payment-attempts.js';
+
 // ─── Repositories ───
-export { TransactionRepository } from './repositories/transaction.repository.js';
+export {
+  TransactionRepository,
+  type PaymentAttemptHistory,
+  type PaymentAttemptView,
+  type RefundSummary,
+  type RefundView,
+} from './repositories/transaction/transaction.repository.js';
 export { SubscriptionRepository } from './repositories/subscription.repository.js';
 export { SettlementRepository } from './repositories/settlement.repository.js';
 export type {
