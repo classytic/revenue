@@ -15,6 +15,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { currencyCode } from '@classytic/primitives/currency';
+import type { CurrencyCode } from '@classytic/primitives/currency';
 import { ProviderStatusUnavailableError } from '@classytic/primitives/payment-gateway';
 
 /**
@@ -85,16 +87,20 @@ interface PaymentInfo {
 export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware {
   public readonly name: string = 'manual';
   public readonly config: ManualProviderConfig;
-  private _defaultCurrency = 'USD';
+  private _defaultCurrency: CurrencyCode = currencyCode('USD');
 
   constructor(config: ManualProviderConfig = {}) {
     this.config = config;
     if (typeof config.defaultCurrency === 'string') {
-      this._defaultCurrency = config.defaultCurrency;
+      // CONFIG BOUNDARY — validate here or never. An operator-supplied `'usd'`
+      // misses the minor-unit table, so it is assumed to have two decimals and
+      // every JPY-style amount is 100x wrong while reading as an ordinary
+      // figure. Throwing at construction fails the deployment, not a payment.
+      this._defaultCurrency = currencyCode(config.defaultCurrency);
     }
   }
 
-  get defaultCurrency(): string {
+  get defaultCurrency(): CurrencyCode {
     return this._defaultCurrency;
   }
 
@@ -106,7 +112,9 @@ export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware
    * across accounts. The registry feature-detects this.
    */
   setDefaultCurrency(currency: string): void {
-    this._defaultCurrency = currency;
+    // Port signature takes a raw `string` (see `DefaultCurrencyAware`), so the
+    // brand is earned HERE rather than pushed onto every caller.
+    this._defaultCurrency = currencyCode(currency);
   }
 
   /**
@@ -202,7 +210,13 @@ export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware
      * a second, distinct reversal to everything downstream — the ledger included.
      */
     const refundId = manualProviderId('refund', command.idempotencyKey);
-    const currency = options.currency ?? this.defaultCurrency;
+    // Caller-supplied override is an inbound boundary: validate it, don't fall
+    // back on it. `?? default` on an INVALID code would silently re-denominate
+    // the refund into the engine default — a wrong amount that looks right.
+    const currency =
+      options.currency === undefined
+        ? this.defaultCurrency
+        : currencyCode(options.currency);
 
     return {
       id: refundId,
