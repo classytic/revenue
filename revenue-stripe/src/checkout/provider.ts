@@ -1,3 +1,4 @@
+import { currencyCode } from '@classytic/primitives/currency';
 /**
  * StripeCheckoutProvider — minimal Stripe provider for hosts that ONLY
  * need Stripe-hosted Checkout Sessions (no PaymentIntents, no Connect,
@@ -26,11 +27,12 @@ import type {
   PaymentResult,
   ProviderCapabilities,
   RefundResult,
+  RefundStatusQuery,
   WebhookEvent,
 } from '@classytic/primitives/payment-gateway';
 import { createStripeClient } from '../stripe-client.js';
 import type { StripeCheckoutProviderConfig, StripeRefundOptions } from '../types.js';
-import { refund } from '../lib/refund.js';
+import { refund, getRefundStatus } from '../lib/refund.js';
 import { stripePaymentIntentToKind } from '../lib/method-kind.js';
 import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
 
@@ -116,7 +118,7 @@ export class StripeCheckoutProvider extends StripeProviderBase {
       id: session.id,
       provider: 'stripe',
       status: 'requires_action', // customer must complete checkout
-      amount: { amount: amountValue, currency: currency.toUpperCase() },
+      amount: { amount: amountValue, currency: currencyCode(currency.toUpperCase()) },
       paymentIntentId:
         typeof session.payment_intent === 'string'
           ? session.payment_intent
@@ -155,6 +157,18 @@ export class StripeCheckoutProvider extends StripeProviderBase {
       amount,
       command,
       options,
+    );
+  }
+
+  /**
+   * Authoritative REFUND status (never the PaymentIntent's) — the engine's reconciliation
+   * calls this to resolve a refund whose create response was lost. Retrieves by `refundRef`
+   * when known, else matches our stamped command ref among the intent's refunds.
+   */
+  async getRefundStatus(query: RefundStatusQuery): Promise<PaymentResult> {
+    return getRefundStatus(
+      { stripe: this.stripe, defaultCurrency: this.defaultCurrency },
+      query,
     );
   }
 
@@ -247,7 +261,7 @@ function checkoutSessionToResult(session: Stripe.Checkout.Session): PaymentResul
     status: paid ? 'succeeded' : 'requires_action',
     amount: {
       amount: session.amount_total ?? 0,
-      currency: (session.currency ?? 'usd').toUpperCase(),
+      currency: currencyCode((session.currency ?? 'usd').toUpperCase()),
     },
     paidAt: paid && session.created ? new Date(session.created * 1000) : undefined,
     metadata: {

@@ -1,7 +1,7 @@
 {
   "name": "@classytic/revenue-stripe",
-  "version": "1.0.0",
-  "description": "Stripe provider for @classytic/revenue \u2014 SaaS subscriptions, marketplace Connect, lean Checkout. Subpath-split so hosts tree-shake what they don't use.",
+  "version": "0.2.0",
+  "description": "Stripe provider for @classytic/revenue — SaaS subscriptions, marketplace Connect, lean Checkout. Subpath-split so hosts tree-shake what they don't use.",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.mjs",
@@ -68,13 +68,15 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@classytic/primitives": ">=0.20.0",
+    "@classytic/primitives": ">=0.23.0",
+    "@classytic/revenue": ">=2.9.0",
     "stripe": "^22"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "publint": "^0.3.23",
     "stripe": "^22.1.1",
-    "tsdown": "^0.20.3",
+    "tsdown": "^0.22.14",
     "typescript": "^5.6.3",
     "vitest": "^3.2.4"
   },

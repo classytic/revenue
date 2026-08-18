@@ -1,3 +1,4 @@
+import { currencyCode } from '@classytic/primitives/currency';
 /**
  * `refund` — reverses a captured ProviderIntent.
  *
@@ -10,14 +11,33 @@
  * override via `options.reverseTransfer` / `options.refundApplicationFee`.
  */
 
+import { createHash } from 'node:crypto';
 import type Stripe from 'stripe';
-import type { PaymentCommandContext } from '@classytic/primitives/payment-gateway';
-import type { RefundResult } from '@classytic/primitives/payment-gateway';
+import type {
+  PaymentCommandContext,
+  PaymentResult,
+  RefundResult,
+  RefundStatusQuery,
+} from '@classytic/primitives/payment-gateway';
 import type { StripeRefundOptions } from '../types.js';
 
 export interface RefundDeps {
   stripe: Stripe;
   defaultCurrency: string;
+}
+
+/**
+ * Stripe metadata key carrying a STABLE, deterministic reference derived from the refund
+ * command's idempotency key. Stamped at refund-create time so `getRefundStatus` can find
+ * OUR refund among a PaymentIntent's refunds when a timeout left us without the refund id —
+ * the authoritative match that lets reconciliation avoid ever reading the PaymentIntent's
+ * own status (a captured intent says nothing about whether THIS refund succeeded).
+ */
+export const REVENUE_REFUND_CMD_REF = 'revenue_refund_cmd_ref';
+
+/** Deterministic, collision-resistant, ≤500-char Stripe-metadata-safe command reference. */
+export function refundCommandRef(idempotencyKey: string): string {
+  return createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 40);
 }
 
 export async function refund(
@@ -27,9 +47,17 @@ export async function refund(
   command: PaymentCommandContext,
   options: StripeRefundOptions = {},
 ): Promise<RefundResult> {
+  // Stamp the stable command ref into the refund's metadata so a later `getRefundStatus`
+  // can match THIS refund on the PaymentIntent even if the create response was lost.
+  const stampedMetadata = {
+    ...(toStringMetadata(options.metadata) ?? {}),
+    ...(command.idempotencyKey
+      ? { [REVENUE_REFUND_CMD_REF]: refundCommandRef(command.idempotencyKey) }
+      : {}),
+  };
   const createParams: Stripe.RefundCreateParams = {
     payment_intent: paymentId,
-    metadata: toStringMetadata(options.metadata),
+    metadata: stampedMetadata,
   };
   if (amount !== null && amount !== undefined && amount > 0) createParams.amount = amount;
   if (options.reason && isStripeRefundReason(options.reason)) createParams.reason = options.reason;
@@ -58,12 +86,69 @@ export async function refund(
     status: mapRefundStatus(refundObj.status),
     amount: {
       amount: refundObj.amount,
-      currency: (refundObj.currency ?? options.currency ?? deps.defaultCurrency).toUpperCase(),
+      currency: currencyCode(
+        (refundObj.currency ?? options.currency ?? deps.defaultCurrency).toUpperCase(),
+      ),
     },
     refundedAt: new Date(refundObj.created * 1000),
     reason: options.reason ?? refundObj.reason ?? undefined,
     metadata: options.metadata ?? {},
     raw: refundObj,
+  };
+}
+
+/**
+ * Query the authoritative status of a REFUND (never the PaymentIntent). Used by the engine's
+ * reconciliation when a refund's create response was lost (timeout → `unknown`).
+ *
+ * Resolution order:
+ *   1. `refundRef` known  → `refunds.retrieve` — direct and authoritative.
+ *   2. otherwise          → list the PaymentIntent's refunds and match OUR stamped
+ *                           `REVENUE_REFUND_CMD_REF`. The intent's own status is deliberately
+ *                           NOT consulted — a captured intent tells us nothing about whether
+ *                           this particular refund went through.
+ *   3. no match           → `processing` (uncertain). The engine RETAINS the reservation;
+ *                           it never frees the amount on a guess, which would risk a double
+ *                           refund. Only a definitive `succeeded`/`failed` moves money.
+ */
+export async function getRefundStatus(
+  deps: RefundDeps,
+  query: RefundStatusQuery,
+): Promise<PaymentResult> {
+  if (query.refundRef) {
+    const r = await deps.stripe.refunds.retrieve(query.refundRef);
+    return refundToPaymentResult(r, deps.defaultCurrency);
+  }
+  const wanted = refundCommandRef(query.idempotencyKey);
+  const list = await deps.stripe.refunds.list({ payment_intent: query.paymentId, limit: 100 });
+  const match = list.data.find((r) => r.metadata?.[REVENUE_REFUND_CMD_REF] === wanted);
+  if (match) return refundToPaymentResult(match, deps.defaultCurrency);
+  return { id: query.idempotencyKey, provider: 'stripe', status: 'processing', metadata: {} };
+}
+
+/**
+ * Map a Stripe `Refund` to the port's `PaymentResult` for reconciliation:
+ *   - `succeeded`                → `succeeded` (engine finalizes: reserved → refunded)
+ *   - `failed` / `canceled`      → `failed`    (engine releases the reservation — no money moved)
+ *   - `pending` / `requires_action` / unknown → `processing` (engine RETAINS — still uncertain)
+ */
+function refundToPaymentResult(r: Stripe.Refund, defaultCurrency: string): PaymentResult {
+  const status: PaymentResult['status'] =
+    r.status === 'succeeded'
+      ? 'succeeded'
+      : r.status === 'failed' || r.status === 'canceled'
+        ? 'failed'
+        : 'processing';
+  return {
+    id: r.id,
+    provider: 'stripe',
+    status,
+    amount: {
+      amount: r.amount,
+      currency: currencyCode((r.currency ?? defaultCurrency).toUpperCase()),
+    },
+    metadata: { refundStatus: r.status ?? '' },
+    raw: r,
   };
 }
 

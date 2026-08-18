@@ -1,3 +1,4 @@
+import { currencyCode } from '@classytic/primitives/currency';
 /**
  * `verifyPayment` / `getStatus` — read ProviderIntent state and map to
  * the engine's narrow `PaymentResult.status` union.
@@ -72,7 +73,7 @@ export function paymentIntentToResult(intent: Stripe.PaymentIntent): PaymentResu
     status,
     amount: {
       amount: intent.amount_received || intent.amount,
-      currency: intent.currency.toUpperCase(),
+      currency: currencyCode(intent.currency.toUpperCase()),
     },
     paidAt,
     methodKind,

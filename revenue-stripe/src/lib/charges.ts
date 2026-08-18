@@ -1,3 +1,4 @@
+import { currencyCode } from '@classytic/primitives/currency';
 /**
  * `createIntent` — builds a Stripe PaymentIntent.
  *
@@ -99,7 +100,7 @@ export async function createIntent(
     id: intent.id,
     provider: 'stripe',
     status: intent.status,
-    amount: { amount: intent.amount, currency: intent.currency.toUpperCase() },
+    amount: { amount: intent.amount, currency: currencyCode(intent.currency.toUpperCase()) },
     paymentIntentId: intent.id,
     sessionId: null,
     clientSecret: intent.client_secret ?? undefined,

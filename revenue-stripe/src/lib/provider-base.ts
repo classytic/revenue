@@ -38,12 +38,20 @@ export abstract class StripeProviderBase implements DefaultCurrencyAware {
   }
 
   /**
-   * Default: reject nothing. Overridden by every provider here with real HMAC verification —
-   * this exists only so a subclass that genuinely has no webhook transport need not declare it.
+   * Does this payload REALLY come from Stripe?
+   *
+   * ABSTRACT — there is no default, and there must not be. This was `return true`,
+   * justified as "overridden by every provider here". That was true at the time, and
+   * it is the wrong shape regardless: the claim describes today's subclasses, while
+   * the default silently applies to tomorrow's. A provider added later that forgets
+   * inherits accept-every-signature on the call that transitions a payment, and
+   * nothing anywhere reports it.
+   *
+   * `@classytic/revenue`'s `PaymentProvider` carried the identical default and was
+   * made abstract for the same reason. A subclass with genuinely no webhook transport
+   * answers `true` explicitly, in its own file, where the decision is reviewable.
    */
-  verifyWebhookSignature(_payload: unknown, _signature: string): boolean {
-    return true;
-  }
+  abstract verifyWebhookSignature(payload: unknown, signature: string): boolean;
 }
 
 /** Compile-time proof a concrete subclass satisfies the port. */

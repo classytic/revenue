@@ -24,13 +24,14 @@ import type {
   PaymentResult,
   ProviderCapabilities,
   RefundResult,
+  RefundStatusQuery,
   WebhookEvent,
 } from '@classytic/primitives/payment-gateway';
 import { createStripeClient } from '../stripe-client.js';
 import type { StripeRefundOptions, StripeSaasProviderConfig } from '../types.js';
 import { createIntent } from '../lib/charges.js';
 import { verifyPayment, paymentIntentToResult } from '../lib/verify.js';
-import { refund } from '../lib/refund.js';
+import { refund, getRefundStatus } from '../lib/refund.js';
 import { stripePaymentIntentToKind } from '../lib/method-kind.js';
 import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
 
@@ -87,6 +88,18 @@ export class StripeSaasProvider extends StripeProviderBase {
       amount,
       command,
       options,
+    );
+  }
+
+  /**
+   * Authoritative REFUND status (never the PaymentIntent's) — the engine's reconciliation
+   * calls this to resolve a refund whose create response was lost. Retrieves by `refundRef`
+   * when known, else matches our stamped command ref among the intent's refunds.
+   */
+  async getRefundStatus(query: RefundStatusQuery): Promise<PaymentResult> {
+    return getRefundStatus(
+      { stripe: this.stripe, defaultCurrency: this.defaultCurrency },
+      query,
     );
   }
 
