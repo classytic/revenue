@@ -1,6 +1,6 @@
 /**
  * InProcessRevenueBus tests — exercises the arc-compatible fallback transport
- * shipped with the package so `createRevenue` works without arc installed.
+ * shipped with the package so `bindRevenue` works without arc installed.
  *
  * The bus is a structural match of `@classytic/arc`'s `MemoryEventTransport`:
  * same publish/subscribe contract, same glob rules (exact / `*` / `prefix.*`),
@@ -8,6 +8,7 @@
  * regression on the fallback doesn't silently break arc-drop-in compatibility.
  */
 
+import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
 import { describe, it, expect, vi } from 'vitest';
 import { InProcessRevenueBus } from '../../revenue/src/events/in-process-bus.js';
 import { createEvent } from '../../revenue/src/events/helpers.js';
@@ -17,13 +18,13 @@ describe('InProcessRevenueBus', () => {
   it('publishes events to subscribers registered for the exact type', async () => {
     const bus = new InProcessRevenueBus();
     const handler = vi.fn();
-    await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, handler);
+    await bus.subscribe(PAYMENT_EVENT_TYPE.SUCCEEDED, handler);
 
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, { amount: 1000 }));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, { amount: 1000 }));
 
     expect(handler).toHaveBeenCalledTimes(1);
     const event = handler.mock.calls[0][0];
-    expect(event.type).toBe('revenue:payment.verified');
+    expect(event.type).toBe('payment.succeeded');
     expect(event.payload.amount).toBe(1000);
     expect(event.meta.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(event.meta.timestamp).toBeInstanceOf(Date);
@@ -33,10 +34,10 @@ describe('InProcessRevenueBus', () => {
     const bus = new InProcessRevenueBus();
     const a = vi.fn();
     const b = vi.fn();
-    await bus.subscribe(REVENUE_EVENTS.PAYMENT_REFUNDED, a);
-    await bus.subscribe(REVENUE_EVENTS.PAYMENT_REFUNDED, b);
+    await bus.subscribe(PAYMENT_EVENT_TYPE.REFUNDED, a);
+    await bus.subscribe(PAYMENT_EVENT_TYPE.REFUNDED, b);
 
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_REFUNDED, { refundAmount: 50 }));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.REFUNDED, { refundAmount: 50 }));
 
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
@@ -49,22 +50,22 @@ describe('InProcessRevenueBus', () => {
     const handler = vi.fn();
     await bus.subscribe('*', handler);
 
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, {}));
     await bus.publish(createEvent(REVENUE_EVENTS.SUBSCRIPTION_ACTIVATED, {}));
 
     expect(handler).toHaveBeenCalledTimes(2);
   });
 
   it('supports `prefix.*` glob — matches `prefix.<anything-after-dot>`', async () => {
-    // revenue:payment.* should match payment.verified / payment.refunded but
-    // NOT subscription.activated (different resource) or payment (no dot).
+    // `payment.*` matches every canonical outcome but NOT a revenue-internal
+    // name — which is the 4.0.0 split, exercised on the bus itself.
     const bus = new InProcessRevenueBus();
     const handler = vi.fn();
-    await bus.subscribe('revenue:payment.*', handler);
+    await bus.subscribe('payment.*', handler);
 
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_REFUNDED, {}));
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_FAILED, {}));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, {}));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.REFUNDED, {}));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.FAILED, {}));
     await bus.publish(createEvent(REVENUE_EVENTS.SUBSCRIPTION_ACTIVATED, {}));
 
     expect(handler).toHaveBeenCalledTimes(3);
@@ -75,13 +76,13 @@ describe('InProcessRevenueBus', () => {
   it('`subscribe` returns an unsubscribe function that removes the listener', async () => {
     const bus = new InProcessRevenueBus();
     const handler = vi.fn();
-    const off = await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, handler);
+    const off = await bus.subscribe(PAYMENT_EVENT_TYPE.SUCCEEDED, handler);
 
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, {}));
     expect(handler).toHaveBeenCalledTimes(1);
 
     off();
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, {}));
     expect(handler).toHaveBeenCalledTimes(1); // still 1
   });
 
@@ -106,11 +107,11 @@ describe('InProcessRevenueBus', () => {
     const bad = vi.fn().mockRejectedValue(new Error('boom'));
     const good = vi.fn();
 
-    await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, bad);
-    await bus.subscribe(REVENUE_EVENTS.PAYMENT_VERIFIED, good);
+    await bus.subscribe(PAYMENT_EVENT_TYPE.SUCCEEDED, bad);
+    await bus.subscribe(PAYMENT_EVENT_TYPE.SUCCEEDED, good);
 
     await expect(
-      bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {})),
+      bus.publish(createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, {})),
     ).resolves.not.toThrow();
 
     expect(bad).toHaveBeenCalledTimes(1);
@@ -130,7 +131,7 @@ describe('InProcessRevenueBus', () => {
     await bus.subscribe('*', handler);
 
     await bus.close();
-    await bus.publish(createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, {}));
+    await bus.publish(createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, {}));
 
     expect(handler).not.toHaveBeenCalled();
   });
@@ -146,10 +147,10 @@ describe('InProcessRevenueBus', () => {
 describe('createEvent', () => {
   it('fills in meta.id (uuid) and meta.timestamp (now)', () => {
     const before = Date.now();
-    const event = createEvent(REVENUE_EVENTS.PAYMENT_VERIFIED, { amount: 10 });
+    const event = createEvent(PAYMENT_EVENT_TYPE.SUCCEEDED, { amount: 10 });
     const after = Date.now();
 
-    expect(event.type).toBe('revenue:payment.verified');
+    expect(event.type).toBe('payment.succeeded');
     expect(event.payload.amount).toBe(10);
     expect(event.meta.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(event.meta.timestamp.getTime()).toBeGreaterThanOrEqual(before);
@@ -158,7 +159,7 @@ describe('createEvent', () => {
 
   it('pulls userId / organizationId / correlationId from a RevenueContext', () => {
     const event = createEvent(
-      REVENUE_EVENTS.PAYMENT_VERIFIED,
+      PAYMENT_EVENT_TYPE.SUCCEEDED,
       { amount: 10 },
       { actorId: 'user_1', organizationId: 'org_1', traceId: 'trace_abc' },
     );
@@ -170,7 +171,7 @@ describe('createEvent', () => {
 
   it('accepts meta overrides (resource / resourceId)', () => {
     const event = createEvent(
-      REVENUE_EVENTS.PAYMENT_VERIFIED,
+      PAYMENT_EVENT_TYPE.SUCCEEDED,
       { amount: 10 },
       undefined,
       { resource: 'transaction', resourceId: 'txn_abc' },

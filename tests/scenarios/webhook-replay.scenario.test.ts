@@ -1,3 +1,6 @@
+import type { CurrencyCode } from '@classytic/primitives/currency';
+import { currencyCode } from '@classytic/primitives/currency';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Webhook replay dedup.
  *
@@ -20,7 +23,6 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   PaymentProvider,
   REVENUE_EVENTS,
   type DomainEvent,
@@ -40,8 +42,20 @@ const TIMEOUT = 15000;
  * the test assert dedup on `event.id` exactly.
  */
 class DeterministicProvider extends PaymentProvider {
+  /**
+   * A TEST double has no real signature to verify, so it says so EXPLICITLY.
+   *
+   * `verifyWebhookSignature` is abstract on `PaymentProvider` precisely so this
+   * answer is stated per provider rather than inherited: the base used to default to
+   * accept-all, which meant a provider that forgot to override accepted any signature
+   * on the call that transitions a payment.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
+
   public override readonly name = 'det';
-  private store = new Map<string, { amount: number; currency: string }>();
+  private store = new Map<string, { amount: number; currency: CurrencyCode }>();
 
   constructor() { super({}); }
 
@@ -74,7 +88,7 @@ class DeterministicProvider extends PaymentProvider {
   async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
     return {
       id: `ref_${paymentId}`, provider: 'det', status: 'succeeded',
-      amount: { amount: amount ?? 0, currency: 'USD' }, refundedAt: new Date(), metadata: {},
+      amount: { amount: amount ?? 0, currency: currencyCode('USD') }, refundedAt: new Date(), metadata: {},
     };
   }
 
@@ -109,7 +123,7 @@ describe('Scenario: Webhook replay dedup', () => {
     if (!mongoAvailable) return;
 
     const published: DomainEvent[] = [];
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { det: new DeterministicProvider() },
@@ -139,10 +153,12 @@ describe('Scenario: Webhook replay dedup', () => {
       });
       expect(firstResult).not.toBeNull();
       expect(firstResult!.webhook!.eventId).toBe('evt_stable_001');
+      expect(firstResult!.status).toBe('verified');
       const processedCount1 = published.filter(
         e => e.type === REVENUE_EVENTS.WEBHOOK_PROCESSED,
       ).length;
       expect(processedCount1).toBe(1);
+      expect(published.filter(e => e.type === 'payment.succeeded')).toHaveLength(1);
 
       // Replay (same id). Expected: no second publish, no field change.
       const replayResult = await engine.repositories.transaction.handleWebhook('det', {
@@ -156,6 +172,7 @@ describe('Scenario: Webhook replay dedup', () => {
         e => e.type === REVENUE_EVENTS.WEBHOOK_PROCESSED,
       ).length;
       expect(processedCount2).toBe(1);
+      expect(published.filter(e => e.type === 'payment.succeeded')).toHaveLength(1);
 
       // A DIFFERENT event id for the same transaction DOES get processed.
       await engine.repositories.transaction.handleWebhook('det', {
@@ -168,13 +185,13 @@ describe('Scenario: Webhook replay dedup', () => {
       ).length;
       expect(processedCount3).toBe(2);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
   it('returns null when the webhook references an unknown session', async () => {
     if (!mongoAvailable) return;
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { det: new DeterministicProvider() },
@@ -190,7 +207,7 @@ describe('Scenario: Webhook replay dedup', () => {
       });
       expect(result).toBeNull();
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 });

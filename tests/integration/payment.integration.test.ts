@@ -1,7 +1,10 @@
+import type { CurrencyCode } from '@classytic/primitives/currency';
+import { currencyCode } from '@classytic/primitives/currency';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Integration Tests - @classytic/revenue v2
  *
- * Tests the v2 factory API (createRevenue) with domain verbs on repositories.
+ * Tests the v2 factory API (bindRevenue) with domain verbs on repositories.
  * No service layer — repositories ARE the domain layer.
  *
  * - Real MongoDB (localhost or in-memory fallback)
@@ -15,7 +18,6 @@ import mongoose from 'mongoose';
 import { connectToMongoDB, disconnectFromMongoDB, clearCollections } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   PaymentProvider,
   TRANSACTION_STATUS,
   SUBSCRIPTION_STATUS,
@@ -35,8 +37,20 @@ const TEST_TIMEOUT = 15000;
 // ============ FAKE PROVIDER ============
 
 class FakeProvider extends PaymentProvider {
+  /**
+   * A TEST double has no real signature to verify, so it says so EXPLICITLY.
+   *
+   * `verifyWebhookSignature` is abstract on `PaymentProvider` precisely so this
+   * answer is stated per provider rather than inherited: the base used to default to
+   * accept-all, which meant a provider that forgot to override accepted any signature
+   * on the call that transitions a payment.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
+
   public override readonly name = 'fake';
-  private store = new Map<string, { amount: number; currency: string; status: string }>();
+  private store = new Map<string, { amount: number; currency: CurrencyCode; status: string }>();
 
   constructor() {
     super({});
@@ -99,7 +113,7 @@ class FakeProvider extends PaymentProvider {
       id: `ref_${paymentId}`,
       provider: 'fake',
       status: 'succeeded',
-      amount: { amount: amount ?? 0, currency: 'USD' },
+      amount: { amount: amount ?? 0, currency: currencyCode('USD') },
       refundedAt: new Date(),
       metadata: {},
     };
@@ -128,7 +142,7 @@ class FakeProvider extends PaymentProvider {
 
 // ============ TEST SETUP ============
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let mongoAvailable = false;
 let fakeProvider: FakeProvider;
 
@@ -137,7 +151,7 @@ beforeAll(async () => {
   if (!mongoAvailable) return;
 
   fakeProvider = new FakeProvider();
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     providers: { fake: fakeProvider },
@@ -148,7 +162,7 @@ beforeAll(async () => {
 }, TEST_TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 
@@ -460,7 +474,7 @@ describe('Settlement Flow', () => {
       recipientType: 'user',
       type: 'split_payout',
       amount: 8000,
-      currency: 'USD',
+      currency: currencyCode('USD'),
       payoutMethod: 'bank_transfer',
     });
 
@@ -488,7 +502,7 @@ describe('Settlement Flow', () => {
       recipientType: 'user',
       type: 'manual_payout',
       amount: 5000,
-      currency: 'USD',
+      currency: currencyCode('USD'),
       payoutMethod: 'manual',
     });
 
@@ -553,14 +567,14 @@ describe('Repository CRUD (inherited from mongokit)', () => {
 // ============ MANUAL PROVIDER INTEGRATION ============
 
 describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
-  let manualEngine: Awaited<ReturnType<typeof createRevenue>>;
+  let manualEngine: Awaited<ReturnType<typeof bindRevenue>>;
 
   beforeAll(async () => {
     if (!mongoAvailable) return;
     // Dynamic import — revenue-manual is a sibling package
     const { ManualProvider } = await import('../../revenue-manual/src/index.js');
 
-    manualEngine = await createRevenue({
+    manualEngine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'BDT',
       providers: { manual: new ManualProvider() as any },
@@ -572,7 +586,7 @@ describe('ManualProvider Integration (@classytic/revenue-manual)', () => {
   }, TEST_TIMEOUT);
 
   afterAll(async () => {
-    if (manualEngine) await manualEngine.destroy();
+    if (manualEngine) await manualEngine.close();
   });
 
   it('should create manual payment intent with instructions', async () => {

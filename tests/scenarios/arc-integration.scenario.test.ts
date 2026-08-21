@@ -1,3 +1,5 @@
+import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Arc integration parity.
  *
@@ -35,7 +37,6 @@ import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
 import type { OutboxStore, OutboxWriteOptions } from '@classytic/primitives/outbox';
 import {
-  createRevenue,
   REVENUE_EVENTS,
   TRANSACTION_STATUS,
   type DomainEvent,
@@ -50,6 +51,8 @@ const TIMEOUT = 15000;
  * and NULL for non-transactional verbs.
  */
 class SessionRecordingOutbox implements OutboxStore {
+  /** Required by the bind gate — and honest here: this store observes the session. */
+  readonly transactionalSave = true;
   readonly saves: Array<{ event: DomainEvent; sessionBound: boolean }> = [];
 
   async save(event: DomainEvent, options?: OutboxWriteOptions): Promise<void> {
@@ -85,7 +88,7 @@ beforeEach(async () => {
 describe('Scenario: Arc integration parity', () => {
   it('TransactionRepository structurally satisfies arc\'s RepositoryLike', async () => {
     if (!mongoAvailable) return;
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -107,13 +110,13 @@ describe('Scenario: Arc integration parity', () => {
       expect(typeof repo.exists).toBe('function');
       expect(typeof repo.findOneAndUpdate).toBe('function');
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
   it('emits events with arc-compatible DomainEvent shape (type + meta.id + meta.resource)', async () => {
     if (!mongoAvailable) return;
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -126,7 +129,15 @@ describe('Scenario: Arc integration parity', () => {
       // primitives >=0.13: `EventTransport.subscribe` is optional (publish-only
       // transports omit it). The in-process bus this engine wires always has it.
       if (!engine.events.subscribe) throw new Error('event transport does not support subscribe');
-      const unsubscribe = await engine.events.subscribe('revenue:payment.*', (e) => {
+      // `payment.*`, NOT `revenue:payment.*`.
+      //
+      // A consequence of the 4.x contract worth stating: a glob on the old
+      // prefix no longer matches a portable outcome. A consumer that subscribed
+      // to `revenue:payment.*` keeps receiving the intermediate states
+      // (`requires_action`, `processing`) and SILENTLY stops receiving
+      // succeeded/failed/refunded — the subscription still resolves, so nothing
+      // errors. That is the migration's sharpest edge.
+      const unsubscribe = await engine.events.subscribe('payment.*', (e) => {
         seen.push(e);
       });
       const txn = await engine.repositories.transaction.createPaymentIntent({
@@ -139,14 +150,14 @@ describe('Scenario: Arc integration parity', () => {
       unsubscribe();
 
       // A `payment.verified` must have arrived via the glob subscriber.
-      const verified = seen.find(e => e.type === REVENUE_EVENTS.PAYMENT_VERIFIED);
+      const verified = seen.find(e => e.type === PAYMENT_EVENT_TYPE.SUCCEEDED);
       expect(verified).toBeDefined();
       expect(verified!.meta.id).toMatch(/.+/);
       expect(verified!.meta.timestamp).toBeInstanceOf(Date);
       expect(verified!.meta.resource).toBe('transaction');
       expect(verified!.meta.resourceId).toBeTruthy();
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -154,7 +165,7 @@ describe('Scenario: Arc integration parity', () => {
     if (!mongoAvailable) return;
 
     const outbox = new SessionRecordingOutbox();
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -182,20 +193,25 @@ describe('Scenario: Arc integration parity', () => {
 
       // Find the refund event — it must have been saved session-bound.
       const refundEntry = outbox.saves.find(
-        s => s.event.type === REVENUE_EVENTS.PAYMENT_REFUNDED,
+        s => s.event.type === PAYMENT_EVENT_TYPE.REFUNDED,
       );
       expect(refundEntry).toBeDefined();
       expect(refundEntry!.sessionBound).toBe(true);
-      expect((refundEntry!.event.payload as { refundAmount?: number }).refundAmount).toBe(10_000);
+      // `refundedAmount: Money`, not a bare `refundAmount` number — the old
+      // field carried no currency and could not be interpreted in a
+      // multi-currency deployment.
+      expect(
+        (refundEntry!.event.payload as { refundedAmount?: { amount: number; currency: string } }).refundedAmount,
+      ).toEqual({ amount: 10_000, currency: 'USD' });
 
       // Meanwhile `payment.verified` came through a non-tx dispatch — no session.
       const verifiedEntry = outbox.saves.find(
-        s => s.event.type === REVENUE_EVENTS.PAYMENT_VERIFIED,
+        s => s.event.type === PAYMENT_EVENT_TYPE.SUCCEEDED,
       );
       expect(verifiedEntry).toBeDefined();
       expect(verifiedEntry!.sessionBound).toBe(false);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -203,7 +219,7 @@ describe('Scenario: Arc integration parity', () => {
     if (!mongoAvailable) return;
 
     const outbox = new SessionRecordingOutbox();
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -239,7 +255,7 @@ describe('Scenario: Arc integration parity', () => {
       expect(created).toBeDefined();
       expect(created!.sessionBound).toBe(true);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 });

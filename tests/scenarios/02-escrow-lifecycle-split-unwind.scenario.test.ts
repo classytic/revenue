@@ -1,3 +1,5 @@
+import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario 02 — Marketplace escrow: hold → partial release → split → late
  * dispute unwind, with full event-stream and state-machine assertions.
@@ -35,7 +37,6 @@ import {
 import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   HOLD_STATUS,
   REVENUE_EVENTS,
   TRANSACTION_STATUS,
@@ -44,7 +45,7 @@ import {
 
 const TIMEOUT = 30000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let published: DomainEvent[];
 let mongoAvailable = false;
 
@@ -52,7 +53,7 @@ beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
   published = [];
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'BDT',
     providers: { fake: new FakeProvider() },
@@ -70,7 +71,7 @@ beforeAll(async () => {
 }, TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 
@@ -157,12 +158,12 @@ describe('Scenario 02 — Escrow lifecycle with partial release, split, late ref
     const eventTypes = published.map(e => e.type);
     const expectedOrder = [
       REVENUE_EVENTS.MONETIZATION_CREATED,
-      REVENUE_EVENTS.PAYMENT_VERIFIED,
+      PAYMENT_EVENT_TYPE.SUCCEEDED,
       REVENUE_EVENTS.ESCROW_HELD,
       REVENUE_EVENTS.ESCROW_RELEASED,
       REVENUE_EVENTS.ESCROW_RELEASED,
       REVENUE_EVENTS.ESCROW_SPLIT,
-      REVENUE_EVENTS.PAYMENT_REFUNDED,
+      PAYMENT_EVENT_TYPE.REFUNDED,
     ];
     // Filter out noise (verified emits bridge-side effects) but keep order
     const observed = eventTypes.filter(t => expectedOrder.includes(t as any));

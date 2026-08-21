@@ -3,6 +3,45 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.10.0
+
+### Added
+
+- **`tax` on the engine runtime** — `defineRevenue(...).bind(conn, { tax })`, where
+  `tax` is a `TaxConfig` **or a thunk** `() => TaxConfig | Promise<TaxConfig>`,
+  resolved PER TRANSACTION. Prefer the thunk: a static config is captured at bind,
+  and an operator flipping tax registration then produces a measured split brain —
+  the next sale's invoice (live config) rated 27,000 while its transaction (bound
+  config) recorded 0, until a restart. The bind-time FRACTION guard wraps a thunk
+  so a percent-shaped rate throws on first resolution rather than mis-taxing.
+  Threaded exactly like `commission`: same runtime option, same `deps` field, same
+  calculator call in `createPaymentIntent`. No new mechanism.
+
+- **`createPaymentIntent` now records tax.** It wrote a literal `tax: 0`, so purchases,
+  operational transactions and refunds all recorded tax while customer SALES never did.
+  Consumers that build accounting entries from `transaction.tax` therefore booked input
+  tax and no output tax — a filing gap that balances perfectly and surfaces only at audit.
+  `refund()` already called `reverseTax(original.tax, …)`, reversing a number nothing set.
+
+  The row now carries `tax`, `taxDetails: { type, rate, isInclusive }`, and
+  `net = amount - fee - tax` — the mirror image of the formula `refund()` already used,
+  so a full refund of a taxed sale leaves no residue in `net`.
+
+### Compatibility
+
+- **Omit `tax` and nothing changes.** `calculateTax(amount, category, null)` returns
+  `isApplicable: false` with a zero amount, so an engine that wires no tax config behaves
+  byte-identically to 2.9.x. Only a host that opts in starts recording tax.
+
+### Guard
+
+- **`bind` refuses a `tax.defaultRate` above 1**, as the first statement, before any model
+  is compiled. The rate is a FRACTION (`amount / (1 + rate)`), while country configuration
+  almost always states a percentage — passing `15` computes `amount / 16`, an effective 94%
+  tax that is a positive integer below the gross, so every downstream check still passes.
+  A tax rate at or above 100% does not exist, so this cannot reject a real configuration.
+
+
 
 ## 2.9.0 — 2026-08-17
 

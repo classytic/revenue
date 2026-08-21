@@ -28,6 +28,7 @@ import {
   AlreadySplitError,
 } from '../../core/errors.js';
 import { calculateCommission } from '../../shared/calculators/commission.js';
+import { calculateTax, getTaxType } from '../../shared/calculators/tax.js';
 import { calculateSplits, calculateOrganizationPayout } from '../../shared/calculators/splits.js';
 import { TransactionRefundRepository } from './refund.repository.js';
 
@@ -145,6 +146,37 @@ export class TransactionRepository extends TransactionRefundRepository {
     const commissionRate = this.deps.commission?.defaultRate ?? 0;
     const gatewayFeeRate = this.deps.commission?.gatewayFeeRate ?? 0;
     const commission = calculateCommission(params.amount, commissionRate, gatewayFeeRate);
+
+    /**
+     * Tax — the OUTPUT side of what `refund()` has always reversed.
+     *
+     * This line used to be a literal `tax: 0`, so every sale recorded no tax while
+     * purchases and operational transactions recorded theirs. Downstream, the
+     * posting handler reads `txn.tax ?? 0` to build the country pack's recipe, so a
+     * VAT-registered merchant booked input VAT and no output VAT — a filing gap
+     * that balances perfectly and only surfaces at audit.
+     *
+     * `refund()` already computed `reverseTax(original.tax, …)` against a value
+     * nothing ever set, which is why the reversal machinery needs no change here:
+     * it was correct and waiting.
+     *
+     * With `deps.tax` absent, `calculateTax(…, null)` returns `isApplicable: false`
+     * and a zero amount, so an engine that wires no tax config behaves exactly as
+     * before.
+     */
+    const taxCategory = (params.data?.taxCategory as string | undefined) ?? '';
+    /**
+     * Resolved PER TRANSACTION when the host supplied a thunk.
+     *
+     * A static config is captured at BIND, and an operator flipping VAT
+     * registration then produces a measured split brain: the very next sale's
+     * INVOICE (which reads config live) rated 27,000 of tax while its
+     * TRANSACTION recorded 0 — same sale, two answers, until someone restarts
+     * the process. Registration changes are ordinary admin actions and must not
+     * require a deploy to take effect on the payment side.
+     */
+    const taxConfig = typeof this.deps.tax === 'function' ? await this.deps.tax() : (this.deps.tax ?? null);
+    const tax = calculateTax(params.amount, taxCategory, taxConfig);
 
     // Provider call (skip for free)
     let gatewayData: Record<string, unknown> = { type: params.gateway };
@@ -357,8 +389,24 @@ export class TransactionRepository extends TransactionRefundRepository {
           flow: 'inflow',
           tags: params.monetizationType ? [params.monetizationType] : [],
           amount: params.amount, currency,
-          fee: commission?.gatewayFeeAmount ?? 0, tax: 0,
-          net: params.amount - (commission?.gatewayFeeAmount ?? 0),
+          fee: commission?.gatewayFeeAmount ?? 0,
+          tax: tax.taxAmount,
+          /**
+           * Tax is collected FOR the tax authority, so it is not the business's to
+           * keep — `net` excludes it, exactly as `refund()` already subtracts the
+           * reversed tax. The two formulas must stay mirror images or a full refund
+           * of a taxed sale leaves a residue in net.
+           */
+          net: params.amount - (commission?.gatewayFeeAmount ?? 0) - tax.taxAmount,
+          ...(tax.isApplicable
+            ? {
+                taxDetails: {
+                  type: getTaxType('inflow', taxCategory, taxConfig?.exemptCategories ?? []),
+                  rate: tax.rate,
+                  isInclusive: tax.pricesIncludeTax,
+                },
+              }
+            : {}),
           method: params.gateway,
           methodKind: params.methodKind,
           status: params.amount === 0 ? TRANSACTION_STATUS.VERIFIED : TRANSACTION_STATUS.PENDING,
@@ -580,7 +628,6 @@ export class TransactionRepository extends TransactionRefundRepository {
       ),
       ctx,
     );
-
     return updated as TransactionDocument;
   }
 
@@ -654,6 +701,21 @@ export class TransactionRepository extends TransactionRefundRepository {
       ),
       ctx,
     );
+
+    if (
+      updated.status === TRANSACTION_STATUS.PENDING ||
+      updated.status === TRANSACTION_STATUS.PROCESSING ||
+      updated.status === TRANSACTION_STATUS.REQUIRES_ACTION
+    ) {
+      // A webhook is a notification, not proof by itself. Re-read the provider's
+      // authoritative state, using the redirect/session id first because hosted
+      // checkout adapters (Stripe Checkout) verify sessions rather than intents.
+      const paymentIdentifier =
+        transaction.gateway?.sessionId ?? transaction.gateway?.paymentIntentId ?? sessionId ?? intentId;
+      if (paymentIdentifier) {
+        return this.verify(paymentIdentifier, { verifiedBy: `webhook:${providerName}` }, ctx);
+      }
+    }
 
     return updated as TransactionDocument;
   }

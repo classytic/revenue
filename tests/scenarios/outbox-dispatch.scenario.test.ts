@@ -1,3 +1,5 @@
+import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Host-owned outbox (PACKAGE_RULES §5.5 + P8).
  *
@@ -10,7 +12,7 @@
  *
  * This test stands in for what a real host does: passes its own
  * `OutboxStore` (arc's MemoryOutboxStore, a Postgres repo, a Kafka Connect
- * bridge, …) into `createRevenue({ outbox })`. Revenue never persists an
+ * bridge, …) into `bindRevenue({ outbox })`. Revenue never persists an
  * outbox of its own — durability belongs to the host.
  */
 
@@ -25,7 +27,6 @@ import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
 import type { OutboxStore } from '@classytic/primitives/outbox';
 import {
-  createRevenue,
   REVENUE_EVENTS,
   TRANSACTION_STATUS,
   type DomainEvent,
@@ -35,8 +36,17 @@ const TIMEOUT = 15000;
 
 let mongoAvailable = false;
 
-/** Minimal in-memory OutboxStore — implements only the required surface. */
+/**
+ * Minimal in-memory OutboxStore — implements only the required surface.
+ *
+ * Declares `transactionalSave: true` because `bind` refuses a store that does not
+ * (a store that silently ignores `ctx.session` emits events for money writes that
+ * rolled back). This double stands in for a session-honouring host store; the
+ * behaviour under test is dispatch ORDER and failure propagation, not atomicity —
+ * that is `arc-outbox-repo.scenario.test.ts`, which uses a real collection.
+ */
 class RecordingOutbox implements OutboxStore {
+  readonly transactionalSave = true;
   readonly saved: DomainEvent[] = [];
   public failNext = false;
 
@@ -75,7 +85,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
 
     const outbox = new RecordingOutbox();
     const transportCalls: DomainEvent[] = [];
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -106,7 +116,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       const outboxTypes = outbox.saved.map(e => e.type);
       const transportTypes = transportCalls.map(e => e.type);
       expect(outboxTypes).toContain(REVENUE_EVENTS.MONETIZATION_CREATED);
-      expect(outboxTypes).toContain(REVENUE_EVENTS.PAYMENT_VERIFIED);
+      expect(outboxTypes).toContain(PAYMENT_EVENT_TYPE.SUCCEEDED);
       expect(transportTypes).toEqual(outboxTypes);
 
       // Meta shape (P11-ish): every saved event has a non-empty type and meta.id.
@@ -116,7 +126,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
         expect(ev.meta.timestamp).toBeInstanceOf(Date);
       }
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -133,7 +143,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
     const outbox = new RecordingOutbox();
     const transportCalls: DomainEvent[] = [];
     let loggedOutboxErrors = 0;
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -174,7 +184,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       expect(transportCalls.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(false);
       expect(loggedOutboxErrors).toBe(1);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -182,7 +192,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
     if (!mongoAvailable) return;
 
     const transportCalls: DomainEvent[] = [];
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -206,7 +216,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       });
       expect(transportCalls.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(true);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 });

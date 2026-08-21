@@ -1,3 +1,5 @@
+import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Repo-backed outbox (arc 2.10 canonical pattern).
  *
@@ -32,7 +34,6 @@ import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
 import type { OutboxStore, OutboxWriteOptions } from '@classytic/primitives/outbox';
 import {
-  createRevenue,
   REVENUE_EVENTS,
   TRANSACTION_STATUS,
   type DomainEvent,
@@ -55,6 +56,10 @@ interface OutboxDoc {
  */
 function buildRepoOutboxStore(repo: Repository<OutboxDoc>): OutboxStore {
   return {
+    // The row is written through a mongokit repo on the SAME connection with the
+    // caller's session — so this store genuinely commits with the business write,
+    // and says so. `bind` refuses a store that stays silent about it.
+    transactionalSave: true,
     async save(event: DomainEvent, options?: OutboxWriteOptions): Promise<void> {
       if (!event?.type) throw new Error('event.type is required');
       if (!event.meta?.id) throw new Error('event.meta.id is required');
@@ -110,7 +115,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
   it('persists events to a real MongoDB collection via mongokit Repository', async () => {
     if (!mongoAvailable) return;
 
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -135,12 +140,30 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
       const rows = await OutboxModel.find({}).lean();
       const types = rows.map((r) => r.type).sort();
       expect(types).toContain(REVENUE_EVENTS.MONETIZATION_CREATED);
-      expect(types).toContain(REVENUE_EVENTS.PAYMENT_VERIFIED);
+      expect(types).toContain(PAYMENT_EVENT_TYPE.SUCCEEDED);
       expect(rows.every((r) => r.status === 'pending')).toBe(true);
       // `_id` is the event's `meta.id` — matches arc's adapter's unique key.
       expect(rows.every((r) => typeof r._id === 'string' && r._id.length > 0)).toBe(true);
+
+      /**
+       * EXACTLY ONE canonical event per outcome — the dual-publish guard.
+       *
+       * A unit test on the payload BUILDER cannot catch this: the builder is
+       * correct in both worlds. What breaks a consumer is the kernel emitting a
+       * portable fact twice — once canonically and once under the retired
+       * `revenue:payment.*` name — because a subscriber to each settles the
+       * same payment twice and the second settlement looks legitimate.
+       *
+       * Asserted on the OUTBOX because that is what a consumer actually reads.
+       */
+      const succeeded = rows.filter((r) => r.type === PAYMENT_EVENT_TYPE.SUCCEEDED);
+      expect(succeeded).toHaveLength(1);
+
+      // And NO retired name accompanies it.
+      const retired = ['revenue:payment.verified', 'revenue:payment.failed', 'revenue:payment.refunded'];
+      expect(types.filter((t) => retired.includes(t))).toEqual([]);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -154,6 +177,10 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
     // atomically with the business writes.
     const capturedSessions: Array<{ type: string; inTransaction: boolean; sessionId?: string }> = [];
     const interceptingOutbox: OutboxStore = {
+      // A DECORATOR must forward the declaration, not just the call. Dropping it
+      // is the realistic version of this defect: the wrapped store is atomic, the
+      // wrapper looks harmless, and `bind` is the only thing that notices.
+      transactionalSave: outbox.transactionalSave,
       async save(event, options) {
         const raw = options?.session as ClientSession | undefined;
         capturedSessions.push({
@@ -167,7 +194,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
       acknowledge: outbox.acknowledge.bind(outbox),
     };
 
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { fake: new FakeProvider() },
@@ -199,17 +226,17 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
 
       // Refund verb — session live, inTransaction true at save time.
       const refundCapture = capturedSessions.find(
-        c => c.type === REVENUE_EVENTS.PAYMENT_REFUNDED,
+        c => c.type === PAYMENT_EVENT_TYPE.REFUNDED,
       );
       expect(refundCapture).toBeDefined();
       expect(refundCapture!.inTransaction).toBe(true);
       expect(refundCapture!.sessionId).toBeTruthy();
 
       // And the refund row is actually persisted after commit.
-      const row = await OutboxModel.findOne({ type: REVENUE_EVENTS.PAYMENT_REFUNDED }).lean();
+      const row = await OutboxModel.findOne({ type: PAYMENT_EVENT_TYPE.REFUNDED }).lean();
       expect(row).not.toBeNull();
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 });

@@ -9,6 +9,7 @@ import type { ProviderRegistry } from '../../providers/registry.js';
 import type { BankFeedProviderRegistry } from '../../providers/bank-feed.js';
 import type { RevenueBridges } from '../../bridges/revenue-bridges.js';
 import type { CommissionConfig } from '../../engine/engine-types.js';
+import type { TaxConfig } from '../../shared/calculators/tax.js';
 import type { PaymentAttemptRepository } from '../payment-attempt.repository.js';
 
 /**
@@ -26,6 +27,16 @@ export interface TransactionRepoDeps extends BaseRevenueRepoDeps {
   bankFeedProviders?: BankFeedProviderRegistry | undefined;
   bridges: RevenueBridges;
   commission?: CommissionConfig;
+  /**
+   * Tax on transactions this engine records. ABSENT means no tax is computed,
+   * which is byte-identical to the behaviour before this existed — so an engine
+   * that wires nothing is unchanged, and only a host that opts in starts booking
+   * tax.
+   *
+   * Sits beside `commission` deliberately: both are money DERIVED from `amount`
+   * by the same verb, and both belong to the deployment rather than the payment.
+   */
+  tax?: TaxConfig | (() => TaxConfig | Promise<TaxConfig>);
   /** Validated + branded once by defineRevenue at bind; never re-parsed here. */
   defaultCurrency: CurrencyCode;
   /**

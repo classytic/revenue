@@ -1,3 +1,5 @@
+import { currencyCode } from '@classytic/primitives/currency';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Probe — confirms `multiTenantPlugin` is wired on the transaction repo
  * by asserting the plugin throws on missing `organizationId` for both
@@ -31,7 +33,6 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   BANK_FEED_SOURCE,
   type RevenueContext,
 } from '../../revenue/src/index.js';
@@ -39,14 +40,14 @@ import type { BankTransaction } from '@classytic/primitives/bank-transaction';
 
 const TIMEOUT = 15000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let mongoAvailable = false;
 
 beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
   // Default scope (enabled, required) — the probe relies on this.
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     modules: { bankFeed: true, subscription: false, escrow: false, settlement: false },
@@ -66,7 +67,7 @@ function row(over: Partial<BankTransaction> = {}): BankTransaction {
   return {
     externalId: over.externalId ?? `FITID_PROBE_${Math.random().toString(36).slice(2, 8)}`,
     postedDate: over.postedDate ?? new Date('2026-05-01T00:00:00Z'),
-    amount: over.amount ?? { amount: 1000, currency: 'USD' },
+    amount: over.amount ?? { amount: 1000, currency: currencyCode('USD') },
     description: over.description ?? 'PROBE',
   };
 }
@@ -135,7 +136,7 @@ describe('multiTenantPlugin wiring probe — transaction repo (revenue 3.0)', ()
       engine.repositories.transaction.createManual(
         {
           amount: 1000,
-          currency: 'USD',
+          currency: currencyCode('USD'),
           flow: 'inflow',
           type: 'capital_injection',
           methodKind: 'manual',

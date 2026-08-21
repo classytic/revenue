@@ -15,7 +15,17 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    /**
+     * BOTH the workspace suite and each sub-package's own tests.
+     *
+     * `tests/**` alone resolves from this directory, so the 12 test files under
+     * `revenue/tests`, `revenue-manual/tests` and `revenue-stripe/tests` were never
+     * collected — `port-boundary`, `provider-registry`, `command-context`,
+     * `execute-command` and the audit-trail integration among them. `npm test`
+     * reported a confident 434/434 while the payment kernel's own contract tests
+     * had not executed at all. A suite that cannot see a file cannot fail for it.
+     */
+    include: ['tests/**/*.test.ts', '*/tests/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

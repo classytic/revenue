@@ -22,11 +22,12 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
-import { createRevenue, TRANSACTION_STATUS } from '../../revenue/src/index.js';
+import { TRANSACTION_STATUS } from '../../revenue/src/index.js';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 
 const TIMEOUT = 30000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let provider: FakeProvider;
 let mongoAvailable = false;
 
@@ -34,7 +35,7 @@ beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
   provider = new FakeProvider();
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     providers: { fake: provider },
@@ -45,7 +46,7 @@ beforeAll(async () => {
 }, TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 
@@ -152,14 +153,25 @@ describe('State machine rejection', () => {
 });
 
 describe('Escrow edge cases', () => {
-  it('second hold overwrites the first (no double-hold guard — host responsibility)', async () => {
+  // Was: "second hold overwrites the first (no double-hold guard — host
+  // responsibility)". That was not a host responsibility, it was a money defect:
+  // `hold()` blind-`$set` the whole escrow subdocument, so a second hold reset
+  // `releasedAmount` to 0 and erased `releases[]`. One transaction, one hold —
+  // the guard now lives in the write's filter (`hold: null`).
+  it('second hold is refused — the first hold and its release ledger survive', async () => {
     if (!mongoAvailable) return;
 
     const txn = await createAndVerify(10000);
-    await engine.repositories.transaction.hold(String(txn._id), { amount: 5000, reason: 'first' });
-    const second = await engine.repositories.transaction.hold(String(txn._id), { amount: 8000, reason: 'second' });
-    expect(second.hold!.heldAmount).toBe(8000);
-    expect(second.hold!.reason).toBe('second');
+    const first = await engine.repositories.transaction.hold(String(txn._id), { amount: 5000, reason: 'first' });
+    expect(first.hold!.heldAmount).toBe(5000);
+
+    await expect(
+      engine.repositories.transaction.hold(String(txn._id), { amount: 8000, reason: 'second' }),
+    ).rejects.toThrow();
+
+    const current = await engine.repositories.transaction.getById(String(txn._id)) as any;
+    expect(current.hold.heldAmount).toBe(5000);
+    expect(current.hold.reason).toBe('first');
   }, TIMEOUT);
 });
 

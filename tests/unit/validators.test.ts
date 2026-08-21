@@ -51,8 +51,16 @@ describe('Payment schemas', () => {
   it('paymentIntentSchema accepts valid intent', () => {
     const result = paymentIntentSchema.safeParse({
       amount: 5000, currency: 'USD', gateway: 'stripe', methodKind: 'card',
+      idempotencyKey: 'order-1',
     });
     expect(result.success).toBe(true);
+  });
+
+  it('paymentIntentSchema REJECTS a positive intent without an idempotencyKey', () => {
+    const result = paymentIntentSchema.safeParse({
+      amount: 5000, currency: 'USD', gateway: 'stripe', methodKind: 'card',
+    });
+    expect(result.success).toBe(false);
   });
 
   it('paymentIntentSchema rejects zero amount', () => {
@@ -68,13 +76,18 @@ describe('Payment schemas', () => {
   });
 
   it('refundSchema accepts valid refund', () => {
-    const result = refundSchema.safeParse({ transactionId: 'txn_1', reason: 'customer request' });
+    const result = refundSchema.safeParse({ transactionId: 'txn_1', reason: 'customer request', idempotencyKey: 'refund-1' });
     expect(result.success).toBe(true);
   });
 
   it('refundSchema accepts partial refund with amount', () => {
-    const result = refundSchema.safeParse({ transactionId: 'txn_1', amount: 3000, reason: 'partial' });
+    const result = refundSchema.safeParse({ transactionId: 'txn_1', amount: 3000, reason: 'partial', idempotencyKey: 'refund-2' });
     expect(result.success).toBe(true);
+  });
+
+  it('refundSchema REJECTS a refund without an idempotencyKey', () => {
+    const result = refundSchema.safeParse({ transactionId: 'txn_1', amount: 3000, reason: 'partial' });
+    expect(result.success).toBe(false);
   });
 });
 

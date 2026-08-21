@@ -56,9 +56,32 @@ describe('revenueEventDefinitions — invariants', () => {
     }
   });
 
-  it('every name uses the package prefix `revenue:`', () => {
+  it('names split by AUDIENCE: `revenue:` for internal facts, canonical for portable outcomes', () => {
+    /**
+     * The 4.0.0 contract, asserted as an invariant rather than a list.
+     *
+     * A portable OUTCOME (funds cleared, attempt failed, money returned) is a
+     * fact any module reasons about, so it carries the ecosystem name from
+     * `@classytic/primitives/payment-events` and no consumer needs to know what
+     * a revenue transaction document looks like.
+     *
+     * Everything else — imports, matching, subscription lifecycle, the
+     * intermediate provider states — is revenue-internal and keeps the prefix.
+     * A name that is neither is a third category nobody has defined.
+     */
     for (const def of revenueEventDefinitions) {
-      expect(def.name.startsWith('revenue:')).toBe(true);
+      const isInternal = def.name.startsWith('revenue:');
+      const isCanonicalPayment = def.name.startsWith('payment.');
+      expect(isInternal || isCanonicalPayment, `unclassified event name: ${def.name}`).toBe(true);
+    }
+  });
+
+  it('emits NO `revenue:payment.*` name for a portable outcome', () => {
+    // The retired trio. Re-adding one would mean two names for one fact, and a
+    // consumer subscribed to both settles the same payment twice.
+    const retired = ['revenue:payment.verified', 'revenue:payment.failed', 'revenue:payment.refunded'];
+    for (const name of revenueEventDefinitions.map((d) => d.name)) {
+      expect(retired).not.toContain(name);
     }
   });
 });

@@ -1,3 +1,5 @@
+import type { CurrencyCode } from '@classytic/primitives/currency';
+import { currencyCode } from '@classytic/primitives/currency';
 /**
  * FakeProvider — in-memory payment provider for scenario/integration tests.
  *
@@ -20,11 +22,23 @@ type Outcome = 'succeeded' | 'failed' | 'requires_action';
 
 interface StoreEntry {
   amount: number;
-  currency: string;
+  currency: CurrencyCode;
   status: Outcome;
 }
 
 export class FakeProvider extends PaymentProvider {
+  /**
+   * A TEST double has no real signature to verify, so it says so EXPLICITLY.
+   *
+   * `verifyWebhookSignature` is abstract on `PaymentProvider` precisely so this
+   * answer is stated per provider rather than inherited: the base used to default to
+   * accept-all, which meant a provider that forgot to override accepted any signature
+   * on the call that transitions a payment.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
+
   public override readonly name = 'fake';
   private store = new Map<string, StoreEntry>();
   private nextOutcome: Outcome = 'succeeded';
@@ -101,7 +115,7 @@ export class FakeProvider extends PaymentProvider {
       id: `ref_${paymentId}_${Date.now()}`,
       provider: 'fake',
       status: 'succeeded',
-      amount: { amount: amount ?? 0, currency: 'USD' },
+      amount: { amount: amount ?? 0, currency: currencyCode('USD') },
       refundedAt: new Date(),
       metadata: {},
     };

@@ -1,3 +1,4 @@
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Settlement multi-tenant correctness — regression for v2.1.1.
  *
@@ -20,20 +21,19 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   SETTLEMENT_STATUS,
   SettlementNotFoundError,
 } from '../../revenue/src/index.js';
 
 const TIMEOUT = 15000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let mongoAvailable = false;
 
 beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     scope: { enabled: true, fieldType: 'string', required: true },
@@ -43,7 +43,7 @@ beforeAll(async () => {
 }, TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 

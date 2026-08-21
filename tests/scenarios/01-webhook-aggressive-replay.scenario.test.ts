@@ -1,3 +1,6 @@
+import type { CurrencyCode } from '@classytic/primitives/currency';
+import { currencyCode } from '@classytic/primitives/currency';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario 01 — Webhook aggressive replay (hostile network conditions).
  *
@@ -29,7 +32,6 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   PaymentProvider,
   REVENUE_EVENTS,
   type DomainEvent,
@@ -45,9 +47,21 @@ import type {
 const TIMEOUT = 30000;
 
 class CountingProvider extends PaymentProvider {
+  /**
+   * A TEST double has no real signature to verify, so it says so EXPLICITLY.
+   *
+   * `verifyWebhookSignature` is abstract on `PaymentProvider` precisely so this
+   * answer is stated per provider rather than inherited: the base used to default to
+   * accept-all, which meant a provider that forgot to override accepted any signature
+   * on the call that transitions a payment.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
+
   public override readonly name = 'counter';
   public webhookCalls = 0;
-  private store = new Map<string, { amount: number; currency: string }>();
+  private store = new Map<string, { amount: number; currency: CurrencyCode }>();
 
   constructor() { super({}); }
 
@@ -78,7 +92,7 @@ class CountingProvider extends PaymentProvider {
   async refund(paymentId: string, amount?: number | null): Promise<RefundResult> {
     return {
       id: `ref_${paymentId}`, provider: 'counter', status: 'succeeded',
-      amount: { amount: amount ?? 0, currency: 'USD' }, refundedAt: new Date(), metadata: {},
+      amount: { amount: amount ?? 0, currency: currencyCode('USD') }, refundedAt: new Date(), metadata: {},
     };
   }
 
@@ -104,7 +118,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
 
     const published: DomainEvent[] = [];
     const provider = new CountingProvider();
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { counter: provider },
@@ -167,7 +181,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
       const processedAfter = published.filter(e => e.type === REVENUE_EVENTS.WEBHOOK_PROCESSED);
       expect(processedAfter).toHaveLength(2);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -185,7 +199,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
 
     const published: DomainEvent[] = [];
     const provider = new CountingProvider();
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { counter: provider },
@@ -223,7 +237,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
       const final = await engine.repositories.transaction.getById(String(txn._id));
       expect((final as any).webhook.eventId).toBe('evt_concurrent_42');
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -232,7 +246,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
 
     const published: DomainEvent[] = [];
     const provider = new CountingProvider();
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: { counter: provider },
@@ -280,7 +294,7 @@ describe('Scenario 01 — Webhook aggressive replay', () => {
       expect((finalA as any).webhook.eventId).toBe('evt_A1');
       expect((finalB as any).webhook.eventId).toBe('evt_B1');
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 });

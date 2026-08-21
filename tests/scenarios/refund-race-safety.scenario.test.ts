@@ -1,3 +1,6 @@
+import type { CurrencyCode } from '@classytic/primitives/currency';
+import { currencyCode } from '@classytic/primitives/currency';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Refund race-safety + over-refund guards (Revenue 3.0 audit fixes)
  *
@@ -32,7 +35,6 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   PaymentProvider,
   TRANSACTION_STATUS,
   ValidationError,
@@ -61,12 +63,20 @@ const TIMEOUT = 30000;
  */
 class CountingProvider extends PaymentProvider {
   public override readonly name: string = 'fake';
+  /**
+   * The PERMISSIVE case, stated explicitly — `StrictSigProvider` below is the
+   * rejecting one, and this scenario asserts both. `verifyWebhookSignature` is
+   * abstract so each says which it is, rather than one inheriting accept-all.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
   public refundCalls: Array<{ paymentId: string; amount?: number | null; idempotencyKey?: string }> = [];
   /** Generic throw → the classifier maps it to `unknown` (outcome never observed). */
   public failRefund = false;
   /** Throw a DECISION-bearing error → the classifier maps it to `declined`. */
   public declineRefund = false;
-  private store = new Map<string, { amount: number; currency: string }>();
+  private store = new Map<string, { amount: number; currency: CurrencyCode }>();
 
   constructor() { super({}); }
 
@@ -115,7 +125,7 @@ class CountingProvider extends PaymentProvider {
     if (this.failRefund) throw new Error('gateway refund failed');
     return {
       id: `ref_${paymentId}_${Date.now()}`, provider: 'fake',
-      status: 'succeeded', amount: { amount: amount ?? 0, currency: 'USD' },
+      status: 'succeeded', amount: { amount: amount ?? 0, currency: currencyCode('USD') },
       refundedAt: new Date(), metadata: {},
     };
   }
@@ -140,7 +150,7 @@ class StrictSigProvider extends CountingProvider {
   override verifyWebhookSignature(): boolean { return false; }
 }
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let mongoAvailable = false;
 let provider: CountingProvider;
 
@@ -158,7 +168,7 @@ beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
   provider = new CountingProvider();
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     providers: { fake: provider, strict: new StrictSigProvider() },
@@ -171,7 +181,7 @@ beforeAll(async () => {
 }, TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 
@@ -312,24 +322,67 @@ describe('Refund race-safety + over-refund guards', () => {
     expect((original as any).refundedAmount).toBeLessThanOrEqual(10000);
   }, TIMEOUT);
 
-  it('an UNKNOWN gateway reversal RETAINS the claim (no double-refund) and stamps reconciliation', async () => {
+  it('an UNKNOWN gateway reversal HOLDS the reservation (no double-refund), unknown on the attempt, original NOT flipped', async () => {
     if (!mongoAvailable) return;
     const txn = await verifiedTxn(9000);
     provider.failRefund = true; // bare throw → classified `unknown` (outcome never observed)
+
+    // Capture what the kernel publishes for this refund attempt.
+    const published: Array<{ type: string; payload: unknown }> = [];
+    const unsubscribe = await engine.events.subscribe('payment.*', (e: { type: string; payload: unknown }) => {
+      published.push({ type: e.type, payload: e.payload });
+    });
 
     await expect(
       engine.repositories.transaction.refund(txn._id.toString(), 9000, { idempotencyKey: 'rrs-unknown-1' }),
     ).rejects.toThrow(RefundOutcomeUnknownError);
 
-    // The claim is deliberately HELD: a timed-out / unobserved reversal may have
-    // processed upstream, so releasing it would licence a double refund. The row
-    // stays refunded with the amount held, and a marker records WHY it is held.
+    // Phase 3: the amount is RESERVED (pendingRefundAmount), not committed. The
+    // original is NOT flipped to refunded — no refund child, no settlement claimed —
+    // and the unknown state lives on the durable refund PaymentAttempt, which is the
+    // reconciliation anchor. The reservation is what prevents a double refund.
     const original = await engine.repositories.transaction.getById(txn._id.toString());
-    expect((original as any).status).toBe(TRANSACTION_STATUS.REFUNDED);
-    expect((original as any).refundedAmount).toBe(9000);
-    expect((original as any).refundReconciliation?.state).toBe('unknown');
+    expect((original as any).status).toBe(TRANSACTION_STATUS.VERIFIED);
+    expect((original as any).refundedAmount ?? 0).toBe(0);
 
-    // A retry must NOT double-refund: the held claim already sits at the cap, so a
+    /**
+     * And it ANNOUNCES itself.
+     *
+     * The reservation above is the safety mechanism; the event is the signal.
+     * Without it the state is correct and INVISIBLE — amount locked, no refund
+     * child, and nothing downstream knowing a reconciliation is owed.
+     *
+     * The second assertion is the one that matters: `payment.failed` must NOT
+     * accompany it. Reporting failure licenses a retry, and if the gateway did
+     * process the reversal that retry is a second refund.
+     */
+    unsubscribe();
+
+    const emitted = published.map((e) => e.type);
+    expect(emitted).toContain('payment.unknown');
+    expect(emitted).not.toContain('payment.failed');
+    expect(emitted).not.toContain('payment.refunded');
+
+    const unknownEvent = published.find((e) => e.type === 'payment.unknown');
+    const unknownPayload = unknownEvent?.payload as {
+      operation?: string;
+      causeCode?: string;
+      idempotencyKey?: string;
+    };
+    expect(unknownPayload?.operation).toBe('refund');
+    // What reconciliation asks the provider with.
+    expect(unknownPayload?.idempotencyKey).toBe('rrs-unknown-1');
+    expect(unknownPayload?.causeCode).toBeTruthy();
+    expect((original as any).pendingRefundAmount).toBe(9000);
+
+    const refundAttempts = await mongoose.connection.db!
+      .collection('revenue_payment_attempts')
+      .find({ operation: 'refund' })
+      .toArray();
+    expect(refundAttempts).toHaveLength(1);
+    expect(refundAttempts[0]!.outcome).toBe('unknown');
+
+    // A retry must NOT double-refund: the reservation counts toward the cap, so a
     // fresh attempt is rejected as over-refund. Resolution is reconciliation, not retry.
     provider.failRefund = false;
     await expect(
@@ -377,20 +430,20 @@ describe('Refund race-safety + over-refund guards', () => {
 
 // ── Fix #5: import tenant guard needs a separately-scoped engine ──
 describe('Bank-feed import tenant guard (scoped engine)', () => {
-  let scopedEngine: Awaited<ReturnType<typeof createRevenue>>;
+  let scopedEngine: Awaited<ReturnType<typeof bindRevenue>>;
 
   function row(externalId: string): BankTransaction {
     return {
       externalId,
       postedDate: new Date('2026-05-01T00:00:00Z'),
-      amount: { amount: 10000, currency: 'USD' },
+      amount: { amount: 10000, currency: currencyCode('USD') },
       description: 'ACH CREDIT',
     } as BankTransaction;
   }
 
   beforeAll(async () => {
     if (!mongoAvailable) return;
-    scopedEngine = await createRevenue({
+    scopedEngine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'USD',
       providers: {},
@@ -409,7 +462,7 @@ describe('Bank-feed import tenant guard (scoped engine)', () => {
   }, TIMEOUT);
 
   afterAll(async () => {
-    if (scopedEngine) await scopedEngine.destroy();
+    if (scopedEngine) await scopedEngine.close();
   });
 
   it('MED: refuses an unscoped import when organizationId is missing', async () => {

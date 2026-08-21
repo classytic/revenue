@@ -1,3 +1,5 @@
+import { currencyCode } from '@classytic/primitives/currency';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario 03 — Multi-provider failover with preserved idempotency key.
  *
@@ -32,7 +34,6 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   PaymentProvider,
   REVENUE_EVENTS,
   IntentOutcomeUnknownError,
@@ -50,6 +51,18 @@ const TIMEOUT = 30000;
 
 /** Primary provider — simulates an outage by throwing for the first N calls. */
 class FlakyPrimary extends PaymentProvider {
+  /**
+   * A TEST double has no real signature to verify, so it says so EXPLICITLY.
+   *
+   * `verifyWebhookSignature` is abstract on `PaymentProvider` precisely so this
+   * answer is stated per provider rather than inherited: the base used to default to
+   * accept-all, which meant a provider that forgot to override accepted any signature
+   * on the call that transitions a payment.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
+
   public override readonly name = 'stripe';
   public intentAttempts = 0;
   private failUntil = 1;
@@ -79,12 +92,12 @@ class FlakyPrimary extends PaymentProvider {
     const r = this.store.get(id);
     return {
       id, provider: 'stripe', status: this.store.has(id) ? 'succeeded' : 'failed',
-      amount: r ? { amount: r.amount, currency: 'USD' } : undefined, metadata: {},
+      amount: r ? { amount: r.amount, currency: currencyCode('USD') } : undefined, metadata: {},
     };
   }
   async getStatus(id: string): Promise<PaymentResult> { return this.verifyPayment(id); }
   async refund(id: string, amount?: number | null): Promise<RefundResult> {
-    return { id: `r_${id}`, provider: 'stripe', status: 'succeeded', amount: { amount: amount ?? 0, currency: 'USD' }, metadata: {} };
+    return { id: `r_${id}`, provider: 'stripe', status: 'succeeded', amount: { amount: amount ?? 0, currency: currencyCode('USD') }, metadata: {} };
   }
   async handleWebhook(payload: unknown): Promise<WebhookEvent> {
     const p = payload as { id: string; type: string; sessionId: string };
@@ -97,6 +110,18 @@ class FlakyPrimary extends PaymentProvider {
 
 /** Fallback provider — always succeeds. */
 class FallbackSslcz extends PaymentProvider {
+  /**
+   * A TEST double has no real signature to verify, so it says so EXPLICITLY.
+   *
+   * `verifyWebhookSignature` is abstract on `PaymentProvider` precisely so this
+   * answer is stated per provider rather than inherited: the base used to default to
+   * accept-all, which meant a provider that forgot to override accepted any signature
+   * on the call that transitions a payment.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
+
   public override readonly name = 'sslcommerz';
   public intentAttempts = 0;
   private store = new Map<string, { amount: number }>();
@@ -118,12 +143,12 @@ class FallbackSslcz extends PaymentProvider {
     const r = this.store.get(id);
     return {
       id, provider: 'sslcommerz', status: this.store.has(id) ? 'succeeded' : 'failed',
-      amount: r ? { amount: r.amount, currency: 'BDT' } : undefined, metadata: {},
+      amount: r ? { amount: r.amount, currency: currencyCode('BDT') } : undefined, metadata: {},
     };
   }
   async getStatus(id: string): Promise<PaymentResult> { return this.verifyPayment(id); }
   async refund(id: string, amount?: number | null): Promise<RefundResult> {
-    return { id: `r_${id}`, provider: 'sslcommerz', status: 'succeeded', amount: { amount: amount ?? 0, currency: 'BDT' }, metadata: {} };
+    return { id: `r_${id}`, provider: 'sslcommerz', status: 'succeeded', amount: { amount: amount ?? 0, currency: currencyCode('BDT') }, metadata: {} };
   }
   async handleWebhook(payload: unknown): Promise<WebhookEvent> {
     const p = payload as { id: string; type: string; sessionId: string };
@@ -148,7 +173,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
     const fallback = new FallbackSslcz();
     primary.failFirstNCreateCalls(1);
 
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'BDT',
       providers: { stripe: primary, sslcommerz: fallback },
@@ -223,7 +248,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
       expect(String(crossProviderRetry._id)).toBe(String(firstSuccess._id));
       expect(primary.intentAttempts).toBe(1); // primary NOT re-hit — still just the initial 503
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 
@@ -233,7 +258,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
     const primary = new FlakyPrimary();
     const fallback = new FallbackSslcz();
 
-    const engine = await createRevenue({
+    const engine = await bindRevenue({
       connection: mongoose.connection,
       defaultCurrency: 'BDT',
       providers: { stripe: primary, sslcommerz: fallback },
@@ -267,7 +292,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
       });
       expect(rows).toBe(1);
     } finally {
-      await engine.destroy();
+      await engine.close();
     }
   }, TIMEOUT);
 });

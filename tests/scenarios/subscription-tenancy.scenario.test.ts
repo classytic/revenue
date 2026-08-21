@@ -1,3 +1,4 @@
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Subscription multi-tenant correctness — regression for v2.1.1.
  *
@@ -5,7 +6,7 @@
  * `cancel`, `pause`, `resume`) called `this.getById(id)` *without*
  * threading `ctx` into the options bag. The moment a host enabled
  * mongokit's `multiTenantPlugin` (the recommended default — see
- * createRevenue PACKAGE_RULES §9), each verb threw
+ * bindRevenue PACKAGE_RULES §9), each verb threw
  * `Missing 'organizationId' in context for 'getById'` mid-flow.
  *
  * v2.1.1 fixed this by extracting `RevenueRepositoryBase.optsFromCtx()`
@@ -26,20 +27,19 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   SUBSCRIPTION_STATUS,
   SubscriptionNotFoundError,
 } from '../../revenue/src/index.js';
 
 const TIMEOUT = 15000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let mongoAvailable = false;
 
 beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     // CRITICAL — this is the config that exposed the v2.1.0 bug.
@@ -53,7 +53,7 @@ beforeAll(async () => {
 }, TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 

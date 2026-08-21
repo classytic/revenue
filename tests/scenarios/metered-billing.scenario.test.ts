@@ -28,11 +28,12 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
-import { createRevenue, TRANSACTION_STATUS } from '../../revenue/src/index.js';
+import { TRANSACTION_STATUS } from '../../revenue/src/index.js';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 
 const TIMEOUT = 20000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let provider: FakeProvider;
 let mongoAvailable = false;
 
@@ -40,7 +41,7 @@ beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
   provider = new FakeProvider();
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     providers: { fake: provider },
@@ -51,7 +52,7 @@ beforeAll(async () => {
 }, TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 

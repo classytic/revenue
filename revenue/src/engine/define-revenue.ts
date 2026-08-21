@@ -53,6 +53,7 @@ import type {
   RevenueEngine,
   RevenueLogger,
 } from './engine-types.js';
+import type { TaxConfig } from '../shared/calculators/tax.js';
 
 /**
  * DESCRIBE-time shape — everything that determines the persistence SHAPE and needs no connection
@@ -136,6 +137,15 @@ export interface RevenueRuntime {
   bridges?: RevenueBridges | undefined;
   /** Overrides `modules.commission` only when the latter is not an object. */
   commission?: CommissionConfig | undefined;
+  /**
+   * Tax the engine applies to transactions it records. Omit and nothing changes.
+   *
+   * `rate` is a FRACTION (0.15), never a percentage — see `calculateTax`, which
+   * divides by `1 + rate`. Passing 15 would compute `amount / 16` and return a
+   * plausible number, so `defineRevenue` rejects a rate above 1 at bind rather
+   * than letting a percent through as a fraction.
+   */
+  tax?: TaxConfig | (() => TaxConfig | Promise<TaxConfig>) | undefined;
   repositoryPlugins?: RepositoryPluginBundle | undefined;
   logger?: RevenueLogger | undefined;
   /**
@@ -218,6 +228,31 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
     modelNames: modelBlueprint.modelNames,
 
     bind(connection: Connection, runtime: RevenueRuntime): RevenueEngine {
+      /**
+       * FIRST thing in bind, before a single model is touched.
+       *
+       * A tax RATE here is a FRACTION: `TaxConfig.defaultRate` feeds
+       * `amount / (1 + rate)`, so 15 (a percent) yields `amount / 16` — roughly a
+       * 94% tax — and nothing downstream can tell that from a real number. Country
+       * config almost always states percentages (`tax.bd.defaultRate` is 15), so
+       * this is the conversion a host gets wrong exactly once.
+       *
+       * It runs before model creation because a misconfigured rate is a STARTUP
+       * error, not a runtime one — there is no point building an engine that will
+       * mis-tax every transaction it records. Failing here is also what makes the
+       * rule testable without a database.
+       *
+       * A VAT/GST rate at or above 100% does not exist, so no legitimate
+       * configuration can trip this.
+       */
+      if (runtime?.tax && typeof runtime.tax !== 'function' && runtime.tax.defaultRate > 1) {
+        throw new Error(
+          `defineRevenue: tax.defaultRate must be a FRACTION, got ${runtime.tax.defaultRate}. ` +
+            `A percentage looks like a fraction to the calculator and silently returns a wrong ` +
+            `amount — pass ${runtime.tax.defaultRate / 100} for ${runtime.tax.defaultRate}%.`,
+        );
+      }
+
       /**
        * VERIFY (boot gate) — an injected outbox MUST enlist `ctx.session`.
        *
@@ -326,6 +361,7 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
       const commission =
         typeof shape.modules?.commission === 'object' ? shape.modules.commission : runtime.commission;
 
+
       // ── Transport ownership (finding #7): only an engine-CREATED transport is closed. ─
       const ownsTransport = runtime.eventTransport === undefined;
       const events: EventTransport =
@@ -340,6 +376,31 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
         bankFeedProviders,
         bridges: runtime.bridges ?? {},
         commission,
+        ...(runtime.tax
+          ? {
+              tax:
+                typeof runtime.tax === 'function'
+                  ? /**
+                     * A thunk cannot be validated at bind — its first RESOLUTION is the
+                     * earliest the rate exists. So the guard wraps it: a percent-shaped
+                     * rate throws on the transaction that would have been mis-taxed,
+                     * with the same message the bind guard gives a static config. Never
+                     * silently skipped — a guard that only covers one of two accepted
+                     * shapes is decoration for the other.
+                     */
+                    async () => {
+                      const resolved = await (runtime.tax as () => TaxConfig | Promise<TaxConfig>)();
+                      if (resolved && resolved.defaultRate > 1) {
+                        throw new Error(
+                          `defineRevenue: tax.defaultRate must be a FRACTION, got ${resolved.defaultRate}. ` +
+                            `Pass ${resolved.defaultRate / 100} for ${resolved.defaultRate}%.`,
+                        );
+                      }
+                      return resolved;
+                    }
+                  : runtime.tax,
+            }
+          : {}),
         defaultCurrency,
         logger: runtime.logger,
         // Field-strategy tenant scoping — lets `import()` refuse an unscoped upsert when the host

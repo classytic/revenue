@@ -1,3 +1,4 @@
+import { currencyCode } from '@classytic/primitives/currency';
 import { describe, expect, it } from 'vitest';
 import { PaymentProvider } from '../../revenue/src/providers/base.js';
 import type {
@@ -11,6 +12,18 @@ import { ProviderRegistry, createProviderRegistry } from '../../revenue/src/prov
 import { ProviderNotFoundError } from '../../revenue/src/core/errors.js';
 
 class StubProvider extends PaymentProvider {
+  /**
+   * A TEST double has no real signature to verify, so it says so EXPLICITLY.
+   *
+   * `verifyWebhookSignature` is abstract on `PaymentProvider` precisely so this
+   * answer is stated per provider rather than inherited: the base used to default to
+   * accept-all, which meant a provider that forgot to override accepted any signature
+   * on the call that transitions a payment.
+   */
+  verifyWebhookSignature(): boolean {
+    return true;
+  }
+
   public override readonly name = 'stub';
   constructor() { super({}); }
   async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
@@ -20,7 +33,7 @@ class StubProvider extends PaymentProvider {
   }
   async verifyPayment(id: string): Promise<PaymentResult> { return { id, provider: 'stub', status: 'succeeded', metadata: {} }; }
   async getStatus(id: string): Promise<PaymentResult> { return this.verifyPayment(id); }
-  async refund(id: string, amt?: number | null): Promise<RefundResult> { return { id, provider: 'stub', status: 'succeeded', amount: { amount: amt ?? 0, currency: 'USD' }, refundedAt: new Date(), metadata: {} }; }
+  async refund(id: string, amt?: number | null): Promise<RefundResult> { return { id, provider: 'stub', status: 'succeeded', amount: { amount: amt ?? 0, currency: currencyCode('USD') }, refundedAt: new Date(), metadata: {} }; }
   async handleWebhook(payload: unknown): Promise<WebhookEvent> { return { id: 'wh1', provider: 'stub', type: 'test', data: payload as Record<string, unknown>, createdAt: new Date() }; }
   override getCapabilities() { return { supportsWebhooks: false, supportsRefunds: true, supportsPartialRefunds: false, requiresManualVerification: true }; }
 }
@@ -76,9 +89,9 @@ describe('createProviderRegistry', () => {
 describe('PaymentProvider contract', () => {
   it('createIntent returns a ProviderIntent shape', async () => {
     const p = new StubProvider();
-    const intent = await p.createIntent({ amount: { amount: 1000, currency: 'USD' } });
+    const intent = await p.createIntent({ amount: { amount: 1000, currency: currencyCode('USD') } });
     expect(intent.sessionId).toBe('s1');
-    expect(intent.amount).toEqual({ amount: 1000, currency: 'USD' });
+    expect(intent.amount).toEqual({ amount: 1000, currency: currencyCode('USD') });
   });
 
   it('verifyPayment returns a PaymentResult shape', async () => {
@@ -90,7 +103,7 @@ describe('PaymentProvider contract', () => {
   it('refund returns a RefundResult shape', async () => {
     const result = await new StubProvider().refund('s1', 500);
     expect(result.status).toBe('succeeded');
-    expect(result.amount).toEqual({ amount: 500, currency: 'USD' });
+    expect(result.amount).toEqual({ amount: 500, currency: currencyCode('USD') });
   });
 
   it('handleWebhook returns a WebhookEvent shape', async () => {

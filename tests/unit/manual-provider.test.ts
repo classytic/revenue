@@ -1,3 +1,4 @@
+import { currencyCode } from '@classytic/primitives/currency';
 import { describe, expect, it } from 'vitest';
 import { ManualProvider } from '@classytic/revenue-manual';
 import type { CreateIntentParams, PaymentCommandContext } from '@classytic/primitives/payment-gateway';
@@ -15,14 +16,14 @@ describe('ManualProvider', () => {
 
   it('reads Money shape from createIntent params', async () => {
     const params: CreateIntentParams = {
-      amount: { amount: 50000, currency: 'BDT' },
+      amount: { amount: 50000, currency: currencyCode('BDT') },
       metadata: {},
     };
     const intent = await provider.createIntent(params, cmd());
 
     expect(intent.provider).toBe('manual');
     expect(intent.status).toBe('requires_payment_method');
-    expect(intent.amount).toEqual({ amount: 50000, currency: 'BDT' });
+    expect(intent.amount).toEqual({ amount: 50000, currency: currencyCode('BDT') });
     expect(intent.id).toMatch(/^manual_/);
   });
 
@@ -42,9 +43,9 @@ describe('ManualProvider', () => {
   });
 
   it('refund returns succeeded with correct amount', async () => {
-    const result = await provider.refund('pay_123', 10000, cmd(), { currency: 'BDT', reason: 'Test' });
+    const result = await provider.refund('pay_123', 10000, cmd(), { currency: currencyCode('BDT'), reason: 'Test' });
     expect(result.status).toBe('succeeded');
-    expect(result.amount).toEqual({ amount: 10000, currency: 'BDT' });
+    expect(result.amount).toEqual({ amount: 10000, currency: currencyCode('BDT') });
     expect(result.reason).toBe('Test');
   });
 
@@ -67,7 +68,7 @@ describe('ManualProvider', () => {
 
   it('instructions include amount and currency', async () => {
     const intent = await provider.createIntent({
-      amount: { amount: 25000, currency: 'BDT' },
+      amount: { amount: 25000, currency: currencyCode('BDT') },
       metadata: {},
     }, cmd());
     expect(intent.instructions).toContain('25000');
@@ -76,7 +77,7 @@ describe('ManualProvider', () => {
 
   it('uses custom paymentInstructions from metadata', async () => {
     const intent = await provider.createIntent({
-      amount: { amount: 500, currency: 'USD' },
+      amount: { amount: 500, currency: currencyCode('USD') },
       metadata: { paymentInstructions: 'Pay via bKash to 01711000000' },
     }, cmd());
     expect(intent.instructions).toBe('Pay via bKash to 01711000000');

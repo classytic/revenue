@@ -1,3 +1,4 @@
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Human-in-the-Loop Verification
  *
@@ -38,7 +39,6 @@ import {
 import { FakeProvider } from '../helpers/fake-provider.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   HOLD_STATUS,
   SETTLEMENT_STATUS,
   TRANSACTION_STATUS,
@@ -46,13 +46,13 @@ import {
 
 const TIMEOUT = 15000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let mongoAvailable = false;
 
 beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     providers: { fake: new FakeProvider() },
@@ -63,7 +63,7 @@ beforeAll(async () => {
 }, TIMEOUT);
 
 afterAll(async () => {
-  if (engine) await engine.destroy();
+  if (engine) await engine.close();
   await disconnectFromMongoDB();
 });
 

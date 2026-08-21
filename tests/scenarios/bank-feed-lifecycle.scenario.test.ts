@@ -1,3 +1,5 @@
+import { currencyCode } from '@classytic/primitives/currency';
+import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: Bank-Feed Lifecycle (Revenue 3.0)
  *
@@ -31,7 +33,6 @@ import {
 } from '../helpers/mongodb-memory.js';
 import { warmModels } from '../helpers/warm-models.js';
 import {
-  createRevenue,
   TRANSACTION_KIND,
   TRANSACTION_STATUS,
   BANK_FEED_SOURCE,
@@ -42,7 +43,7 @@ import type { BankTransaction } from '@classytic/primitives/bank-transaction';
 
 const TIMEOUT = 15000;
 
-let engine: Awaited<ReturnType<typeof createRevenue>>;
+let engine: Awaited<ReturnType<typeof bindRevenue>>;
 let mongoAvailable = false;
 
 const ledgerCalls: { type: string; args: unknown[] }[] = [];
@@ -70,7 +71,7 @@ const ledgerBridge: LedgerBridge = {
 beforeAll(async () => {
   mongoAvailable = await connectToMongoDB();
   if (!mongoAvailable) return;
-  engine = await createRevenue({
+  engine = await bindRevenue({
     connection: mongoose.connection,
     defaultCurrency: 'USD',
     bridges: { ledger: ledgerBridge },
@@ -107,7 +108,7 @@ function row(over: Partial<BankTransaction> = {}): BankTransaction {
   return {
     externalId: over.externalId ?? `FITID_${Math.random().toString(36).slice(2, 10)}`,
     postedDate: over.postedDate ?? new Date('2026-05-01T00:00:00Z'),
-    amount: over.amount ?? { amount: 10000, currency: 'USD' },
+    amount: over.amount ?? { amount: 10000, currency: currencyCode('USD') },
     description: over.description ?? 'STRIPE PAYOUT',
     counterparty: over.counterparty ?? { name: 'Stripe Inc.' },
     reference: over.reference,
@@ -121,8 +122,8 @@ function row(over: Partial<BankTransaction> = {}): BankTransaction {
 describe('Bank-feed lifecycle — Revenue 3.0', () => {
   it('imports rows idempotently — re-import is a no-op', async () => {
     const rows = [
-      row({ externalId: 'FIT_001', amount: { amount: 50000, currency: 'USD' } }),
-      row({ externalId: 'FIT_002', amount: { amount: -25000, currency: 'USD' }, description: 'AWS BILLING' }),
+      row({ externalId: 'FIT_001', amount: { amount: 50000, currency: currencyCode('USD') } }),
+      row({ externalId: 'FIT_002', amount: { amount: -25000, currency: currencyCode('USD') }, description: 'AWS BILLING' }),
     ];
     const opts = { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' as const };
 
@@ -145,8 +146,8 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
   it('signed amount becomes (unsigned amount + flow) on the doc', async () => {
     await engine.repositories.transaction.import(
       [
-        row({ externalId: 'IN_1', amount: { amount: 12345, currency: 'USD' } }),
-        row({ externalId: 'OUT_1', amount: { amount: -9876, currency: 'USD' } }),
+        row({ externalId: 'IN_1', amount: { amount: 12345, currency: currencyCode('USD') } }),
+        row({ externalId: 'OUT_1', amount: { amount: -9876, currency: currencyCode('USD') } }),
       ],
       { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
@@ -163,7 +164,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
 
   it('lifecycle: imported → matched → journalized', async () => {
     const report = await engine.repositories.transaction.import(
-      [row({ externalId: 'FIT_ABC', amount: { amount: 100000, currency: 'USD' } })],
+      [row({ externalId: 'FIT_ABC', amount: { amount: 100000, currency: currencyCode('USD') } })],
       { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID, methodKind: 'bank_transfer' },
       ctx,
     );
@@ -199,7 +200,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
 
   it('un-match cycle — matched → imported → matched', async () => {
     await engine.repositories.transaction.import(
-      [row({ externalId: 'FIT_UM', amount: { amount: 5000, currency: 'USD' } })],
+      [row({ externalId: 'FIT_UM', amount: { amount: 5000, currency: currencyCode('USD') } })],
       { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
     );
@@ -231,7 +232,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
 
   it('settle: imported → settled stamps metadata and posts NO journal entry', async () => {
     await engine.repositories.transaction.import(
-      [row({ externalId: 'FIT_SETTLE', amount: { amount: 8000, currency: 'USD' } })],
+      [row({ externalId: 'FIT_SETTLE', amount: { amount: 8000, currency: currencyCode('USD') } })],
       { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
     );
@@ -264,7 +265,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
 
   it('un-settle: settled → imported clears the stamped link', async () => {
     await engine.repositories.transaction.import(
-      [row({ externalId: 'FIT_UNSETTLE', amount: { amount: 4200, currency: 'USD' } })],
+      [row({ externalId: 'FIT_UNSETTLE', amount: { amount: 4200, currency: currencyCode('USD') } })],
       { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
     );
@@ -301,7 +302,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
     const m = await engine.repositories.transaction.createManual(
       {
         amount: 30000,
-        currency: 'USD',
+        currency: currencyCode('USD'),
         flow: 'outflow',
         type: 'bill_payment',
         methodKind: 'manual',
@@ -337,7 +338,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         flow: 'inflow',
         tags: ['test'],
         amount: 1000,
-        currency: 'USD',
+        currency: currencyCode('USD'),
         fee: 0,
         tax: 0,
         net: 1000,
@@ -387,7 +388,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         flow: 'inflow',
         tags: ['test'],
         amount: 1000,
-        currency: 'USD',
+        currency: currencyCode('USD'),
         fee: 0,
         tax: 0,
         net: 1000,
@@ -411,7 +412,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
     const m = await engine.repositories.transaction.createManual(
       {
         amount: 75000,
-        currency: 'USD',
+        currency: currencyCode('USD'),
         flow: 'inflow',
         type: 'capital_injection',
         methodKind: 'manual',
@@ -441,9 +442,9 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
   it('removeByFeed soft-deletes non-journalized rows; preserves journalized', async () => {
     await engine.repositories.transaction.import(
       [
-        row({ externalId: 'KEEP_JE', amount: { amount: 1000, currency: 'USD' } }),
-        row({ externalId: 'GONE_1', amount: { amount: 2000, currency: 'USD' } }),
-        row({ externalId: 'GONE_2', amount: { amount: 3000, currency: 'USD' } }),
+        row({ externalId: 'KEEP_JE', amount: { amount: 1000, currency: currencyCode('USD') } }),
+        row({ externalId: 'GONE_1', amount: { amount: 2000, currency: currencyCode('USD') } }),
+        row({ externalId: 'GONE_2', amount: { amount: 3000, currency: currencyCode('USD') } }),
       ],
       { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.PLAID, methodKind: 'bank_transfer' },
       ctx,
@@ -491,7 +492,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
         flow: 'inflow',
         tags: ['stripe'],
         amount: 10000,
-        currency: 'USD',
+        currency: currencyCode('USD'),
         fee: 30,
         tax: 0,
         net: 9970,
@@ -509,7 +510,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
       [
         row({
           externalId: 'PLAID_DEP_1',
-          amount: { amount: 9970, currency: 'USD' },
+          amount: { amount: 9970, currency: currencyCode('USD') },
           postedDate: new Date('2026-05-03'),
           counterparty: { name: 'STRIPE PAYMENTS' },
         }),
@@ -521,7 +522,7 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
     const candidates = await engine.repositories.transaction.findMatchCandidates(
       {
         amount: 9970,
-        currency: 'USD',
+        currency: currencyCode('USD'),
         postedDate: new Date('2026-05-03'),
         toleranceDays: 3,
         kind: TRANSACTION_KIND.PAYMENT_FLOW,
@@ -536,11 +537,11 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
   it('getRunningBalance sums inflows minus outflows for a bank account', async () => {
     await engine.repositories.transaction.import(
       [
-        row({ externalId: 'A', amount: { amount: 100000, currency: 'USD' }, postedDate: new Date('2026-05-01') }),
-        row({ externalId: 'B', amount: { amount: -25000, currency: 'USD' }, postedDate: new Date('2026-05-02') }),
-        row({ externalId: 'C', amount: { amount: 50000, currency: 'USD' }, postedDate: new Date('2026-05-03') }),
+        row({ externalId: 'A', amount: { amount: 100000, currency: currencyCode('USD') }, postedDate: new Date('2026-05-01') }),
+        row({ externalId: 'B', amount: { amount: -25000, currency: currencyCode('USD') }, postedDate: new Date('2026-05-02') }),
+        row({ externalId: 'C', amount: { amount: 50000, currency: currencyCode('USD') }, postedDate: new Date('2026-05-03') }),
         // Future entry — excluded by asOf
-        row({ externalId: 'D', amount: { amount: 10000, currency: 'USD' }, postedDate: new Date('2026-05-10') }),
+        row({ externalId: 'D', amount: { amount: 10000, currency: currencyCode('USD') }, postedDate: new Date('2026-05-10') }),
       ],
       { bankAccountId: 'acct_main', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
       ctx,
