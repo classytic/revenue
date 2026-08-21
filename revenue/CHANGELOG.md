@@ -3,6 +3,10 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.10.1 — 2026-08-21
+
+- Patch release — version alignment.
+
 ## 2.10.0
 
 ### Added
