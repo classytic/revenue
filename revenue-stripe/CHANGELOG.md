@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1 - 2026-08-30
+
+### Fixed — a Checkout payment was charged but never confirmed
+
+The Checkout webhook emitted `objectId`, which nothing queries.
+`TransactionRepository.handleWebhook` looks a transaction up by
+`webhookEvent.data.sessionId` first, then falls back to `data.paymentIntentId` —
+and this provider sent neither for a Checkout session. The lookup found no
+transaction, the handler returned **200 ("nothing to do")**, and the payment
+never confirmed: the card was charged, Stripe recorded a successful delivery, and
+the order stayed `pending` forever. Nothing retried, because from Stripe's side
+nothing had failed.
+
+`sessionId` is now emitted for `checkout.session.*` events, where `obj` IS the
+session. Deliberately not for `payment_intent.*`: there `obj.id` is the intent,
+which already travels as `paymentIntentId`, and claiming it as a session id would
+make the FIRST lookup match on the wrong field.
+
 ## 0.2.0 - 2026-08-18
 
 Catches this package up to the payment-gateway port it implements. Pre-1.0, so

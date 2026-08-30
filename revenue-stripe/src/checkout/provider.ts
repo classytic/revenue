@@ -224,6 +224,24 @@ export class StripeCheckoutProvider extends StripeProviderBase {
       type: event.type,
       data: {
         ...(paymentIntentId ? { paymentIntentId } : {}),
+        /**
+         * `sessionId` — the field the revenue kernel actually looks a
+         * transaction up by.
+         *
+         * `handleWebhook` in `TransactionRepository` reads
+         * `webhookEvent.data.sessionId` FIRST, then falls back to
+         * `data.paymentIntentId`. This provider emitted neither for a Checkout
+         * session: only `objectId`, which nothing queries. So the lookup found
+         * no transaction, the handler returned 200 ("nothing to do"), and the
+         * payment never confirmed — the card was charged, Stripe recorded a
+         * successful delivery, and the booking stayed `pending` forever.
+         *
+         * Only for `checkout.session.*`, where `obj` IS the session. For a
+         * `payment_intent.*` event `obj.id` is the intent, which already
+         * travels as `paymentIntentId` above; claiming it as a session id would
+         * make the first lookup match the wrong field.
+         */
+        ...(event.type.startsWith('checkout.session.') ? { sessionId: obj.id } : {}),
         objectId: obj.id,
       },
       ...(methodKind ? { methodKind } : {}),
