@@ -39,6 +39,17 @@ import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
 export class StripeCheckoutProvider extends StripeProviderBase {
   public override readonly name: string = 'stripe-checkout';
 
+  /**
+   * Stripe signs the bytes it TRANSMITTED, so this provider must receive them
+   * unparsed — see `PaymentProviderPort.wantsRawBody`.
+   *
+   * The transport hands the parsed body to every other provider, because one
+   * that reads `payload.sessionId` gets `undefined` from a string and fails
+   * silently: no transaction matches, the webhook answers 200 "nothing to do",
+   * and the payment never applies.
+   */
+  public readonly wantsRawBody = true;
+
   public readonly stripe: Stripe;
   public readonly webhookSecret?: string;
   public readonly defaultSuccessUrl?: string;

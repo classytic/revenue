@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue-stripe",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Stripe provider for @classytic/revenue — SaaS subscriptions, marketplace Connect, lean Checkout. Subpath-split so hosts tree-shake what they don't use.",
   "type": "module",
   "sideEffects": false,
@@ -68,7 +68,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@classytic/primitives": ">=0.23.0",
+    "@classytic/primitives": ">=0.26.3",
     "@classytic/revenue": ">=2.9.0",
     "stripe": "^22"
   },

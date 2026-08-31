@@ -35,6 +35,9 @@ const DEFAULT_PLATFORM_FEE_PERCENT = 1;
 export class StripeConnectProvider extends StripeProviderBase {
   public override readonly name: string = 'stripe';
 
+  /** Signs the transmitted bytes, same as the checkout provider. */
+  public readonly wantsRawBody = true;
+
   /** Stripe SDK instance — public so advanced callers can drop down. */
   public readonly stripe: Stripe;
 

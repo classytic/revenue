@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.2 — 2026-08-31
+
+### Added — `wantsRawBody = true` on both Stripe providers
+
+`StripeCheckoutProvider` and `StripeConnectProvider` now declare
+`readonly wantsRawBody = true`, satisfying the new `PaymentProviderPort`
+contract from `@classytic/primitives@0.26.3`.
+
+Stripe signs the bytes it transmitted; verifying against a re-serialised object
+fails because key order, spacing and unicode escaping can differ. The transport
+reads this flag and hands the raw body only to providers that need it, passing
+the parsed object to all others — providers that read `payload.sessionId` get
+`undefined` from a string and silently miss the webhook.
+
+Peer floor: `@classytic/primitives` raised `>=0.23.0` → `>=0.26.3`.
+
 ## 0.2.1 - 2026-08-30
 
 ### Fixed — a Checkout payment was charged but never confirmed
