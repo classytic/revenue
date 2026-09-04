@@ -257,6 +257,14 @@ export interface TransactionDocument {
   failedAt?: Date;
   verifiedAt?: Date;
   verifiedBy?: string;
+  /**
+   * Set by `cancel()`. Distinct from `failedAt`: a FAILURE is the gateway's
+   * answer, a CANCELLATION is the operator's decision to void the payment.
+   * Collapsing them loses who decided and why.
+   */
+  cancelledAt?: Date;
+  cancellationReason?: string;
+  cancelledBy?: string;
 
   // ─── Webhook + idempotency (unchanged) ───
   webhook?: {
@@ -363,6 +371,9 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
     failedAt: { type: Date },
     verifiedAt: { type: Date },
     verifiedBy: { type: String },
+    cancelledAt: { type: Date },
+    cancellationReason: { type: String },
+    cancelledBy: { type: String },
     webhook: { type: Schema.Types.Mixed },
     idempotencyKey: { type: String },
     metadata: { type: Schema.Types.Mixed },

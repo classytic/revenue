@@ -418,6 +418,8 @@ export type PaymentFailedPayload = z.infer<typeof paymentFailedSchema>;
 export type PaymentProcessingPayload = z.infer<typeof paymentProcessingSchema>;
 export type PaymentRequiresActionPayload = z.infer<typeof paymentRequiresActionSchema>;
 export type PaymentRefundedPayload = z.infer<typeof paymentRefundedCanonicalSchema>;
+/** @see PaymentReversed — the settlement is unwound, no cash leg. */
+export type PaymentReversedCanonicalPayload = z.infer<typeof paymentReversedCanonicalSchema>;
 export type PaymentAuthorizedPayload = z.infer<typeof paymentAuthorizedSchema>;
 export type PaymentCapturedPayload = z.infer<typeof paymentCapturedSchema>;
 export type PaymentAuthVoidedPayload = z.infer<typeof paymentAuthVoidedSchema>;
@@ -535,6 +537,29 @@ const paymentRefundedCanonicalSchema = z.object({
   occurredAt: canonicalInstant,
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
+/**
+ * Mirrors `toPaymentReversed`'s output exactly — the two are independent
+ * declarations of one contract and must be changed together (see
+ * `tests/builder-payload-satisfies-schema.test.ts`, which is what makes that
+ * checkable rather than hoped for).
+ *
+ * `reason` is REQUIRED here where `refunded` has it optional: a reversal is
+ * always somebody's decision, and the row it leaves is the only record of why
+ * the money is not there.
+ */
+const paymentReversedCanonicalSchema = z.object({
+  eventType: z.literal(PAYMENT_EVENT_TYPE.REVERSED),
+  paymentId: z.string(),
+  providerRef: z.string().optional(),
+  providerCode: z.string(),
+  reversedAmount: canonicalMoney,
+  originalAmount: canonicalMoney,
+  isPartial: z.boolean(),
+  reason: z.string(),
+  occurredAt: canonicalInstant,
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
 // ─── Event definitions ────────────────────────────────────────────────────
 
 /**
@@ -579,6 +604,23 @@ export const PaymentRefunded = defineRevenueEvent({
   name: PAYMENT_EVENT_TYPE.REFUNDED,
   description: 'Money returned to the customer — carries originalAmount so remaining refundable needs no lookup.',
   zodSchema: paymentRefundedCanonicalSchema,
+});
+
+/**
+ * The SETTLEMENT is unwound — distinct from a refund, and consumers must treat
+ * it differently.
+ *
+ * A refund returns money to the customer after settlement; a reversal says the
+ * settlement should not have existed (operator error, duplicate capture,
+ * pre-clearing void). A consumer must unwind the recognition WITHOUT a cash
+ * leg, which is not what it does for a refund — approximating one as the other
+ * corrupts A/R in a way that still balances.
+ */
+export const PaymentReversed = defineRevenueEvent({
+  name: PAYMENT_EVENT_TYPE.REVERSED,
+  description:
+    'A settled payment was voided — unwind the recognition. No cash moved, unlike a refund.',
+  zodSchema: paymentReversedCanonicalSchema,
 });
 
 export const PaymentAuthorized = defineRevenueEvent({
@@ -795,6 +837,7 @@ export const revenueEventDefinitions: ReadonlyArray<RevenueEventDefinition> = [
   PaymentProcessing,
   PaymentRequiresAction,
   PaymentRefunded,
+  PaymentReversed,
   PaymentAuthorized,
   PaymentCaptured,
   PaymentAuthVoided,

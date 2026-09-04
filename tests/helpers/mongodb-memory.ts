@@ -17,10 +17,10 @@
  * when that env var is present.
  */
 
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { createMongoMemory, type MongoMemoryHandle } from '@classytic/mongokit/testkit';
 import mongoose from 'mongoose';
 
-let replset: MongoMemoryReplSet | undefined;
+let handle: MongoMemoryHandle | undefined;
 const workerId =
   process.env.VITEST_WORKER_ID ??
   process.env.JEST_WORKER_ID ??
@@ -60,13 +60,11 @@ export async function connectToMongoDB(): Promise<boolean> {
       );
     }
 
-    // Boot a single-node in-memory replica set.
-    replset = await MongoMemoryReplSet.create({
-      replSet: { count: 1, dbName },
-    });
-
-    const uri = replset.getUri(dbName);
-    await mongoose.connect(uri);
+    // Boot a single-node in-memory replica set — through
+    // `@classytic/mongokit/testkit` rather than a package-local
+    // `MongoMemoryReplSet.create()` (see PLAYBOOK "MongoMemoryReplSet dedup").
+    handle = await createMongoMemory({ replset: true, dbName });
+    await mongoose.connect(handle.uri);
 
     console.log('✅ Connected to in-memory MongoDB replica set');
     return true;
@@ -82,9 +80,9 @@ export async function connectToMongoDB(): Promise<boolean> {
 export async function disconnectFromMongoDB(): Promise<void> {
   try {
     await mongoose.disconnect();
-    if (replset) {
-      await replset.stop();
-      replset = undefined;
+    if (handle) {
+      await handle.stop();
+      handle = undefined;
     }
   } catch (error) {
     console.error('Error disconnecting from MongoDB:', error);

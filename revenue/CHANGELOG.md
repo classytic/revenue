@@ -3,6 +3,64 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.11.0
+
+### Added — `TransactionRepository.cancel()`, the VOID verb
+
+The third sibling of `verify()`/`fail()`, and the correction path a posted
+transaction had none of. Generic CRUD refuses to touch a row that has left
+`pending`, so a mistaken capture could previously only be refunded — which
+returns money that may never have been taken — or edited behind the guard,
+which desyncs the GL silently.
+
+- `fail()` — the gateway declined, no money ever moved.
+- `refund()` — money moved and is being returned to the customer.
+- `cancel()` — the settlement itself is unwound (operator error, duplicate
+  capture, pre-clearing void). Consumers must reverse allocations, which is
+  NOT what they do for a refund; approximating one as the other corrupts A/R
+  in a way that still balances.
+
+The CAS is the only guard: `TRANSACTION_STATE_MACHINE` already permits
+`pending | payment_initiated | requires_action | verified → cancelled` and
+nothing else, so a refunded, failed or already-cancelled row throws
+`InvalidStateTransitionError` (409) natively — no hand-checked status list to
+drift from the machine.
+
+New `TransactionDocument` fields `cancelledAt`, `cancellationReason`,
+`cancelledBy` — distinct from `failedAt`: a failure is the gateway's answer,
+a cancellation is the operator's decision to void the payment.
+
+### Added — `payment.reversed` event, published conditionally
+
+New `PaymentReversed` event / `paymentReversedCanonicalSchema`, dispatched by
+`cancel()` **only when the row was `verified`** — i.e. money had actually
+been recognised. Cancelling a `pending` or `payment_initiated` row unwinds
+nothing; emitting a reversal for it would tell the ledger to contra a posting
+that was never made, producing a one-sided entry that balances on its own and
+is therefore invisible. Unlike `payment.refunded`, `reason` is required: a
+reversal is always somebody's decision, and the row it leaves is the only
+record of why the money is not there.
+
+`toPaymentReversed` (in `canonical-payment-events.ts`) shipped unused in an
+earlier release; this release is what calls it.
+
+### Added — provider port conformance suite
+
+`tests/port-conformance.test.ts` runs the same scenario set (create → verify,
+idempotent create, refund full/partial, refund idempotency, webhook capability
+match, `getStatus` never fabricating success) against every registered
+`PaymentProviderPort` adapter, so a scenario failing on one provider but not
+another identifies the PORT as wrong, not the adapter. Currently covers
+`ManualProvider`; `@classytic/revenue-stripe` has no case yet — nothing in
+this workspace mocks the Stripe SDK client it wraps.
+
+### Changed — shared MongoDB memory-server test helper moved to `@classytic/mongokit/testkit`
+
+`tests/helpers/mongodb-memory.ts` now boots through `createMongoMemory()`
+instead of a package-local `MongoMemoryReplSet.create()` call — dedupes the
+in-memory replica-set bootstrap this workspace and mongokit's own test suite
+were each maintaining separately. No behavior change for existing tests.
+
 ## 2.10.1 — 2026-08-21
 
 - Patch release — version alignment.

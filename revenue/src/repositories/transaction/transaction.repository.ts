@@ -11,6 +11,7 @@ import type { PaymentMethodKind } from '@classytic/primitives/payment-method-kin
 import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
 import {
   toPaymentFailed,
+  toPaymentReversed,
   toPaymentSucceeded,
   type CanonicalSourceTransaction,
 } from '../../events/canonical-payment-events.js';
@@ -629,6 +630,88 @@ export class TransactionRepository extends TransactionRefundRepository {
       ctx,
     );
     return updated as TransactionDocument;
+  }
+
+  /**
+   * VOID a payment — the operator's decision that it should not stand.
+   *
+   * The third sibling of `verify()` / `fail()`, and the correction path a posted
+   * transaction otherwise has none of: generic CRUD refuses to touch a row that
+   * has left `pending`, so without this verb a mistaken capture can only be
+   * refunded (which returns money that may never have been taken) or edited
+   * behind the guard (which desyncs the GL silently).
+   *
+   * Distinct from BOTH neighbours, and the distinction is the point:
+   *   - `fail()`   — the GATEWAY declined. No money ever moved.
+   *   - `refund()` — money moved, and is being returned to the customer.
+   *   - `cancel()` — the settlement itself is UNWOUND (operator error, duplicate
+   *     capture, pre-clearing void). Consumers must reverse allocations, which
+   *     is NOT what they do for a refund; approximating one as the other
+   *     corrupts A/R in a way that still balances.
+   *
+   * ## The event is conditional, and that is deliberate
+   *
+   * `payment.reversed` is published ONLY when the row was `verified` — i.e.
+   * money had actually been recognised. Cancelling a `pending` or
+   * `payment_initiated` row unwinds nothing, and telling the ledger to reverse a
+   * posting that was never made would create a one-sided contra entry that
+   * balances on its own and is therefore invisible.
+   *
+   * The CAS is the only guard. `TRANSACTION_STATE_MACHINE` permits
+   * `pending | payment_initiated | requires_action | verified → cancelled` and
+   * nothing else, so a refunded, failed or already-cancelled row throws
+   * `InvalidStateTransitionError` natively — which hosts map to 409. There is no
+   * hand-checked status list here to drift from the machine.
+   */
+  async cancel(
+    id: string,
+    data: { reason: string; cancelledBy?: string },
+    ctx: RevenueContext = {},
+  ): Promise<TransactionDocument> {
+    const transaction = await this.getById(id, this.optsFromCtx(ctx)) as TransactionDocument | null;
+    if (!transaction) throw new TransactionNotFoundError(id);
+
+    // Captured BEFORE the CAS — afterwards the row reads `cancelled` and the
+    // fact of whether money had been recognised is no longer readable from it.
+    const wasSettled = transaction.status === TRANSACTION_STATUS.VERIFIED;
+    const occurredAt = new Date();
+
+    const updated = (await this.applyTransition(
+      String(transaction._id),
+      TRANSACTION_STATE_MACHINE,
+      {
+        from: transaction.status,
+        to: TRANSACTION_STATUS.CANCELLED,
+        set: {
+          cancelledAt: occurredAt,
+          cancellationReason: data.reason,
+          ...(data.cancelledBy !== undefined ? { cancelledBy: data.cancelledBy } : {}),
+        },
+        history: false,
+      },
+      this.optsFromCtx(ctx) as never,
+    )) as TransactionDocument;
+
+    if (wasSettled) {
+      await this.dispatch(
+        createEvent(
+          PAYMENT_EVENT_TYPE.REVERSED,
+          toPaymentReversed({
+            original: transaction as unknown as CanonicalSourceTransaction,
+            // A void unwinds the WHOLE settlement — a partial unwind is a
+            // refund, which has its own verb and its own consumer behaviour.
+            reversedAmount: transaction.amount,
+            reason: data.reason,
+            occurredAt,
+          }),
+          ctx,
+          { resource: 'transaction', resourceId: updated.publicId },
+        ),
+        ctx,
+      );
+    }
+
+    return updated;
   }
 
   // ─── Domain: Webhook ───

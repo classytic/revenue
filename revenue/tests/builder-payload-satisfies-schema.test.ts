@@ -37,11 +37,13 @@ import { describe, expect, it } from 'vitest';
 import {
   PaymentFailedEvent,
   PaymentRefunded,
+  PaymentReversed,
   PaymentSucceeded,
 } from '../src/events/revenue-event-catalog.js';
 import {
   toPaymentFailed,
   toPaymentRefunded,
+  toPaymentReversed,
   toPaymentSucceeded,
   type CanonicalSourceTransaction,
 } from '../src/events/canonical-payment-events.js';
@@ -82,6 +84,19 @@ const CASES = [
         refundedAmount: 50_000,
         occurredAt: AT,
         reason: 'customer return',
+      }),
+  },
+  {
+    // A VOID: the settlement is unwound, not returned. `reason` is required
+    // here where refunded has it optional — see the schema's docblock.
+    name: 'payment.reversed',
+    event: PaymentReversed,
+    build: () =>
+      toPaymentReversed({
+        original: txn(),
+        reversedAmount: 115_000,
+        reason: 'duplicate capture',
+        occurredAt: AT,
       }),
   },
 ] as const;

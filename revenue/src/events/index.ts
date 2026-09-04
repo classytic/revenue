@@ -31,6 +31,7 @@ export {
   PaymentProcessing,
   PaymentRequiresAction,
   PaymentRefunded,
+  PaymentReversed,
   MonetizationCreated,
   PurchaseCreated,
   FreeCreated,
