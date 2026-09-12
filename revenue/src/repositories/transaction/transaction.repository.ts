@@ -734,12 +734,28 @@ export class TransactionRepository extends TransactionRefundRepository {
 
     const webhookEvent = await provider.handleWebhook(payload, headers);
 
-    const readOpts = this.optsFromCtx(ctx, { throwOnNotFound: false });
+    /**
+     * A webhook arrives with NO tenant — the provider addressed the platform,
+     * not a business — so the lookup is by provider-unique id across every
+     * tenant. Under a scoped engine that is the one legitimate bypass here.
+     * From the row onward the ROW is the tenant authority: its organizationId
+     * is lifted into the context so the verify that follows, and every event
+     * it dispatches, carry the tenant the payment belongs to. Without that, a
+     * `payment.succeeded` had no organizationId and every scoped subscriber
+     * downstream (order confirm, reservation confirm) ran untenanted.
+     */
     const sessionId = webhookEvent.data?.sessionId;
     const intentId = webhookEvent.data?.paymentIntentId;
-    let transaction = sessionId ? await this.getByQuery({ 'gateway.sessionId': sessionId }, readOpts) : null;
-    if (!transaction && intentId) transaction = await this.getByQuery({ 'gateway.paymentIntentId': intentId }, readOpts);
+    const lookupOpts = { ...this.optsFromCtx(ctx, { throwOnNotFound: false }), bypassTenant: true };
+    let transaction = sessionId ? await this.getByQuery({ 'gateway.sessionId': sessionId }, lookupOpts) : null;
+    if (!transaction && intentId) transaction = await this.getByQuery({ 'gateway.paymentIntentId': intentId }, lookupOpts);
     if (!transaction) return null;
+
+    const rowOrganizationId = (transaction as { organizationId?: unknown }).organizationId;
+    if (ctx.organizationId === undefined && rowOrganizationId !== undefined && rowOrganizationId !== null) {
+      ctx = { ...ctx, organizationId: String(rowOrganizationId) };
+    }
+    const readOpts = this.optsFromCtx(ctx, { throwOnNotFound: false });
 
     // Atomic dedup — a sequential pre-check + update had a read-then-write
     // race: LB double-submits or manual replay during an in-flight
@@ -761,7 +777,7 @@ export class TransactionRepository extends TransactionRefundRepository {
     const updated = await this.findOneAndUpdate<TransactionDocument>(
       { _id: transaction._id, 'webhook.eventId': { $ne: webhookEvent.id } },
       { $set: { webhook: nextWebhook } },
-      { returnDocument: 'after' },
+      this.optsFromCtx(ctx, { returnDocument: 'after' }),
     );
 
     if (!updated) {
