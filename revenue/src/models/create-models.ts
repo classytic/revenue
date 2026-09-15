@@ -22,7 +22,7 @@ import { buildSubscriptionSchema, type SubscriptionDocument } from './subscripti
 import { buildSettlementSchema, type SettlementDocument } from './settlement.schema.js';
 import { buildPaymentAttemptSchema, type PaymentAttemptDocument } from './payment-attempt.schema.js';
 import type { ResolvedTenantConfig } from '@classytic/repo-core/tenant';
-import { injectTenantField } from './inject-tenant.js';
+import { assertIndexDeclaration, injectTenantField, type IndexDeclaration } from './inject-tenant.js';
 
 export interface RevenueModels {
   Transaction: Model<TransactionDocument>;
@@ -36,10 +36,26 @@ export interface RevenueModels {
   Settlement?: Model<SettlementDocument>;
 }
 
+/**
+ * Per-model host extensions.
+ *
+ * `extraIndexes` are `@classytic/mongokit/tenant` declarations, applied AFTER the
+ * tenant prepend so their `scope` holds: the default `'tenant'` is led by the tenant
+ * field exactly like the kernel's own indexes; `'global'` (named, and paired with a
+ * `bypassTenant` read) is kept as written, for an identity read that spans tenants
+ * such as a buyer's own subscriptions across every seller. Before 2.12 host extras
+ * were added to the schema BEFORE the prepend, so a host could not declare an unscoped
+ * index at all.
+ */
+export interface RevenueModelExtensions {
+  extraFields?: Record<string, unknown>;
+  extraIndexes?: readonly IndexDeclaration[];
+}
+
 export interface RevenueSchemaOptions {
-  transaction?: { extraFields?: Record<string, unknown>; extraIndexes?: Array<{ fields: Record<string, 1 | -1>; options?: Record<string, unknown> }> };
-  subscription?: { extraFields?: Record<string, unknown>; extraIndexes?: Array<{ fields: Record<string, 1 | -1>; options?: Record<string, unknown> }> };
-  settlement?: { extraFields?: Record<string, unknown>; extraIndexes?: Array<{ fields: Record<string, 1 | -1>; options?: Record<string, unknown> }> };
+  transaction?: RevenueModelExtensions;
+  subscription?: RevenueModelExtensions;
+  settlement?: RevenueModelExtensions;
 }
 
 export const REVENUE_MODEL_NAMES = ['Transaction', 'PaymentAttempt', 'Subscription', 'Settlement'] as const;
@@ -114,6 +130,11 @@ function applyAutoIndex(schema: Schema, name: string, autoIndex: RevenueAutoInde
 export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlueprint<RevenueModels> {
   const { scope, schemaOptions = {}, modules = {}, collectionPrefix, forceRecreate, bankFeedIndexes, autoIndex } = config;
   const prefix = collectionPrefix ?? '';
+  // A bad host declaration fails HERE, at describe time, with the fix in the
+  // message, not on the first bind of a schema nobody reads.
+  for (const model of [schemaOptions.transaction, schemaOptions.subscription, schemaOptions.settlement]) {
+    for (const declaration of model?.extraIndexes ?? []) assertIndexDeclaration(declaration, scope);
+  }
   const existing: ModelSpec['existing'] = forceRecreate
     ? { mode: 'replace', environment: 'test' }
     : { mode: 'throw' };
@@ -132,11 +153,10 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
       const txnConfig: RevenueSchemaConfig = {
         scoped: scope.enabled,
         extraFields: schemaOptions.transaction?.extraFields,
-        extraIndexes: schemaOptions.transaction?.extraIndexes,
         ...(bankFeedIndexes ? { bankFeedIndexes } : {}),
       };
       const txnSchema = buildTransactionSchema(txnConfig);
-      injectTenantField(txnSchema, scope);
+      injectTenantField(txnSchema, scope, { indexes: schemaOptions.transaction?.extraIndexes });
 
       // Global indexes — applied AFTER injection so they stay unscoped.
       // Webhooks and external systems look up by these without knowing the tenant.
@@ -211,9 +231,8 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
         const subSchema = buildSubscriptionSchema({
           scoped: scope.enabled,
           extraFields: schemaOptions.subscription?.extraFields,
-          extraIndexes: schemaOptions.subscription?.extraIndexes,
         });
-        injectTenantField(subSchema, scope);
+        injectTenantField(subSchema, scope, { indexes: schemaOptions.subscription?.extraIndexes });
         applyAutoIndex(subSchema, 'Subscription', autoIndex);
         return subSchema;
       },
@@ -230,9 +249,8 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
         const stlSchema = buildSettlementSchema({
           scoped: scope.enabled,
           extraFields: schemaOptions.settlement?.extraFields,
-          extraIndexes: schemaOptions.settlement?.extraIndexes,
         });
-        injectTenantField(stlSchema, scope);
+        injectTenantField(stlSchema, scope, { indexes: schemaOptions.settlement?.extraIndexes });
         applyAutoIndex(stlSchema, 'Settlement', autoIndex);
         return stlSchema;
       },

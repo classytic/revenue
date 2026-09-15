@@ -36,7 +36,10 @@ export const NO_BANK_FEED_INDEXES: ResolvedBankFeedIndexes = {
 export interface RevenueSchemaConfig {
   scoped: boolean;
   extraFields?: Record<string, unknown>;
-  extraIndexes?: Array<{ fields: Record<string, 1 | -1>; options?: Record<string, unknown> }>;
+  // NO `extraIndexes` here (2.12): a host's index declarations are applied by
+  // `create-models.ts` through `injectTenantField`, AFTER the tenant prepend, so
+  // their scope holds. A builder adding them here put them BEFORE it, which is
+  // why a host could never declare an unscoped index.
   /** Per-index flags for the bank-feed lifecycle. */
   bankFeedIndexes?: ResolvedBankFeedIndexes;
 }
@@ -440,12 +443,6 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
       { kind: 1, amount: 1, createdAt: -1 },
       { name: 'match_candidates_by_amount_createdat' },
     );
-  }
-
-  if (config.extraIndexes) {
-    for (const idx of config.extraIndexes) {
-      schema.index(idx.fields, idx.options);
-    }
   }
 
   return schema;

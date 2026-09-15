@@ -81,7 +81,14 @@ export * from './enums/settlement.enums.js';
 export * from './enums/bank-feed.enums.js';
 
 // ─── Models ───
-export type { RevenueModels, RevenueSchemaOptions } from './models/create-models.js';
+export type {
+  RevenueModelExtensions,
+  RevenueModels,
+  RevenueSchemaOptions,
+} from './models/create-models.js';
+// The declaration shape a host's `schemaOptions.<model>.extraIndexes` takes, so a host
+// types its config without a second import path.
+export type { IndexDeclaration, IndexScope } from '@classytic/mongokit/tenant';
 export type { TransactionDocument } from './models/transaction.schema.js';
 export type { PaymentAttemptDocument } from './models/payment-attempt.schema.js';
 export type { SubscriptionDocument } from './models/subscription.schema.js';
@@ -103,11 +110,16 @@ export {
   type RefundView,
 } from './repositories/transaction/transaction.repository.js';
 export { SubscriptionRepository } from './repositories/subscription.repository.js';
-export { SettlementRepository } from './repositories/settlement.repository.js';
+export {
+  SettlementRepository,
+  DEFAULT_BREAKDOWN_LIMIT,
+  MAX_BREAKDOWN_LIMIT,
+} from './repositories/settlement.repository.js';
 export type {
   RecipientBalance,
   SettlementSummary,
   RecipientBreakdown,
+  BreakdownOptions,
 } from './repositories/settlement.repository.js';
 export type { RevenueRepositories, RepositoryPluginBundle } from './repositories/create-repositories.js';
 

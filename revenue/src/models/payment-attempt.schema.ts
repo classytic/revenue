@@ -107,10 +107,6 @@ export function buildPaymentAttemptSchema(config: RevenueSchemaConfig): Schema<P
     { unique: true, partialFilterExpression: { publicId: { $type: 'string' } } },
   );
 
-  if (config.extraIndexes) {
-    for (const idx of config.extraIndexes) schema.index(idx.fields, idx.options);
-  }
-
   return schema;
 }
 

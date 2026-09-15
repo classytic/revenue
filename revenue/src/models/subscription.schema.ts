@@ -91,10 +91,6 @@ export function buildSubscriptionSchema(config: RevenueSchemaConfig): Schema<Sub
     },
   );
 
-  if (config.extraIndexes) {
-    for (const idx of config.extraIndexes) schema.index(idx.fields, idx.options);
-  }
-
   return schema;
 }
 

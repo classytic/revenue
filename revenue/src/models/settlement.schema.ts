@@ -97,9 +97,6 @@ export function buildSettlementSchema(config: RevenueSchemaConfig): Schema<Settl
     },
   );
 
-  if (config.extraIndexes) {
-    for (const idx of config.extraIndexes) schema.index(idx.fields, idx.options);
-  }
 
   return schema;
 }

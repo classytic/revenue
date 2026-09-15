@@ -3,6 +3,65 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.12.0
+
+### Fixed — a payment webhook dispatched its event untenanted
+
+A webhook addresses the platform, not a business, so `handleWebhook` looked
+the transaction up in whatever context it was given — none — then verified
+and dispatched in that same empty context. On a scoped engine the lookup
+itself refused; on any engine the resulting `payment.succeeded` carried no
+`organizationId`, and every scoped subscriber downstream (order confirm,
+reservation confirm) ran untenanted.
+
+The lookup is now the one legitimate cross-tenant read here (by
+provider-unique ids), and the ROW's `organizationId` is lifted into the
+context for everything that follows, so the event carries the tenant the
+payment actually belongs to.
+
+### Changed — host `extraIndexes` are scope-aware, applied AFTER the tenant prepend
+
+`schemaOptions.<model>.extraIndexes` used to be added to the schema by the
+builder, BEFORE `injectTenantField` ran, so every host index came out led by
+the tenant field whatever the host meant. A host whose buyers read their own
+subscriptions across every seller (`bypassTenant`, filter on `customerId`)
+therefore could not declare an index that served the read at all, and the
+kernel's own global indexes (`gateway.sessionId`, `idempotencyKey`, `publicId`)
+were declared by hand after the call, an ordering rule that lived in a comment.
+
+The entries are now `IndexDeclaration`s from `@classytic/mongokit/tenant`
+(re-exported here), applied by `create-models.ts` after the prepend:
+`scope: 'tenant'` (default) is led by the tenant field exactly as before,
+`scope: 'global'` is kept as written and must be named. A bad declaration is
+refused at describe time. `RevenueModelExtensions` names the per-model shape.
+Existing configs that never set `scope` behave identically.
+
+### Changed — tenant injection is `@classytic/mongokit/tenant`'s
+
+`src/models/inject-tenant.ts`, the copy PACKAGE_RULES told every kernel to
+clone, now re-exports the shared implementation. Requires
+`@classytic/mongokit >=3.39.0`.
+
+### Changed — `breakdownByRecipient` is bounded by default
+
+It grouped EVERY settlement row matching the filter and returned every
+recipient. That is right for a reconciliation job and wrong for the screen
+that calls it: a marketplace with a long tail of payees pays for the whole
+tail to render one page of it, and the cost grows with the ledger's history
+rather than with what is shown.
+
+`BreakdownOptions` adds `limit` (default `DEFAULT_BREAKDOWN_LIMIT` 200,
+clamped to `MAX_BREAKDOWN_LIMIT` 1000), a cursor on `recipientId`, and
+`all: true` for the reconciliation case that genuinely wants every row — which
+now has to say so, and enables disk use when it does.
+
+### Changed — peer floors raised to current
+
+- `@classytic/mongokit` `>=3.25.0` (devDependency) → **`^3.39.0`**
+- `@classytic/primitives` `>=0.23.0` → **`>=0.28.0`**
+- `@classytic/repo-core` `>=0.24.0` → **`>=0.28.0`**
+- `@classytic/validation` `>=0.4.0` → **`>=0.6.0`**
+
 ## 2.11.0
 
 ### Added — `TransactionRepository.cancel()`, the VOID verb

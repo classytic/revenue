@@ -56,6 +56,29 @@ export interface RecipientBalance {
  */
 export type SettlementSummary = Omit<RecipientBalance, 'recipientId'>;
 
+/**
+ * How many recipients {@link SettlementRepository.breakdownByRecipient} returns
+ * when the caller names no limit. Enough for any screen; far short of a payee
+ * table.
+ */
+export const DEFAULT_BREAKDOWN_LIMIT = 200;
+/** Hard ceiling on a bounded breakdown — above this, say `all: true` and mean it. */
+export const MAX_BREAKDOWN_LIMIT = 1_000;
+
+/** Paging + scan control for {@link SettlementRepository.breakdownByRecipient}. */
+export interface BreakdownOptions {
+  /** Recipients per call. Clamped to {@link MAX_BREAKDOWN_LIMIT}. */
+  limit?: number;
+  /** The last `recipientId` of the previous page. Results are ordered by it. */
+  after?: string;
+  /**
+   * Scan EVERY matching row — reconciliation, not a screen. Enables disk
+   * spilling so a large group cannot die at MongoDB's 100MB limit, and cannot
+   * be combined with `limit`.
+   */
+  all?: boolean;
+}
+
 /** One row of {@link SettlementRepository.breakdownByRecipient}. */
 export interface RecipientBreakdown extends RecipientBalance {
   recipientType: string;
@@ -483,23 +506,61 @@ export class SettlementRepository extends RevenueRepositoryBase<
 
   /**
    * Per-recipient settlement rollup — one {@link RecipientBreakdown} per
-   * distinct (recipientId, recipientType) matching `filter`. The reusable list
-   * behind a platform "who is owed what" view; pass `_bypassTenant` to span all
-   * orgs.
+   * distinct (recipientId, recipientType) matching `filter`. The list behind a
+   * "who is owed what" view; pass `_bypassTenant` in ctx to span every org.
+   *
+   * ## Bounded by default, and why
+   *
+   * This groups every settlement row the filter matches. `$match` is
+   * index-backed, but the `$group` that follows is O(matching rows) in time and
+   * holds one bucket per distinct recipient in memory — and MongoDB kills a
+   * `$group` at 100MB unless it is allowed to spill to disk. A platform with a
+   * hundred thousand payees and years of history is exactly the deployment that
+   * wants this view and exactly the one it falls over on. Worse, the failure
+   * arrives late: it is fine in staging, fine for a year, and then it is not.
+   *
+   * So the pipeline carries its own `$sort` + `$limit` and returns at most
+   * {@link DEFAULT_BREAKDOWN_LIMIT} recipients. Page with `after` (the last
+   * `recipientId` you saw); a full result is one whose length is below the
+   * limit. Ordering is by `recipientId` so the cursor is stable.
+   *
+   * Reconciliation genuinely does need every row, so `all: true` opts into the
+   * unbounded scan and turns on disk spilling for it — deliberate, greppable,
+   * and never what a dashboard does by accident.
    */
   async breakdownByRecipient(
     filter: Record<string, unknown> = {},
     ctx: RevenueContext = {},
+    options: BreakdownOptions = {},
   ): Promise<RecipientBreakdown[]> {
     const now = new Date();
+    const all = options.all === true;
+    const limit = all
+      ? undefined
+      : Math.max(1, Math.min(options.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT));
+    if (all && options.limit !== undefined) {
+      // Two contradictory instructions, and guessing which one the caller meant
+      // is how an unbounded scan ships behind a limit that reads as a bound.
+      throw new Error(
+        '[revenue] breakdownByRecipient: pass either `all: true` or `limit`, not both.',
+      );
+    }
+    const scoped =
+      options.after !== undefined
+        ? { $and: [filter, { recipientId: { $gt: options.after } }] }
+        : filter;
     const rows = await this.aggregatePipeline<{
-      _id: { recipientId: string; recipientType: string; status: string; due: boolean };
-      total: number;
+      _id: { recipientId: string; recipientType: string };
+      buckets: Array<{ status: string; due: boolean; total: number }>;
       currency: string | null;
       role: string | null;
     }>(
       [
-        { $match: filter },
+        { $match: scoped },
+        /**
+         * Per (recipient, status, due) — `due` splits pending into escrowed
+         * (scheduled ahead) and cleared (payable now).
+         */
         {
           $group: {
             _id: {
@@ -513,31 +574,52 @@ export class SettlementRepository extends RevenueRepositoryBase<
             role: { $first: '$metadata.role' },
           },
         },
+        /**
+         * Collapse to ONE document per recipient before limiting.
+         *
+         * Without this second stage the `$limit` below would cut a recipient
+         * in half — the first group emits a row per status, so "the first 200
+         * rows" is not "the first 200 recipients" and the last one returned
+         * would be missing whichever statuses fell past the boundary. Silently:
+         * the row is present and its numbers are simply too low.
+         */
+        {
+          $group: {
+            _id: { recipientId: '$_id.recipientId', recipientType: '$_id.recipientType' },
+            buckets: {
+              $push: { status: '$_id.status', due: '$_id.due', total: '$total' },
+            },
+            currency: { $first: '$currency' },
+            role: { $first: '$role' },
+          },
+        },
+        // By recipientId, so `after` is a stable cursor rather than a guess at
+        // whatever order the group happened to emit.
+        { $sort: { '_id.recipientId': 1 } },
+        ...(limit !== undefined ? [{ $limit: limit }] : []),
       ],
-      this.optsFromCtx(ctx),
+      {
+        ...this.optsFromCtx(ctx),
+        // Only for the deliberate full scan. A bounded call that needs disk is
+        // a bounded call whose bound is wrong, and should fail saying so.
+        ...(all ? { allowDiskUse: true } : {}),
+      },
     );
 
-    const byKey = new Map<string, RecipientBreakdown>();
-    for (const row of rows) {
-      const key = `${row._id.recipientType}:${row._id.recipientId}`;
-      let r = byKey.get(key);
-      if (!r) {
-        r = {
-          recipientId: row._id.recipientId,
-          recipientType: row._id.recipientType,
-          role: row.role ?? null,
-          ...emptySettlementSummary(),
-        };
-        byKey.set(key, r);
+    return rows.map((row) => {
+      const out: RecipientBreakdown = {
+        recipientId: row._id.recipientId,
+        recipientType: row._id.recipientType,
+        role: row.role ?? null,
+        ...emptySettlementSummary(),
+      };
+      for (const bucket of row.buckets) {
+        foldSettlementStatus(out, bucket.status, bucket.due, bucket.total);
       }
-      foldSettlementStatus(r, row._id.status, row._id.due, row.total);
-      if (row.role && !r.role) r.role = row.role;
-      if (row.currency && !r.currency) r.currency = row.currency;
-    }
-    for (const r of byKey.values()) {
-      r.lifetime = r.pending + r.processing + r.paidOut;
-    }
-    return [...byKey.values()];
+      if (row.currency && !out.currency) out.currency = row.currency;
+      out.lifetime = out.pending + out.processing + out.paidOut;
+      return out;
+    });
   }
 
   /** One recipient's wallet — a thin `summary` over `{ recipientId, … }`. */
