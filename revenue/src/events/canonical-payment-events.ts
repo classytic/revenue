@@ -122,7 +122,7 @@ const moneyOf = (amount: number, currency: string): Money => ({ amount, currency
  */
 function correlation(txn: CanonicalSourceTransaction, extra?: Record<string, unknown>): Record<string, unknown> {
   return {
-    ...(txn.sourceModel !== undefined ? { sourceModel: txn.sourceModel } : {}),
+    ...(txn.sourceModel != null ? { sourceModel: txn.sourceModel } : {}),
     ...(txn.sourceId != null ? { sourceId: String(txn.sourceId) } : {}),
     /**
      * Revenue's own ROW id, for consumers that still read the transaction.
@@ -150,10 +150,10 @@ export function toPaymentSucceeded(
     eventType: PAYMENT_EVENT_TYPE.SUCCEEDED,
     paymentId: paymentIdOf(txn),
     providerCode: providerCodeOf(txn),
-    ...(txn.providerRef !== undefined ? { providerRef: txn.providerRef } : {}),
+    ...(txn.providerRef != null ? { providerRef: txn.providerRef } : {}),
     amount: moneyOf(txn.amount, txn.currency),
     methodKind: txn.methodKind,
-    ...(txn.methodCode !== undefined ? { methodCode: txn.methodCode } : {}),
+    ...(txn.methodCode != null ? { methodCode: txn.methodCode } : {}),
     occurredAt,
     metadata: correlation(txn),
   };
@@ -176,10 +176,10 @@ export function toPaymentFailed(
     eventType: PAYMENT_EVENT_TYPE.FAILED,
     paymentId: paymentIdOf(txn),
     providerCode: providerCodeOf(txn),
-    ...(txn.providerRef !== undefined ? { providerRef: txn.providerRef } : {}),
+    ...(txn.providerRef != null ? { providerRef: txn.providerRef } : {}),
     amount: moneyOf(txn.amount, txn.currency),
     methodKind: txn.methodKind,
-    ...(txn.methodCode !== undefined ? { methodCode: txn.methodCode } : {}),
+    ...(txn.methodCode != null ? { methodCode: txn.methodCode } : {}),
     reason,
     ...(reasonCode !== undefined ? { reasonCode } : {}),
     occurredAt,
@@ -201,6 +201,7 @@ export function toPaymentRefunded(input: {
   refundedAmount: number;
   occurredAt: Date;
   reason?: string | undefined;
+  refundMetadata?: Record<string, unknown> | undefined;
 }): PaymentRefundedPayload {
   const { original, refund, refundedAmount, occurredAt } = input;
   return {
@@ -208,13 +209,16 @@ export function toPaymentRefunded(input: {
     paymentId: paymentIdOf(original),
     refundId: paymentIdOf(refund),
     providerCode: providerCodeOf(original),
-    ...(original.providerRef !== undefined ? { providerRef: original.providerRef } : {}),
+    ...(original.providerRef != null ? { providerRef: original.providerRef } : {}),
     refundedAmount: moneyOf(refundedAmount, original.currency),
     originalAmount: moneyOf(original.amount, original.currency),
     isPartial: refundedAmount < original.amount,
     ...(input.reason !== undefined ? { reason: input.reason } : {}),
     occurredAt,
-    metadata: correlation(original, { refundTransactionId: paymentIdOf(refund) }),
+    metadata: correlation(original, {
+      refundTransactionId: paymentIdOf(refund),
+      ...(input.refundMetadata ? { refundMetadata: input.refundMetadata } : {}),
+    }),
   };
 }
 
@@ -237,7 +241,7 @@ export function toPaymentReversed(input: {
     eventType: PAYMENT_EVENT_TYPE.REVERSED,
     paymentId: paymentIdOf(original),
     providerCode: providerCodeOf(original),
-    ...(original.providerRef !== undefined ? { providerRef: original.providerRef } : {}),
+    ...(original.providerRef != null ? { providerRef: original.providerRef } : {}),
     reversedAmount: moneyOf(reversedAmount, original.currency),
     originalAmount: moneyOf(original.amount, original.currency),
     isPartial: reversedAmount < original.amount,
@@ -300,11 +304,11 @@ export function toPaymentUnknown(input: {
     eventType: PAYMENT_EVENT_TYPE.UNKNOWN,
     paymentId: paymentIdOf(txn),
     providerCode: providerCodeOf(txn),
-    ...(txn.providerRef !== undefined ? { providerRef: txn.providerRef } : {}),
+    ...(txn.providerRef != null ? { providerRef: txn.providerRef } : {}),
     operation: input.operation,
     ...(input.includeAmount === false ? {} : { amount: moneyOf(txn.amount, txn.currency) }),
     methodKind: txn.methodKind,
-    ...(txn.methodCode !== undefined ? { methodCode: txn.methodCode } : {}),
+    ...(txn.methodCode != null ? { methodCode: txn.methodCode } : {}),
     causeCode: input.causeCode,
     ...(input.idempotencyKey !== undefined ? { idempotencyKey: input.idempotencyKey } : {}),
     occurredAt: input.occurredAt,

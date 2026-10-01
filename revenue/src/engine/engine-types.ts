@@ -94,6 +94,15 @@ export interface ResolvedRevenueConfig {
   defaultCurrency: CurrencyCode;
   collectionPrefix?: string | undefined;
   forceRecreate: boolean;
+  /** How outboxed events are delivered — see `RevenueRuntime.dispatch`. */
+  dispatch: import('../repositories/base.repository.js').RevenueDispatchMode;
+  /**
+   * Whether a transactional outbox is wired. A caller may pass `ctx.session` to a verb
+   * ONLY when this is true: without an outbox every in-session verb throws
+   * `UnmanagedSessionError`, because an event published mid-transaction would survive a
+   * rollback. Callers that wrap verbs in their own transaction branch on this.
+   */
+  hasOutbox: boolean;
 }
 
 /**

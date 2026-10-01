@@ -171,6 +171,7 @@ describe('outbox.transactionalSave — the boot gate on injected outboxes', () =
       defaultCurrency: 'USD',
       logger: silentLogger,
       outbox,
+      dispatch: 'inline',
     });
 
   it('REFUSES a store that does not declare transactionalSave (the hand-rolled shape)', () => {

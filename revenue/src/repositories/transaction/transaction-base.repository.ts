@@ -1,3 +1,5 @@
+import { withTransaction } from '@classytic/mongokit';
+import type { ClientSession } from 'mongoose';
 import { RevenueRepositoryBase } from '../base.repository.js';
 import type { DomainEvent } from '@classytic/primitives/events';
 import type { TransactionDocument } from '../../models/transaction.schema.js';
@@ -13,67 +15,56 @@ import type { TransactionRepoDeps } from './transaction-types.js';
  * layer just contributes a cohesive group of verbs. This base owns only what every layer
  * shares: the phased-dispatch helpers (PACKAGE_RULES §P8 / §5.5).
  *
- * Phased dispatch — `saveToOutbox` runs INSIDE a `withTransaction` body so the event row
- * commits atomically with the business write; `publishToTransport` runs AFTER commit so
- * in-process subscribers fire only when the parent write succeeded. For verbs that don't open
- * their own session, the base `dispatch()` (from `RevenueRepositoryBase`) is simpler.
+ * A verb that opens its own transaction and emits events uses `transactionWithEvents`; one
+ * that doesn't uses the base `dispatch()` (from `RevenueRepositoryBase`).
  */
 export abstract class TransactionRepositoryBase extends RevenueRepositoryBase<
   TransactionDocument,
   TransactionRepoDeps
 > {
   /**
-   * Host acceptance of a NON-TRANSACTIONAL deployment (a standalone `mongod`).
-   *
-   * ## The defect this closes — the worst of the five
-   *
-   * `allowNonTransactional` existed on the revenue runtime and was consumed by exactly one
-   * place: the boot gate, which PRINTS "money writes proceed WITHOUT atomicity" and then
-   * lets the host start. Every actual `withTransaction` call below passed no options, and
-   * mongokit defaults `allowFallback: false` — so on a standalone mongod the boot log said
-   * one thing and the write did another.
-   *
-   * What that cost: `refund()` fails AFTER the provider call may already have gone out;
-   * `releaseRefundReservation` and `finalizeConfirmedRefund` — the two resolvers that
-   * settle a refund attempt — can never run, so `PaymentAttempt.outcome` stays
-   * `pending`/`unknown` and `pendingRefundAmount` stays reserved forever. And
-   * `scanStaleAttempts` cannot converge it, because its repair path is the same broken
-   * transaction. A refund the customer was told succeeded, unrecoverable by design.
-   *
-   * Set from the runtime; `false` keeps production fail-closed.
+   * The runtime's `allowNonTransactional`, honoured by EVERY transaction this repository opens
+   * (`allowFallback`) — the boot gate saying "non-transactional" while the writes refused to run
+   * left refunds unresolvable on a standalone mongod. `false` keeps production fail-closed.
    */
   protected allowNonTransactional = false;
 
   /**
-   * Save an event to the host-owned outbox, session-bound when available.
+   * The ONE way a verb opens a transaction that emits events. `emit` writes the outbox row in
+   * the transaction (a failed save rolls the write back); the events are delivered once, after
+   * commit, per the engine's dispatch mode.
    *
-   * Called INSIDE a `withTransaction` body. The outbox row commits atomically with the
-   * business write (P8 true session-bound write) — if outbox.save fails, this method re-throws
-   * so `withTransaction` rolls the parent write back. Without propagation, the parent doc would
-   * commit while the event row vanishes, defeating the transactional-outbox correctness
-   * argument. Logging happens before the re-throw so the failure surfaces without losing the
-   * original stack trace.
+   * Each attempt starts with no events: `withTransaction` re-runs the body on a transient
+   * error, and the aborted attempt's event — its row rolled back — must never be delivered.
+   *
+   * `afterCommit` runs between commit and delivery (e.g. bridges that must see the write first).
    */
-  protected async saveToOutbox(event: DomainEvent, session?: unknown): Promise<void> {
-    if (!this.deps.outbox) return;
-    try {
-      await this.deps.outbox.save(event, session !== undefined ? { session } : {});
-    } catch (err) {
-      this.deps.logger?.error('[revenue] outbox.save failed for', event.type, err);
-      throw err;
-    }
-  }
-
-  /**
-   * Publish an event to the in-process `EventTransport` after commit. Transport failure is
-   * logged and swallowed — the host relay re-delivers from the durable outbox row on its next
-   * poll, so a missed in-process event is recoverable. Best-effort by design.
-   */
-  protected async publishToTransport(event: DomainEvent): Promise<void> {
-    try {
-      await this.deps.events.publish(event);
-    } catch (err) {
-      this.deps.logger?.error('[revenue] events.publish failed for', event.type, err);
-    }
+  protected async transactionWithEvents<T>(
+    body: (session: ClientSession, emit: (event: DomainEvent) => Promise<void>) => Promise<T>,
+    afterCommit?: (result: T) => Promise<void>,
+  ): Promise<T> {
+    let events: DomainEvent[] = [];
+    const result = await withTransaction(
+      this.Model.db as unknown as { startSession(): Promise<ClientSession> },
+      async (session) => {
+        const attempt: DomainEvent[] = [];
+        events = attempt;
+        return body(session, async (event) => {
+          if (this.deps.outbox) {
+            try {
+              await this.deps.outbox.save(event, session ? { session } : {});
+            } catch (err) {
+              this.deps.logger?.error('[revenue] outbox.save failed for', event.type, err);
+              throw err;
+            }
+          }
+          attempt.push(event);
+        });
+      },
+      { allowFallback: this.allowNonTransactional },
+    );
+    if (afterCommit) await afterCommit(result);
+    await this.deliverAll(events);
+    return result;
   }
 }

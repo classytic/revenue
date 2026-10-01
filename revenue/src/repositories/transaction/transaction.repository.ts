@@ -1,12 +1,11 @@
-import { withTransaction, isDuplicateKeyError, type PluginType } from '@classytic/mongokit';
-import type { ClientSession, Model } from 'mongoose';
+import { isDuplicateKeyError, type PluginType } from '@classytic/mongokit';
+import type { Model } from 'mongoose';
 import { Types } from 'mongoose';
 import type { TransactionDocument } from '../../models/transaction.schema.js';
 import type { RevenueContext } from '../../core/context.js';
 import { executeProviderCommand } from '../../providers/execute-command.js';
 import { buildPaymentCommandContext } from '../../providers/command-context.js';
 import { currencyCode } from '@classytic/primitives/currency';
-import type { DomainEvent } from '@classytic/primitives/events';
 import type { PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
 import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
 import {
@@ -123,6 +122,8 @@ export class TransactionRepository extends TransactionRefundRepository {
     paymentData?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
     idempotencyKey?: string;
+    /** The payer's own reference (MFS TrxID, bank transfer ref) — stored on `reference`. */
+    reference?: string;
   }, ctx: RevenueContext = {}): Promise<TransactionDocument> {
     // Inbound API boundary. `?? default` on an INVALID code would silently
     // re-denominate the payment into the engine default — the charge still
@@ -416,6 +417,7 @@ export class TransactionRepository extends TransactionRefundRepository {
           sourceId: params.data?.sourceId,
           sourceModel: params.data?.sourceModel as string,
           idempotencyKey: effectiveIdempotencyKey,
+          ...(params.reference?.trim() ? { reference: params.reference.trim() } : {}),
           metadata: params.metadata,
         } as any,
         this.optsFromCtx(ctx),
@@ -946,12 +948,9 @@ export class TransactionRepository extends TransactionRefundRepository {
       throw new ValidationError('release amount must be positive', { amount: options.amount });
     }
 
-    const pendingEvents: DomainEvent[] = [];
-    const updated = await withTransaction(this.Model.db as unknown as { startSession(): Promise<ClientSession> }, async (session) => {
-      // A transient-error retry re-enters here. Reset the queue and re-derive EVERY
-      // input from a session-scoped read so no attempt can inherit an earlier one's
-      // snapshot.
-      pendingEvents.length = 0;
+    const updated = await this.transactionWithEvents(async (session, emit) => {
+      // A transient-error retry re-enters here: re-derive EVERY input from a session-scoped
+      // read so no attempt can inherit an earlier one's snapshot.
       const writeOpts = this.optsFromCtx(ctx, { session });
 
       const current = (await this.getByQuery(
@@ -1041,13 +1040,9 @@ export class TransactionRepository extends TransactionRefundRepository {
         ctx,
         { resource: 'transaction', resourceId: (result as any)?.publicId },
       );
-      await this.saveToOutbox(event, session);
-      pendingEvents.push(event);
+      await emit(event);
       return result;
-    },
-        { allowFallback: this.allowNonTransactional });
-
-    for (const ev of pendingEvents) await this.publishToTransport(ev);
+    });
 
     return updated as TransactionDocument;
   }
@@ -1070,8 +1065,7 @@ export class TransactionRepository extends TransactionRefundRepository {
     const splits = calculateSplits(transaction.amount, rules, gatewayFeeRate);
     const orgPayout = calculateOrganizationPayout(transaction.amount, splits);
 
-    const pendingEvents: DomainEvent[] = [];
-    const updated = await withTransaction(this.Model.db as unknown as { startSession(): Promise<ClientSession> }, async (session) => {
+    const updated = await this.transactionWithEvents(async (session, emit) => {
       const writeOpts = this.optsFromCtx(ctx, { session });
 
       /**
@@ -1134,13 +1128,9 @@ export class TransactionRepository extends TransactionRefundRepository {
         ctx,
         { resource: 'transaction', resourceId: (transaction as any).publicId },
       );
-      await this.saveToOutbox(event, session);
-      pendingEvents.push(event);
+      await emit(event);
       return result;
-    },
-        { allowFallback: this.allowNonTransactional });
-
-    for (const ev of pendingEvents) await this.publishToTransport(ev);
+    });
 
     return updated as TransactionDocument;
   }

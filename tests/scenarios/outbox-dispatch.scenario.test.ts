@@ -92,6 +92,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       scope: false,
       forceRecreate: true,
       outbox,
+      dispatch: 'inline',
       eventTransport: {
         name: 'test-transport',
         async publish(event) { transportCalls.push(event); },
@@ -150,6 +151,7 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
       scope: false,
       forceRecreate: true,
       outbox,
+      dispatch: 'inline',
       eventTransport: {
         name: 'test-transport',
         async publish(event) { transportCalls.push(event); },
@@ -215,6 +217,128 @@ describe('Scenario: Host-owned outbox (P8 dispatch)', () => {
         data: { customerId: 'c3' },
       });
       expect(transportCalls.some(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED)).toBe(true);
+    } finally {
+      await engine.close();
+    }
+  }, TIMEOUT);
+});
+
+/**
+ * `runtime.dispatch` — an outboxed event is delivered ONCE, the way the host said.
+ * Without it both happened: the live publish, and the relay's re-publish of a row
+ * nothing had acknowledged — every payment subscriber ran twice.
+ */
+class AckingOutbox extends RecordingOutbox {
+  readonly acked: string[] = [];
+  override async acknowledge(id?: string): Promise<void> {
+    if (id) this.acked.push(id);
+  }
+}
+
+describe('Scenario: dispatch mode', () => {
+  const recordingTransport = (calls: DomainEvent[]) => ({
+    name: 'test-transport',
+    async publish(event: DomainEvent) { calls.push(event); },
+    async subscribe() { return () => {}; },
+  });
+
+  it("an outbox with no dispatch defaults to 'inline'; relay with no outbox is refused", async () => {
+    const base = { connection: mongoose.connection, defaultCurrency: 'USD', scope: false as const, forceRecreate: true };
+    expect(() => bindRevenue({ ...base, dispatch: 'relay' })).toThrow(/needs an outbox/);
+    if (!mongoAvailable) return;
+    // An existing outbox host (no `dispatch`) keeps booting, and gets the de-duplicated
+    // inline delivery rather than a live publish plus a relay re-publish.
+    const engine = await bindRevenue({ ...base, outbox: new RecordingOutbox() });
+    try {
+      expect(engine.config.dispatch).toBe('inline');
+    } finally {
+      await engine.close();
+    }
+  });
+
+  /**
+   * `config.hasOutbox` is how a caller that wraps verbs in its own transaction
+   * decides whether it may pass `ctx.session`: without an outbox every in-session
+   * verb throws `UnmanagedSessionError`. @spinekit/revenue's verify/reject branch on it.
+   */
+  it('reports whether an outbox is wired in config.hasOutbox', async () => {
+    if (!mongoAvailable) return;
+    const base = { connection: mongoose.connection, defaultCurrency: 'USD', scope: false as const, forceRecreate: true };
+    const without = await bindRevenue(base);
+    const withOutbox = await bindRevenue({ ...base, outbox: new RecordingOutbox(), dispatch: 'inline' });
+    try {
+      expect(without.config.hasOutbox).toBe(false);
+      expect(withOutbox.config.hasOutbox).toBe(true);
+    } finally {
+      await without.close();
+      await withOutbox.close();
+    }
+  }, TIMEOUT);
+
+  it("'relay': nothing is published in the caller — on the direct AND the post-commit path", async () => {
+    if (!mongoAvailable) return;
+    const outbox = new AckingOutbox();
+    const transportCalls: DomainEvent[] = [];
+    const committed: string[] = [];
+    const engine = await bindRevenue({
+      connection: mongoose.connection,
+      defaultCurrency: 'USD',
+      providers: { fake: new FakeProvider() },
+      scope: false,
+      forceRecreate: true,
+      outbox,
+      dispatch: 'relay',
+      afterCommit: ({ events, dispatch }) => {
+        expect(dispatch).toBe('relay');
+        committed.push(...events.map((e) => e.type));
+      },
+      eventTransport: recordingTransport(transportCalls),
+    });
+    await warmModels(engine);
+    try {
+      const txn = await engine.repositories.transaction.createPaymentIntent({
+        amount: 5000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'relay-1',
+      });
+      await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+      // Refund saves its row inside a transaction and delivers after commit — the other path.
+      await engine.repositories.transaction.refund(txn._id.toString(), null, { idempotencyKey: 'relay-1-r' });
+
+      expect(transportCalls).toEqual([]);
+      expect(outbox.acked).toEqual([]);
+      expect(committed).toContain(PAYMENT_EVENT_TYPE.SUCCEEDED);
+      expect(committed).toContain(PAYMENT_EVENT_TYPE.REFUNDED);
+      // Every committed event has a durable row for the relay.
+      for (const t of committed) expect(outbox.saved.map((e) => e.type)).toContain(t);
+    } finally {
+      await engine.close();
+    }
+  }, TIMEOUT);
+
+  it("'inline': publishes live and ACKNOWLEDGES every delivered row", async () => {
+    if (!mongoAvailable) return;
+    const outbox = new AckingOutbox();
+    const transportCalls: DomainEvent[] = [];
+    const engine = await bindRevenue({
+      connection: mongoose.connection,
+      defaultCurrency: 'USD',
+      providers: { fake: new FakeProvider() },
+      scope: false,
+      forceRecreate: true,
+      outbox,
+      dispatch: 'inline',
+      eventTransport: recordingTransport(transportCalls),
+    });
+    await warmModels(engine);
+    try {
+      const txn = await engine.repositories.transaction.createPaymentIntent({
+        amount: 5000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'inline-1',
+      });
+      await engine.repositories.transaction.verify(txn.gateway!.paymentIntentId as string);
+      await engine.repositories.transaction.refund(txn._id.toString(), null, { idempotencyKey: 'inline-1-r' });
+
+      expect(transportCalls.map((e) => e.type)).toContain(PAYMENT_EVENT_TYPE.REFUNDED);
+      // Delivered live ⇒ acknowledged, so the relay never delivers it a second time.
+      expect([...outbox.acked].sort()).toEqual(transportCalls.map((e) => e.meta.id).sort());
     } finally {
       await engine.close();
     }

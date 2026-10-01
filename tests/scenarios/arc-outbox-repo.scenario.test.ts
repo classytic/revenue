@@ -122,6 +122,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
       scope: false,
       forceRecreate: true,
       outbox,
+      dispatch: 'inline',
     });
     await warmModels(engine);
 
@@ -201,6 +202,7 @@ describe('Scenario: Repo-backed outbox (arc 2.10 canonical pattern)', () => {
       scope: false,
       forceRecreate: true,
       outbox: interceptingOutbox,
+      dispatch: 'inline',
     });
     await warmModels(engine);
 

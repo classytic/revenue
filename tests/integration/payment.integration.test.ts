@@ -190,6 +190,22 @@ describe('Payment Flow', () => {
     expect(txn.gateway?.paymentIntentId).toBeDefined();
   }, TEST_TIMEOUT);
 
+  it("stores the payer's reference on the canonical `reference` field", async () => {
+    const txn = await engine.repositories.transaction.createPaymentIntent({
+      amount: 10000,
+      gateway: 'fake', methodKind: 'wallet',
+      idempotencyKey: 'pf-reference-1',
+      reference: '  8N7A6B5C4D  ',
+    });
+    // One field, trimmed — not a key buried in metadata that each reader spells differently.
+    expect(txn.reference).toBe('8N7A6B5C4D');
+
+    const none = await engine.repositories.transaction.createPaymentIntent({
+      amount: 10000, gateway: 'fake', methodKind: 'wallet', idempotencyKey: 'pf-reference-2', reference: '   ',
+    });
+    expect(none.reference, 'a blank reference was stored as evidence').toBeUndefined();
+  }, TEST_TIMEOUT);
+
   it('should verify payment', async () => {
     if (!mongoAvailable) return;
 

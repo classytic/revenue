@@ -24,7 +24,8 @@ import {
 import { resolveTenantConfig, type TenantConfig } from '@classytic/repo-core/tenant';
 import type { Connection } from 'mongoose';
 import { currencyCode } from '@classytic/primitives/currency';
-import type { EventTransport } from '@classytic/primitives/events';
+import type { DomainEvent, EventTransport } from '@classytic/primitives/events';
+import type { RevenueDispatchMode } from '../repositories/base.repository.js';
 import type { OutboxStore } from '@classytic/primitives/outbox';
 import type { PaymentProviderPort } from '@classytic/primitives/payment-gateway';
 import {
@@ -130,6 +131,19 @@ export interface RevenueRuntime {
    * one that does not declare it.
    */
   outbox?: OutboxStore | undefined;
+  /**
+   * Who delivers an outboxed event:
+   *   'inline' (DEFAULT) — publish live after commit, then acknowledge the row.
+   *   'relay'  — publish nothing; the relay delivers the committed row. Pair with
+   *              `afterCommit` to nudge it (arc's `createRelayNudge`). Needs an outbox.
+   * Before this existed both happened: the live publish AND the relay's re-publish of a
+   * row nothing had acknowledged, so every payment subscriber ran twice. `'inline'` is
+   * that same timing with the duplicate removed, which is why it is the default and an
+   * existing outbox host needs no change. `'relay'` is always an explicit opt-in.
+   */
+  dispatch?: RevenueDispatchMode | undefined;
+  /** Called once an event's row has committed. Never awaited, never allowed to throw into the caller. */
+  afterCommit?: ((info: { events: readonly DomainEvent[]; dispatch: RevenueDispatchMode }) => void) | undefined;
   /** Payment providers, keyed by the name the engine resolves them under. Typed as the PORT. */
   providers?: Record<string, PaymentProviderPort> | undefined;
   /** Bank-feed providers (Plaid, OFX/CAMT/MT940/CSV, QBO/Xero CDC). */
@@ -282,6 +296,17 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
         );
       }
 
+      // 'relay' with no outbox would deliver nothing, ever. Refused before any model binds.
+      if (!runtime.outbox && runtime.dispatch === 'relay') {
+        throw new Error("defineRevenue: dispatch: 'relay' needs an outbox — without one no event would ever be delivered.");
+      }
+      const dispatch: RevenueDispatchMode = runtime.dispatch ?? 'inline';
+      // ONE delivery policy for every repository — a per-repository copy is how one drifts.
+      const delivery = {
+        dispatch,
+        ...(runtime.afterCommit ? { afterCommit: runtime.afterCommit } : {}),
+      };
+
       const models: RevenueModels = modelBlueprint.bind(connection);
 
       // ── Plugin stacks (from resolved scope/modules) ──────────────────
@@ -372,6 +397,7 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
       repositories.transaction.inject({
         events,
         outbox: runtime.outbox,
+        ...delivery,
         providers,
         bankFeedProviders,
         bridges: runtime.bridges ?? {},
@@ -414,6 +440,7 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
       repositories.paymentAttempt.inject({
         events,
         outbox: runtime.outbox,
+        ...delivery,
         logger: runtime.logger,
       });
 
@@ -421,6 +448,7 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
         repositories.subscription.inject({
           events,
           outbox: runtime.outbox,
+          ...delivery,
           logger: runtime.logger,
         });
       }
@@ -429,6 +457,7 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
         repositories.settlement.inject({
           events,
           outbox: runtime.outbox,
+          ...delivery,
           bridges: runtime.bridges ?? {},
           logger: runtime.logger,
         });
@@ -439,6 +468,8 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
         modules,
         defaultCurrency,
         forceRecreate,
+        dispatch,
+        hasOutbox: runtime.outbox !== undefined,
         ...(shape.collectionPrefix !== undefined ? { collectionPrefix: shape.collectionPrefix } : {}),
       };
 

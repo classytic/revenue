@@ -311,6 +311,44 @@ describe('Escrow release — the guard is in the filter', () => {
   }, TIMEOUT);
 });
 
+describe('transactionWithEvents — a retried transaction delivers only the committed attempt', () => {
+  it("an aborted attempt's event is never delivered, and afterCommit hears the commit ONCE", async () => {
+    if (!mongoAvailable) return;
+
+    const repo = engine.repositories.transaction as unknown as {
+      transactionWithEvents: <T>(
+        body: (session: unknown, emit: (e: { type: string; meta: { id: string } }) => Promise<void>) => Promise<T>,
+      ) => Promise<T>;
+      deps: { afterCommit?: (info: { events: ReadonlyArray<{ meta: { id: string } }> }) => void };
+    };
+    const originalAfterCommit = repo.deps.afterCommit;
+    const commits: string[][] = [];
+    repo.deps.afterCommit = (info) => {
+      commits.push(info.events.map((e) => e.meta.id));
+    };
+
+    let attempts = 0;
+    try {
+      await repo.transactionWithEvents(async (_session, emit) => {
+        attempts += 1;
+        await emit({ type: 'test:emitted', meta: { id: `a${attempts}-1` } } as never);
+        await emit({ type: 'test:emitted', meta: { id: `a${attempts}-2` } } as never);
+        if (attempts === 1) {
+          const transient = new MongoError('synthetic transient failure after emit');
+          transient.addErrorLabel('TransientTransactionError');
+          throw transient;
+        }
+        return null;
+      });
+    } finally {
+      repo.deps.afterCommit = originalAfterCommit;
+    }
+
+    expect(attempts).toBe(2); // the retry really happened
+    expect(commits).toEqual([['a2-1', 'a2-2']]);
+  }, TIMEOUT);
+});
+
 describe('Escrow hold — one hold per transaction', () => {
   it('a second hold does NOT wipe releases[] / releasedAmount', async () => {
     if (!mongoAvailable) return;

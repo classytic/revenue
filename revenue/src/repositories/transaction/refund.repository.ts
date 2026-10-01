@@ -6,7 +6,6 @@ import type { PaymentAttemptDocument } from '../../models/payment-attempt.schema
 import type { RevenueContext } from '../../core/context.js';
 import { executeProviderCommand } from '../../providers/execute-command.js';
 import { buildPaymentCommandContext } from '../../providers/command-context.js';
-import type { DomainEvent } from '@classytic/primitives/events';
 import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
 import {
   toPaymentRefunded,
@@ -67,7 +66,15 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
   async refund(
     transactionId: string,
     amount?: number | null,
-    options: { reason?: string; idempotencyKey?: string } = {},
+    options: {
+      reason?: string;
+      idempotencyKey?: string;
+      /**
+       * The caller's facts about THIS refund (e.g. the cash account it left from). Stored on
+       * the refund transaction and carried on `payment.refunded` as `metadata.refundMetadata`.
+       */
+      metadata?: Record<string, unknown>;
+    } = {},
     ctx: RevenueContext = {},
   ): Promise<TransactionDocument> {
     // Scope + a STABLE caller key are both required before any DB write or provider
@@ -193,6 +200,11 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
               amount: refundAmount,
               currency: transaction.currency,
               outcome: 'pending',
+              // Kept on the attempt so a RECOVERED refund finalizes with the caller's facts.
+              metadata: {
+                ...(options.reason !== undefined ? { refundReason: options.reason } : {}),
+                ...(options.metadata ? { refundMetadata: options.metadata } : {}),
+              },
             } as never,
             this.optsFromCtx(ctx, { session }) as never,
           );
@@ -366,6 +378,7 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       options.reason,
       refundAttemptId,
       ctx,
+      options.metadata,
     );
     return refundTxn;
   }
@@ -447,6 +460,7 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
     reason: string | undefined,
     refundAttemptId: Types.ObjectId,
     ctx: RevenueContext,
+    refundMetadata?: Record<string, unknown>,
   ): Promise<{ transaction: TransactionDocument; won: boolean }> {
     const attemptRepo = this.deps.paymentAttempts;
     if (!attemptRepo) throw new ConfigurationError('PaymentAttempt repository is not wired.');
@@ -456,11 +470,10 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       original.amount, refundAmount,
     ) : undefined;
 
-    const pendingEvents: DomainEvent[] = [];
     let finalizedOriginal: TransactionDocument = original;
     let refundTransaction: TransactionDocument;
     try {
-      refundTransaction = await withTransaction(this.Model.db as unknown as { startSession(): Promise<ClientSession> }, async (session) => {
+      refundTransaction = await this.transactionWithEvents(async (session, emit) => {
       const writeOpts = this.optsFromCtx(ctx, { session });
       // (1) ATOMIC attempt CAS FIRST — pending/unknown → confirmed — in the SAME txn as the
       // reservation move + refund child + outbox row. All commit together or not at all, so
@@ -508,7 +521,7 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
         sourceId: original.sourceId, sourceModel: original.sourceModel,
         verifiedAt: new Date(),
         idempotencyKey: refundKey,
-        metadata: { reason },
+        metadata: { reason, ...(refundMetadata ? { refundMetadata } : {}) },
       } as any, writeOpts);
 
       /**
@@ -532,15 +545,19 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
           refundedAmount: refundAmount,
           occurredAt: new Date(),
           reason,
+          ...(refundMetadata ? { refundMetadata } : {}),
         }),
         ctx,
         { resource: 'transaction', resourceId: (finalized as any).publicId },
       );
-      await this.saveToOutbox(event, session);
-      pendingEvents.push(event);
+      await emit(event);
       return refundTxn;
       },
-        { allowFallback: this.allowNonTransactional });
+      // Bridges see the committed refund before any subscriber does.
+      async (refundTxn) => {
+        await this.deps.bridges.ledger?.onRefundProcessed?.(finalizedOriginal as any, refundTxn as any, ctx);
+        await this.deps.bridges.notification?.onRefundProcessed?.(refundTxn as any, ctx);
+      });
     } catch (err) {
       if (err instanceof AttemptAlreadyResolvedError) {
         // A concurrent (or prior) writer resolved this exact attempt. This method's contract
@@ -573,13 +590,6 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       }
       throw err;
     }
-
-    // The attempt outcome is stamped INSIDE the transaction now (the CAS above) — no
-    // separate best-effort confirm-stamp, which was the non-atomic step being removed.
-    await this.deps.bridges.ledger?.onRefundProcessed?.(finalizedOriginal as any, refundTransaction as any, ctx);
-    await this.deps.bridges.notification?.onRefundProcessed?.(refundTransaction as any, ctx);
-
-    for (const ev of pendingEvents) await this.publishToTransport(ev);
 
     return { transaction: refundTransaction, won: true };
   }
@@ -655,9 +665,10 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
           original,
           attempt.amount,
           attempt.idempotencyKey,
-          undefined,
+          (attempt.metadata as { refundReason?: string } | undefined)?.refundReason,
           attempt._id as Types.ObjectId,
           ctxScoped,
+          (attempt.metadata as { refundMetadata?: Record<string, unknown> } | undefined)?.refundMetadata,
         );
         return won
           ? { attemptId, previousOutcome, resolved: true, resolvedOutcome: 'confirmed' }

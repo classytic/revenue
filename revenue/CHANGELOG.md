@@ -3,6 +3,63 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.13.0 — unreleased
+
+### Fixed — canonical payment events never carry `null` for an optional field
+`providerRef`, `methodCode` and `metadata.sourceModel` are read from the stored transaction, where Mongo
+holds `null`; the builders only skipped `undefined`, so the payload broke the catalog's own
+`optional()` contract. They are now omitted when null.
+
+### Fixed — a retried transaction delivered the aborted attempt's event
+
+`refund()` and escrow `split()` queued events outside the `withTransaction` body, so a
+transient-error retry delivered the first attempt's event (its outbox row rolled back) AND the
+second's: two `payment.refunded` for one refund on an inline host. Every transaction that emits
+events now goes through `transactionWithEvents` (the base repository), which starts each attempt
+with no events and delivers once after commit. `saveToOutbox` / `publishToTransport` are gone.
+`afterCommit` now fires ONCE per commit with all of its events (`deliverAll`), as the order
+kernel does per unit of work — one relay nudge, not one per event.
+
+### Fixed — an outboxed event was delivered TWICE; `runtime.dispatch` picks who delivers
+
+Every outboxed event was published live (inside the caller's request, awaited) and again by
+the relay, because nothing acknowledged the row. On a web placement that is ~32 database
+operations of payment subscribers (cash posting, invoice settlement, contracts, loyalty) run
+inside the HTTP request, then re-run by the relay.
+
+`bind` now takes the order kernel's contract:
+
+- `dispatch: 'inline'` (DEFAULT) — publish live after commit, then acknowledge the row. The
+  same timing as before, minus the duplicate, so an existing outbox host needs no change.
+- `dispatch: 'relay'` — publish nothing; the relay delivers the committed row. Pair with
+  `afterCommit` (arc's `createRelayNudge`) so delivery is prompt. Refused without an outbox.
+
+Both delivery paths (`dispatch()` and the post-commit publish after `saveToOutbox`) go through
+one `deliver()`, so they cannot disagree.
+
+### Added — `engine.config.hasOutbox`
+
+Whether the engine was bound with an outbox. A caller that wraps verbs in its own
+transaction reads it before passing `ctx.session`: without an outbox every in-session
+verb throws `UnmanagedSessionError` (409 `revenue.session.unmanaged`), by design. Nothing
+reported it, so `@spinekit/revenue` wrapped `verify` unconditionally and every
+production deployment without an outbox got a 409 on Confirm.
+
+### Added — `refund(..., { metadata })`
+
+The caller's facts about THIS refund (e.g. `{ cashDestination }` — the cash account it left
+from) are stored on the refund transaction and carried on `payment.refunded` as
+`metadata.refundMetadata`. Kept on the refund attempt too, so a RECOVERED refund
+(`reconcileAttempt`) finalizes with them — and with its reason, which recovery used to drop.
+
+### Added — `createPaymentIntent({ reference })`: the payer's reference on the canonical field
+
+A manual payment's evidence (an MFS TrxID, a bank transfer reference) now lands on
+the transaction's own `reference` field, trimmed; a blank one is not stored. Hosts
+had been carrying it in `metadata.reference` or `paymentDetails.trxId`, and each
+reader spelled it differently — the verifier saw one, the order confirmation read
+another that nothing wrote, so the TrxID never reached the order.
+
 ## 2.12.0
 
 ### Fixed — a payment webhook dispatched its event untenanted

@@ -86,7 +86,19 @@ export interface BaseRevenueRepoDeps {
    * cancels the upstream business write.
    */
   logger?: { error(...args: unknown[]): void } | undefined;
+  /**
+   * Who delivers an outbox-backed event — the engine's policy, the order kernel's contract:
+   *   'relay'  — the row is the delivery; nothing is published live.
+   *   'inline' — publish live, then acknowledge the row so the relay does not deliver it again.
+   * Absent means 'inline'.
+   */
+  dispatch?: RevenueDispatchMode | undefined;
+  /** Fired once an event's row has committed — the host nudges its relay here. Never throws into the caller. */
+  afterCommit?: ((info: { events: readonly DomainEvent[]; dispatch: RevenueDispatchMode }) => void) | undefined;
 }
+
+/** See {@link BaseRevenueRepoDeps.dispatch}. */
+export type RevenueDispatchMode = 'inline' | 'relay';
 
 /**
  * Abstract base for `TransactionRepository`, `SubscriptionRepository`,
@@ -202,13 +214,53 @@ export abstract class RevenueRepositoryBase<
         throw err;
       }
     }
-    // Relay-only mode skips the immediate publish — the host transaction
-    // may still roll back; the outbox relay delivers the committed row.
+    // Inside the host's transaction nothing is delivered — it may still roll back;
+    // the relay delivers the committed row.
     if (ctx.session) return;
+    await this.deliver(event);
+  }
+
+  /**
+   * Deliver an event whose row (if any) has COMMITTED, per `deps.dispatch`. The one
+   * delivery path — `dispatch()` and the phased post-commit publish both end here, so
+   * the two cannot deliver differently.
+   */
+  protected async deliver(event: DomainEvent): Promise<void> {
+    await this.deliverAll([event]);
+  }
+
+  /** Deliver one commit's events, then tell `afterCommit` ONCE — as the order kernel does per unit of work. */
+  protected async deliverAll(events: readonly DomainEvent[]): Promise<void> {
+    if (events.length === 0) return;
+    const mode: RevenueDispatchMode = this.deps.dispatch ?? 'inline';
+    if (!(this.deps.outbox && mode === 'relay')) {
+      for (const event of events) await this.publishLive(event);
+    }
+    this.notifyCommitted(events, mode);
+  }
+
+  private async publishLive(event: DomainEvent): Promise<void> {
     try {
       await this.deps.events.publish(event);
     } catch (err) {
+      // The row (if any) stays pending — the relay is the retry.
       this.deps.logger?.error('[revenue] events.publish failed for', event.type, err);
+      return;
+    }
+    if (!this.deps.outbox) return;
+    try {
+      await this.deps.outbox.acknowledge(event.meta.id);
+    } catch (err) {
+      this.deps.logger?.error('[revenue] outbox acknowledge failed for', event.type, event.meta.id, err);
+    }
+  }
+
+  private notifyCommitted(events: readonly DomainEvent[], mode: RevenueDispatchMode): void {
+    if (!this.deps.afterCommit) return;
+    try {
+      this.deps.afterCommit({ events, dispatch: mode });
+    } catch (err) {
+      this.deps.logger?.error('[revenue] afterCommit hook threw — ignored, the write is committed:', err);
     }
   }
 }

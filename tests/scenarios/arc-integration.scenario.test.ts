@@ -172,6 +172,7 @@ describe('Scenario: Arc integration parity', () => {
       scope: false,
       forceRecreate: true,
       outbox,
+      dispatch: 'inline',
     });
     await warmModels(engine);
 
@@ -226,6 +227,7 @@ describe('Scenario: Arc integration parity', () => {
       scope: false,
       forceRecreate: true,
       outbox,
+      dispatch: 'inline',
     });
     await warmModels(engine);
 
