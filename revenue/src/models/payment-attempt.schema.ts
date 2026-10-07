@@ -30,8 +30,13 @@ export interface PaymentAttemptDocument {
   /** Gateway string (e.g. 'stripe', 'sslcommerz', 'manual'). */
   provider: string;
   methodKind?: PaymentMethodKind;
-  /** The idempotency key SENT to the provider — caller-supplied, or derived from this attempt's `_id`. */
+  /** The caller's command key — the claim identity (unique per operation, provider and tenant). */
   idempotencyKey: string;
+  /**
+   * The key SENT to the provider. Tenant-namespaced on a scoped engine, because a provider
+   * account shared by tenants dedups on the raw key. Absent on attempts that sent `idempotencyKey`.
+   */
+  providerKey?: string;
   amount: number;
   currency: string;
   /**
@@ -63,6 +68,7 @@ export function buildPaymentAttemptSchema(config: RevenueSchemaConfig): Schema<P
     provider: { type: String, required: true },
     methodKind: { type: String },
     idempotencyKey: { type: String, required: true },
+    providerKey: { type: String },
     amount: { type: Number, required: true },
     currency: { type: String, required: true },
     outcome: { type: String, default: 'pending' },
@@ -94,17 +100,17 @@ export function buildPaymentAttemptSchema(config: RevenueSchemaConfig): Schema<P
     { operation: 1, provider: 1, idempotencyKey: 1 },
     {
       unique: true,
-      partialFilterExpression: { idempotencyKey: { $type: 'string' } },
-      name: 'attempt_command_identity',
+      partialFilterExpression: { idempotencyKey: { $gte: '' } },
+      name: 'attempt_command_identity_str',
     },
   );
   // Reconciliation worklist: find attempts that never resolved.
   schema.index({ outcome: 1, createdAt: 1 });
-  // `$type: 'string'` excludes transient-null rows so one null publicId
-  // can't block the unique index build (mirrors the other schemas).
+  // String publicIds only, so a transient null cannot block the build; `$gte: ''` (not
+  // `$type: 'string'`) so a plain lookup by publicId can use it.
   schema.index(
     { publicId: 1 },
-    { unique: true, partialFilterExpression: { publicId: { $type: 'string' } } },
+    { name: 'publicId_str', unique: true, partialFilterExpression: { publicId: { $gte: '' } } },
   );
 
   return schema;

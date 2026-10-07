@@ -31,6 +31,15 @@ function nextRequestId(): string {
   return `rq_${Date.now().toString(36)}_${counter.toString(36)}`;
 }
 
+/**
+ * The idempotency key to SEND a provider for a caller's command key. Tenant-namespaced on a
+ * scoped engine: tenants may share one provider account, which dedups on the raw key and would
+ * hand one tenant's intent or refund to another.
+ */
+export function providerKeyFor(key: string, organizationId: string | undefined, tenantScoped: boolean): string {
+  return tenantScoped && organizationId ? `${organizationId}:${key}` : key;
+}
+
 export function buildPaymentCommandContext(input: {
   operation: string;
   subjectId: string;

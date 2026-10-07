@@ -5,12 +5,12 @@ import type { TransactionDocument } from '../../models/transaction.schema.js';
 import type { PaymentAttemptDocument } from '../../models/payment-attempt.schema.js';
 import type { RevenueContext } from '../../core/context.js';
 import { executeProviderCommand } from '../../providers/execute-command.js';
-import { buildPaymentCommandContext } from '../../providers/command-context.js';
+import { buildPaymentCommandContext, providerKeyFor } from '../../providers/command-context.js';
 import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
 import {
   toPaymentRefunded,
   toPaymentUnknown,
-  type CanonicalSourceTransaction,
+  canonicalSourceOf,
 } from '../../events/canonical-payment-events.js';
 import { createEvent } from '../../events/helpers.js';
 import { TRANSACTION_STATUS } from '../../enums/transaction.enums.js';
@@ -147,6 +147,11 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
     // reservation `$inc` is atomic per-document; the `$expr` cap makes it race-safe.
     const refundAttemptId = new Types.ObjectId();
     const refundKey = options.idempotencyKey;
+    const refundProviderKey = providerKeyFor(
+      refundKey,
+      transaction.organizationId ? String(transaction.organizationId) : undefined,
+      this.deps.tenantScopeEnabled === true,
+    );
     const REFUNDABLE_STATUSES = [
       TRANSACTION_STATUS.VERIFIED,
       TRANSACTION_STATUS.COMPLETED,
@@ -197,6 +202,7 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
               provider: transaction.method,
               methodKind: transaction.methodKind,
               idempotencyKey: refundKey,
+              providerKey: refundProviderKey,
               amount: refundAmount,
               currency: transaction.currency,
               outcome: 'pending',
@@ -255,7 +261,7 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       subjectId: String(transaction._id),
       ...(transaction.organizationId ? { organizationId: transaction.organizationId } : {}),
       merchantReference: String(transaction._id),
-      idempotencyKey: refundKey,
+      idempotencyKey: refundProviderKey,
     });
     const outcome = await executeProviderCommand(
       () =>
@@ -330,7 +336,7 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
         createEvent(
           PAYMENT_EVENT_TYPE.UNKNOWN,
           toPaymentUnknown({
-            txn: transaction as unknown as CanonicalSourceTransaction,
+            txn: canonicalSourceOf(transaction),
             operation: 'refund',
             causeCode: outcome.causeCode ?? 'unclassified',
             occurredAt: new Date(),
@@ -540,8 +546,8 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       const event = createEvent(
         PAYMENT_EVENT_TYPE.REFUNDED,
         toPaymentRefunded({
-          original: finalized as unknown as CanonicalSourceTransaction,
-          refund: refundTxn as unknown as CanonicalSourceTransaction,
+          original: canonicalSourceOf(finalized),
+          refund: canonicalSourceOf(refundTxn),
           refundedAmount: refundAmount,
           occurredAt: new Date(),
           reason,
@@ -650,7 +656,8 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       const status = await executeProviderCommand(() =>
         provider.getRefundStatus!({
           paymentId,
-          idempotencyKey: attempt.idempotencyKey,
+          // The key the provider was SENT; an attempt with no `providerKey` sent the raw key.
+          idempotencyKey: attempt.providerKey ?? attempt.idempotencyKey,
           ...(attempt.providerReference ? { refundRef: attempt.providerReference } : {}),
         }),
       );

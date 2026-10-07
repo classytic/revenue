@@ -59,6 +59,7 @@ import {
 } from '@classytic/primitives/payment-events';
 import type { PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
 import type { ProviderUnknownCause } from '@classytic/primitives/payment-gateway';
+import type { TransactionDocument } from '../models/transaction.schema.js';
 
 /**
  * The transaction fields a canonical payload is built from.
@@ -79,6 +80,33 @@ export interface CanonicalSourceTransaction {
   providerRef?: string | undefined;
   sourceModel?: string | undefined;
   sourceId?: unknown;
+}
+
+/** The stored transaction fields a canonical payload is read from. */
+export type StoredPaymentTransaction = Pick<
+  TransactionDocument,
+  '_id' | 'publicId' | 'amount' | 'currency' | 'method' | 'methodKind' | 'gateway' | 'sourceModel' | 'sourceId'
+>;
+
+/**
+ * A stored transaction as the canonical source, field by field. The row keeps the provider at
+ * `gateway.type` and the host's method code at `method` — neither is named like the canonical field,
+ * so a cast read both as absent and every payment event said `providerCode: 'unknown'`.
+ */
+export function canonicalSourceOf(txn: StoredPaymentTransaction): CanonicalSourceTransaction {
+  const providerRef = txn.gateway?.paymentIntentId ?? txn.gateway?.chargeId;
+  return {
+    publicId: txn.publicId,
+    _id: txn._id,
+    amount: txn.amount,
+    currency: txn.currency,
+    methodKind: txn.methodKind,
+    methodCode: txn.method,
+    ...(txn.gateway?.type ? { providerCode: txn.gateway.type } : {}),
+    ...(providerRef ? { providerRef } : {}),
+    sourceModel: txn.sourceModel,
+    sourceId: txn.sourceId,
+  };
 }
 
 /**
@@ -210,6 +238,8 @@ export function toPaymentRefunded(input: {
     refundId: paymentIdOf(refund),
     providerCode: providerCodeOf(original),
     ...(original.providerRef != null ? { providerRef: original.providerRef } : {}),
+    methodKind: original.methodKind,
+    ...(original.methodCode != null ? { methodCode: original.methodCode } : {}),
     refundedAmount: moneyOf(refundedAmount, original.currency),
     originalAmount: moneyOf(original.amount, original.currency),
     isPartial: refundedAmount < original.amount,
@@ -242,6 +272,8 @@ export function toPaymentReversed(input: {
     paymentId: paymentIdOf(original),
     providerCode: providerCodeOf(original),
     ...(original.providerRef != null ? { providerRef: original.providerRef } : {}),
+    methodKind: original.methodKind,
+    ...(original.methodCode != null ? { methodCode: original.methodCode } : {}),
     reversedAmount: moneyOf(reversedAmount, original.currency),
     originalAmount: moneyOf(original.amount, original.currency),
     isPartial: reversedAmount < original.amount,

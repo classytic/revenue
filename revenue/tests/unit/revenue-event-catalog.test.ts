@@ -110,12 +110,45 @@ describe('Zod schemas — happy paths', () => {
       paymentId: 'txn_1',
       refundId: 'txn_refund_1',
       providerCode: 'stripe',
+      methodKind: 'card',
       refundedAmount: { amount: 500, currency: 'BDT' },
       originalAmount: { amount: 1000, currency: 'BDT' },
       isPartial: true,
       occurredAt: new Date().toISOString(),
     });
     expect(r.success).toBe(true);
+  });
+
+  it('PaymentRefunded REJECTS a method that is not a payment-method kind', () => {
+    // A host code (`bkash`) in the kind field would pass a string check and misplace every refund.
+    const r = PaymentRefunded.zodSchema.safeParse({
+      eventType: 'payment.refunded',
+      paymentId: 'txn_1',
+      refundId: 'txn_refund_1',
+      providerCode: 'manual',
+      methodKind: 'bkash',
+      refundedAmount: { amount: 500, currency: 'BDT' },
+      originalAmount: { amount: 1000, currency: 'BDT' },
+      isPartial: true,
+      occurredAt: new Date().toISOString(),
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('PaymentRefunded REJECTS a refund that does not say how the money moved', () => {
+    // A drawer, a cash account and a gateway each place a refund by its method; without it every
+    // consumer guesses, and a guess at a drawer is a variance nobody can explain.
+    const r = PaymentRefunded.zodSchema.safeParse({
+      eventType: 'payment.refunded',
+      paymentId: 'txn_1',
+      refundId: 'txn_refund_1',
+      providerCode: 'stripe',
+      refundedAmount: { amount: 500, currency: 'BDT' },
+      originalAmount: { amount: 1000, currency: 'BDT' },
+      isPartial: true,
+      occurredAt: new Date().toISOString(),
+    });
+    expect(r.success).toBe(false);
   });
 
   it('PaymentRefunded REJECTS a bare numeric refundAmount', () => {

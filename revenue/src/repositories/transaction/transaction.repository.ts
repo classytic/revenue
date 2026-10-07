@@ -4,7 +4,7 @@ import { Types } from 'mongoose';
 import type { TransactionDocument } from '../../models/transaction.schema.js';
 import type { RevenueContext } from '../../core/context.js';
 import { executeProviderCommand } from '../../providers/execute-command.js';
-import { buildPaymentCommandContext } from '../../providers/command-context.js';
+import { buildPaymentCommandContext, providerKeyFor } from '../../providers/command-context.js';
 import { currencyCode } from '@classytic/primitives/currency';
 import type { PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
 import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
@@ -12,7 +12,7 @@ import {
   toPaymentFailed,
   toPaymentReversed,
   toPaymentSucceeded,
-  type CanonicalSourceTransaction,
+  canonicalSourceOf,
 } from '../../events/canonical-payment-events.js';
 import { createEvent } from '../../events/helpers.js';
 import { REVENUE_EVENTS } from '../../events/event-constants.js';
@@ -223,6 +223,7 @@ export class TransactionRepository extends TransactionRefundRepository {
       }
       const intentKey = params.idempotencyKey;
       effectiveIdempotencyKey = intentKey;
+      let providerKey = providerKeyFor(intentKey, ctx.organizationId, this.deps.tenantScopeEnabled === true);
       createAttemptId = new Types.ObjectId();
       try {
         await attemptRepo.create(
@@ -232,6 +233,7 @@ export class TransactionRepository extends TransactionRefundRepository {
             provider: params.gateway,
             methodKind: params.methodKind,
             idempotencyKey: intentKey,
+            providerKey,
             amount: params.amount,
             currency,
             outcome: 'pending',
@@ -248,7 +250,7 @@ export class TransactionRepository extends TransactionRefundRepository {
             idempotencyKey: intentKey,
           },
           this.optsFromCtx(ctx, { throwOnNotFound: false }),
-        )) as { _id?: unknown; transactionId?: unknown } | null;
+        )) as { _id?: unknown; transactionId?: unknown; providerKey?: string } | null;
         if (claimedBy?.transactionId) {
           // Already produced a transaction → replay it (idempotent).
           const txn = await this.getById(
@@ -265,6 +267,8 @@ export class TransactionRepository extends TransactionRefundRepository {
         // → replay), so two racing re-drives converge on ONE transaction.
         if (claimedBy?._id) {
           createAttemptId = claimedBy._id as Types.ObjectId;
+          // Re-send EXACTLY what the first attempt sent; an attempt with no `providerKey` sent the raw key.
+          providerKey = claimedBy.providerKey ?? intentKey;
         }
       }
 
@@ -272,7 +276,7 @@ export class TransactionRepository extends TransactionRefundRepository {
         operation: 'create-intent',
         subjectId: intentKey,
         ...(ctx.organizationId ? { organizationId: ctx.organizationId } : {}),
-        idempotencyKey: intentKey,
+        idempotencyKey: providerKey,
       });
       const intentOutcome = await executeProviderCommand(
         () =>
@@ -536,7 +540,7 @@ export class TransactionRepository extends TransactionRefundRepository {
       await this.dispatch(
         createEvent(
           PAYMENT_EVENT_TYPE.SUCCEEDED,
-          toPaymentSucceeded(updated as unknown as CanonicalSourceTransaction, occurredAt),
+          toPaymentSucceeded(canonicalSourceOf(updated), occurredAt),
           ctx,
           { resource: 'transaction', resourceId: (updated as any)?.publicId },
         ),
@@ -547,7 +551,7 @@ export class TransactionRepository extends TransactionRefundRepository {
         createEvent(
           PAYMENT_EVENT_TYPE.FAILED,
           toPaymentFailed(
-            updated as unknown as CanonicalSourceTransaction,
+            canonicalSourceOf(updated),
             // NORMALISED, never a raw vendor error — this value is persisted and
             // displayed, and vendor errors embed request URLs and tokens.
             (paymentResult as { message?: string } | undefined)?.message ?? 'payment failed',
@@ -620,9 +624,9 @@ export class TransactionRepository extends TransactionRefundRepository {
         // obligation remains unsettled. Who declined it is provenance, so it
         // travels in metadata rather than changing the event's meaning.
         {
-          ...toPaymentFailed(updated as unknown as CanonicalSourceTransaction, data.reason, new Date()),
+          ...toPaymentFailed(canonicalSourceOf(updated), data.reason, new Date()),
           metadata: {
-            ...toPaymentFailed(updated as unknown as CanonicalSourceTransaction, data.reason, new Date()).metadata,
+            ...toPaymentFailed(canonicalSourceOf(updated), data.reason, new Date()).metadata,
             ...(data.failedBy !== undefined ? { failedBy: data.failedBy } : {}),
           },
         },
@@ -699,7 +703,7 @@ export class TransactionRepository extends TransactionRefundRepository {
         createEvent(
           PAYMENT_EVENT_TYPE.REVERSED,
           toPaymentReversed({
-            original: transaction as unknown as CanonicalSourceTransaction,
+            original: canonicalSourceOf(transaction),
             // A void unwinds the WHOLE settlement — a partial unwind is a
             // refund, which has its own verb and its own consumer behaviour.
             reversedAmount: transaction.amount,

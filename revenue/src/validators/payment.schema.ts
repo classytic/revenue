@@ -1,18 +1,13 @@
 import { z } from 'zod';
-import { PAYMENT_METHOD_KIND, type PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
+import { PAYMENT_METHOD_KIND } from '@classytic/primitives/payment-method-kind';
 import { minorAmount, moneyFields } from '@classytic/validation/money';
 // The monetization wire enum is the shared seam — same values catalog + primitives use.
 import { revenueMonetizationTypeSchema } from '@classytic/validation/monetization';
 
-const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
-  PaymentMethodKind,
-  ...PaymentMethodKind[],
-];
-
 export const paymentIntentSchema = z.object({
   ...moneyFields('positive'),
   gateway: z.string(),
-  methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES),
+  methodKind: z.enum(PAYMENT_METHOD_KIND),
   customerId: z.string().optional(),
   sourceId: z.string().optional(),
   sourceModel: z.string().optional(),

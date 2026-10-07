@@ -56,8 +56,12 @@ describe('host extraIndexes', () => {
   it("the kernel's own global indexes are still unscoped beside a host's", () => {
     const engine = defineRevenue({ scope: { fieldType: 'objectId' } }).bind(mongoose.createConnection(), RUNTIME);
     const txn = engine.models.Transaction.schema.indexes() as IndexEntry[];
-    const idempotency = txn.find(([fields]) => Object.keys(fields).join(',') === 'idempotencyKey');
-    expect(idempotency).toBeDefined();
+    const keysOf = (fields: Record<string, unknown>) => Object.keys(fields).join(',');
+    expect(txn.find(([fields]) => keysOf(fields) === 'publicId')).toBeDefined();
+    expect(txn.find(([fields]) => keysOf(fields) === 'gateway.paymentIntentId')).toBeDefined();
+    // A caller's idempotency key is the TENANT's — never unique across tenants.
+    expect(txn.find(([fields]) => keysOf(fields) === 'idempotencyKey')).toBeUndefined();
+    expect(txn.find(([fields]) => keysOf(fields) === 'organizationId,idempotencyKey')).toBeDefined();
   });
 
   it('refuses an unnamed global declaration at describe time, before any bind', () => {

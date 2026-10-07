@@ -1,3 +1,4 @@
+import { PAYMENT_METHOD_KIND } from '@classytic/primitives/payment-method-kind';
 export const SPLIT_TYPE = {
   PLATFORM_COMMISSION: 'platform_commission',
   AFFILIATE_COMMISSION: 'affiliate_commission',
@@ -22,13 +23,15 @@ export type SplitStatus = typeof SPLIT_STATUS;
 export type SplitStatusValue = SplitStatus[keyof SplitStatus];
 export const SPLIT_STATUS_VALUES = Object.values(SPLIT_STATUS) as SplitStatusValue[];
 
+/** How a payout leaves: a `PaymentMethodKind`, or credit to the recipient's platform balance. */
 export const PAYOUT_METHOD = {
-  BANK_TRANSFER: 'bank_transfer',
-  MOBILE_WALLET: 'mobile_wallet',
+  BANK_TRANSFER: PAYMENT_METHOD_KIND.BANK_TRANSFER,
+  MOBILE_MONEY: PAYMENT_METHOD_KIND.MOBILE_MONEY,
+  WALLET: PAYMENT_METHOD_KIND.WALLET,
+  CHEQUE: PAYMENT_METHOD_KIND.CHEQUE,
+  CRYPTOCURRENCY: PAYMENT_METHOD_KIND.CRYPTO,
+  MANUAL: PAYMENT_METHOD_KIND.MANUAL,
   PLATFORM_BALANCE: 'platform_balance',
-  CRYPTO: 'crypto',
-  CHECK: 'check',
-  MANUAL: 'manual',
 } as const;
 
 export type PayoutMethod = typeof PAYOUT_METHOD;

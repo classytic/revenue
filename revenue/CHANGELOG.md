@@ -5,6 +5,52 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 2.13.0 — unreleased
 
+### Breaking — `PAYOUT_METHOD` spells payment kinds the standard way
+Values are `PaymentMethodKind`s plus `platform_balance`: `mobile_wallet` → `mobile_money`, `crypto` →
+`cryptocurrency`, `check` → `cheque`; `wallet` added. The settlement validator uses `PAYOUT_METHOD_VALUES`.
+
+### Added — a list index, so a first page reads 20 rows instead of sorting all of them
+
+The transaction list (default sort `-createdAt`, keyset on `_id`) had no index in that order: every first
+page fetched every scoped document and sorted it in memory (measured on a live database). Added
+`{ createdAt: -1, _id: -1 }` (tenant field prepended when scoped); unscoped it was a collection scan. Built by `db:ensure-indexes`; no drop.
+
+### Fixed — `getRunningBalance` sums in the database, and refuses mixed currencies
+
+It loaded the account's ENTIRE bank-feed history into memory and summed it in JS, so its cost grew
+with every imported line. It is now one tenant-scoped `$group` over the `bank_feed_by_account_str`
+index. It also took the first row's currency and added every other currency onto it — a
+plausible-looking wrong balance; an account holding rows in two currencies now throws
+`ValidationError`. Pinned in `tests/scenarios/bank-feed-lifecycle.scenario.test.ts`.
+
+### ⚠ Changed — payment string keys use `{ $gte: '' }`, so lookups by key use the index
+
+`{ $type: 'string' }` is never implied by an equality query, so every lookup by transaction
+`idempotencyKey`/`publicId` and attempt identity/`publicId` was a collection scan. Renamed
+`idempotencyKey_str` (unscoped engines), `publicId_str` (transaction, attempt) and
+`attempt_command_identity_str`, subscription and settlement `publicId_str`,
+`bank_feed_by_account_str`, `bank_feed_idempotent_import_str`; `transaction_idempotency_identity` (new in this release) is born
+`$gte`. **Deploy:** build, then be-prod's `db:retire-type-string-indexes -- --apply`.
+
+### Fixed — a caller's idempotency key is the TENANT's on a field-scoped engine (⚠ index change)
+
+Two tenants using the same key collided. The transaction `idempotencyKey` index was unique
+GLOBALLY, so the second tenant's payment failed on insert, its tenant-scoped replay could not
+load the first tenant's row, and every retry called the provider again. And the provider was
+sent the raw key, so on a shared provider account it handed back the FIRST tenant's intent
+(revenue-manual even derives its intent id from the key).
+
+- Field-scoped engines: unique `{ <tenantField>, idempotencyKey }`, named
+  `transaction_idempotency_identity`. Unscoped engines keep the old global index unchanged.
+- The provider is sent `<organizationId>:<key>` on a scoped engine (`providerKeyFor`), for
+  create-intent and refund. `PaymentAttempt.providerKey` records what was sent; re-drive and
+  refund reconciliation re-send exactly that, and an attempt without one sent the raw key, so an
+  in-flight payment keeps its provider operation across the upgrade.
+
+**Deploy step (multi-tenant hosts only):** drop the old `idempotencyKey_1` index on the
+transactions collection after the new index has built. Until it is dropped, the global
+uniqueness still applies. Pinned by `tests/scenarios/tenant-key-identity.scenario.test.ts`.
+
 ### Fixed — canonical payment events never carry `null` for an optional field
 `providerRef`, `methodCode` and `metadata.sourceModel` are read from the stored transaction, where Mongo
 holds `null`; the builders only skipped `undefined`, so the payload broke the catalog's own

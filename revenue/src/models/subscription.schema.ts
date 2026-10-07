@@ -79,15 +79,16 @@ export function buildSubscriptionSchema(config: RevenueSchemaConfig): Schema<Sub
   // Indexes — tenant field auto-prepended by injectTenantField when scoped
   schema.index({ customerId: 1, status: 1 });
   schema.index({ status: 1, endDate: 1 });
-  // `$type: 'string'` excludes both deleted rows AND transient `null` rows
+  // String publicIds only (`$gte: ''` — like `$type: 'string'`, but usable by a lookup): excludes transient `null` rows
   // (customIdPlugin pre-save race or legacy direct collection writes).
   // Without it, a single `{ publicId: null }` row blocks the unique index
   // build with E11000 in production.
   schema.index(
     { publicId: 1 },
     {
+      name: 'publicId_str',
       unique: true,
-      partialFilterExpression: { publicId: { $type: 'string' } },
+      partialFilterExpression: { publicId: { $gte: '' } },
     },
   );
 

@@ -1010,13 +1010,13 @@ export abstract class TransactionBankFeedRepository extends TransactionRepositor
   }
 
   /**
-   * Running balance for a bank account as of `asOf` (defaults to now).
+   * Running balance for a bank account as of `asOf` (defaults to now): inflows minus outflows over
+   * `kind: 'bank_feed'`, terminal states only.
    *
-   * Uses mongokit's tenant-scoped read via `findAll` — inflows minus
-   * outflows over `kind: 'bank_feed'`, terminal states only. For audit
-   * pages where exact-to-the-cent reconciliation is required, prefer
-   * the most recent row's `balanceAfter` (banks ship that field on
-   * every entry).
+   * Summed IN the database (tenant-scoped `aggregatePipeline`, served by `bank_feed_by_account_str`)
+   * — it used to load the account's whole history. Grouped by currency: a balance across two
+   * currencies has no meaning, so one is refused rather than added up. For exact-to-the-cent
+   * reconciliation prefer the latest row's `balanceAfter` (banks ship it on every entry).
    */
   async getRunningBalance(
     bankAccountId: string,
@@ -1029,15 +1029,27 @@ export abstract class TransactionBankFeedRepository extends TransactionRepositor
       postedDate: { $lte: asOf },
       status: { $in: [TRANSACTION_STATUS.IMPORTED, TRANSACTION_STATUS.MATCHED, TRANSACTION_STATUS.JOURNALIZED] },
     };
-    const rows = (await this.findAll(filter, this.optsFromCtx(ctx))) as unknown as TransactionDocument[];
-
-    let balance = 0;
-    let currency: string | null = null;
-    for (const row of rows) {
-      if (currency === null) currency = row.currency;
-      balance += row.flow === 'inflow' ? row.amount : -row.amount;
+    const groups = await this.aggregatePipeline<{ _id: string | null; balance: number; rowCount: number }>(
+      [
+        { $match: filter },
+        {
+          $group: {
+            _id: '$currency',
+            balance: { $sum: { $cond: [{ $eq: ['$flow', 'inflow'] }, '$amount', { $multiply: ['$amount', -1] }] } },
+            rowCount: { $sum: 1 },
+          },
+        },
+      ],
+      this.optsFromCtx(ctx),
+    );
+    if (groups.length > 1) {
+      throw new ValidationError(
+        `Bank account ${bankAccountId} holds rows in ${groups.length} currencies (${groups.map((g) => g._id).join(', ')}) — a running balance across currencies has no meaning`,
+        { bankAccountId, currencies: groups.map((g) => g._id) },
+      );
     }
-    return { balance, currency, rowCount: rows.length, asOf };
+    const only = groups[0];
+    return { balance: only?.balance ?? 0, currency: only?._id ?? null, rowCount: only?.rowCount ?? 0, asOf };
   }
 }
 

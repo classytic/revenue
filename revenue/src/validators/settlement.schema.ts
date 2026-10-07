@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PAYOUT_METHOD_VALUES } from '../enums/split.enums.js';
 import { moneyFields } from '@classytic/validation/money';
 
 export const settlementBaseSchema = z.object({
@@ -8,7 +9,7 @@ export const settlementBaseSchema = z.object({
   recipientType: z.enum(['platform', 'organization', 'user', 'affiliate', 'partner']),
   type: z.enum(['split_payout', 'platform_withdrawal', 'manual_payout', 'escrow_release']),
   status: z.string().default('pending'),
-  payoutMethod: z.enum(['bank_transfer', 'mobile_wallet', 'platform_balance', 'crypto', 'check', 'manual']),
+  payoutMethod: z.enum(PAYOUT_METHOD_VALUES),
   ...moneyFields('nonneg'),
   sourceTransactionIds: z.array(z.string()).default([]),
   sourceSplitIds: z.array(z.string()).default([]),

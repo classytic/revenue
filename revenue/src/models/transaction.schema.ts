@@ -3,7 +3,7 @@ import type { ApprovalChain } from '@classytic/primitives/approval';
 import { PAYMENT_METHOD_KIND, type PaymentMethodKind } from '@classytic/primitives/payment-method-kind';
 import { TRANSACTION_KIND, type TransactionKindValue, TRANSACTION_KIND_VALUES } from '../enums/bank-feed.enums.js';
 
-const PAYMENT_METHOD_KIND_ENUM = Object.values(PAYMENT_METHOD_KIND) as PaymentMethodKind[];
+const PAYMENT_METHOD_KIND_ENUM = Object.values(PAYMENT_METHOD_KIND);
 
 /**
  * The Transaction document carries an optional `approvals` value object
@@ -396,6 +396,9 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
 
   // Status + recency — admin dashboards, "show me everything pending"
   schema.index({ status: 1, createdAt: -1 });
+  // The list read: newest first, keyset-paged on `_id` (mongokit's default sort). Without it a
+  // first page fetched every scoped document and sorted them in memory. Tenant field prepended when scoped.
+  schema.index({ createdAt: -1, _id: -1 });
   // Customer transaction history
   schema.index({ customerId: 1, createdAt: -1 });
   // Polymorphic source lookup — "find the txn for order X"
@@ -422,8 +425,8 @@ export function buildTransactionSchema(config: RevenueSchemaConfig): Schema<Tran
     schema.index(
       { bankAccountId: 1, postedDate: -1 },
       {
-        partialFilterExpression: { bankAccountId: { $type: 'string' } },
-        name: 'bank_feed_by_account',
+        partialFilterExpression: { bankAccountId: { $gte: '' } },
+        name: 'bank_feed_by_account_str',
       },
     );
   }

@@ -12,7 +12,9 @@
  */
 import { PAYMENT_EVENT_TYPE, isFundsReceived, type PaymentEventPayload } from '@classytic/primitives/payment-events';
 import { describe, expect, it } from 'vitest';
+import mongoose from 'mongoose';
 import {
+  canonicalSourceOf,
   paymentIdOf,
   toPaymentFailed,
   toPaymentReconciled,
@@ -208,5 +210,38 @@ describe('identity', () => {
     // `providerCode` is required by the contract; `'unknown'` is greppable in a
     // way an absent key is not.
     expect(toPaymentSucceeded(txn({ providerCode: undefined }), AT).providerCode).toBe('unknown');
+  });
+});
+
+describe('canonicalSourceOf — events are built from the STORED row, not from a canonical-shaped fixture', () => {
+  // The shape a manual cash payment is persisted in. No field is named like its canonical counterpart.
+  const stored = {
+    _id: new mongoose.Types.ObjectId(),
+    publicId: 'txn_cash_1',
+    amount: 100_000,
+    currency: 'BDT',
+    method: 'cash',
+    methodKind: 'cash' as const,
+    gateway: { type: 'cash', paymentIntentId: 'manual_e1f2' },
+    sourceModel: 'Order',
+    sourceId: 'order-9',
+  };
+
+  it('reads the provider from gateway.type and the method code from method', () => {
+    const source = canonicalSourceOf(stored);
+    expect(source.providerCode).toBe('cash');
+    expect(source.providerRef).toBe('manual_e1f2');
+    expect(source.methodCode).toBe('cash');
+    expect(toPaymentSucceeded(source, AT).providerCode).toBe('cash');
+  });
+
+  it('a refund and a reversal say how the money moved, so a consumer can place it without guessing', () => {
+    const original = canonicalSourceOf(stored);
+    const refund = canonicalSourceOf({ ...stored, _id: new mongoose.Types.ObjectId(), publicId: 'txn_ref_1', amount: 100 });
+    const refunded = toPaymentRefunded({ original, refund, refundedAmount: 100, occurredAt: AT });
+    expect(refunded.methodKind).toBe('cash');
+    expect(refunded.methodCode).toBe('cash');
+    const reversed = toPaymentReversed({ original, reversedAmount: 100_000, reason: 'void', occurredAt: AT });
+    expect(reversed.methodKind).toBe('cash');
   });
 });

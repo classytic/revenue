@@ -556,4 +556,27 @@ describe('Bank-feed lifecycle — Revenue 3.0', () => {
     expect(result.currency).toBe('USD');
     expect(result.rowCount).toBe(3);
   }, TIMEOUT);
+
+  it('getRunningBalance refuses an account holding two currencies — never adds them up', async () => {
+    await engine.repositories.transaction.import(
+      [
+        row({ externalId: 'U1', amount: { amount: 100000, currency: currencyCode('USD') }, postedDate: new Date('2026-05-01') }),
+        row({ externalId: 'E1', amount: { amount: 70000, currency: currencyCode('EUR') }, postedDate: new Date('2026-05-02') }),
+      ],
+      { bankAccountId: 'acct_mixed', source: BANK_FEED_SOURCE.OFX, methodKind: 'bank_transfer' },
+      ctx,
+    );
+    await expect(
+      engine.repositories.transaction.getRunningBalance('acct_mixed', new Date('2026-05-05'), ctx),
+    ).rejects.toThrow(/2 currencies/);
+  }, TIMEOUT);
+
+  it('getRunningBalance is summed by an index-served read, not a scan of the account history', async () => {
+    const plan = (await engine.models.Transaction.collection
+      .find({ kind: 'bank_feed', bankAccountId: 'acct_main', postedDate: { $lte: new Date() } })
+      .explain('queryPlanner')) as { queryPlanner: { winningPlan: unknown } };
+    const text = JSON.stringify(plan.queryPlanner.winningPlan);
+    expect(text).not.toContain('COLLSCAN');
+    expect(text).toContain('bank_feed_by_account');
+  }, TIMEOUT);
 });

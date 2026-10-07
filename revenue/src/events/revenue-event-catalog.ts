@@ -38,16 +38,8 @@ import { CURRENCY_PATTERN } from '@classytic/primitives/currency';
 import { z } from 'zod';
 import type { DomainEvent } from '@classytic/primitives/events';
 import { createEvent as createPrimitiveEvent } from '@classytic/primitives/events';
-import {
-  PAYMENT_METHOD_KIND,
-  type PaymentMethodKind,
-} from '@classytic/primitives/payment-method-kind';
+import { PAYMENT_METHOD_KIND } from '@classytic/primitives/payment-method-kind';
 import { REVENUE_EVENTS } from './event-constants.js';
-
-const PAYMENT_METHOD_KIND_VALUES = Object.values(PAYMENT_METHOD_KIND) as [
-  PaymentMethodKind,
-  ...PaymentMethodKind[],
-];
 
 // ─── Definition shape (structurally compatible with Arc EventRegistry) ────
 
@@ -133,7 +125,7 @@ const transactionRef = z.object({
   status: z.string().optional(),
   monetizationType: z.string().optional(),
   amount: z.union([z.number(), money]).optional(),
-  methodKind: z.enum(PAYMENT_METHOD_KIND_VALUES).optional(),
+  methodKind: z.enum(PAYMENT_METHOD_KIND).optional(),
 }).passthrough();
 
 const subscriptionRef = z.object({
@@ -512,7 +504,7 @@ const paymentSucceededCanonicalSchema = z.object({
   providerRef: z.string().optional(),
   providerCode: z.string(),
   amount: canonicalMoney,
-  methodKind: z.string(),
+  methodKind: z.enum(PAYMENT_METHOD_KIND),
   methodCode: z.string().optional(),
   occurredAt: canonicalInstant,
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -530,6 +522,8 @@ const paymentRefundedCanonicalSchema = z.object({
   refundId: z.string(),
   providerRef: z.string().optional(),
   providerCode: z.string(),
+  methodKind: z.enum(PAYMENT_METHOD_KIND),
+  methodCode: z.string().optional(),
   refundedAmount: canonicalMoney,
   originalAmount: canonicalMoney,
   isPartial: z.boolean(),
@@ -552,6 +546,8 @@ const paymentReversedCanonicalSchema = z.object({
   paymentId: z.string(),
   providerRef: z.string().optional(),
   providerCode: z.string(),
+  methodKind: z.enum(PAYMENT_METHOD_KIND),
+  methodCode: z.string().optional(),
   reversedAmount: canonicalMoney,
   originalAmount: canonicalMoney,
   isPartial: z.boolean(),

@@ -158,19 +158,33 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
       const txnSchema = buildTransactionSchema(txnConfig);
       injectTenantField(txnSchema, scope, { indexes: schemaOptions.transaction?.extraIndexes });
 
-      // Global indexes — applied AFTER injection so they stay unscoped.
+      // Global indexes — applied AFTER injection so they stay unscoped. A string-key partial filter
+      // is `$gte: ''`: the same rows as `$type: 'string'`, but usable by a plain equality lookup.
       // Webhooks and external systems look up by these without knowing the tenant.
       txnSchema.index({ 'gateway.sessionId': 1 }, { sparse: true });
       txnSchema.index({ 'gateway.paymentIntentId': 1 }, { sparse: true });
-      txnSchema.index(
-        { idempotencyKey: 1 },
-        { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },
-      );
+      // A caller's key is unique PER TENANT on a field-scoped engine: global uniqueness made a
+      // second tenant's key collide with the first's, and its scoped replay could never load it.
+      if (scope.enabled && scope.strategy === 'field') {
+        txnSchema.index(
+          { [scope.tenantField]: 1, idempotencyKey: 1 } as Record<string, 1>,
+          {
+            unique: true,
+            partialFilterExpression: { idempotencyKey: { $gte: '' } },
+            name: 'transaction_idempotency_identity',
+          },
+        );
+      } else {
+        txnSchema.index(
+          { idempotencyKey: 1 },
+          { name: 'idempotencyKey_str', unique: true, partialFilterExpression: { idempotencyKey: { $gte: '' } } },
+        );
+      }
       txnSchema.index(
         { publicId: 1 },
         // No `deletedAt: null` clause (2026-08-14, soft delete removed) — an unmaintained
         // clause there is an escape hatch from uniqueness that re-mints public ids.
-        { unique: true, partialFilterExpression: { publicId: { $type: 'string' } } },
+        { name: 'publicId_str', unique: true, partialFilterExpression: { publicId: { $gte: '' } } },
       );
 
       // 3.0: idempotent bank-feed re-import — gated by `bankFeedIndexes.idempotentImport`.
@@ -186,8 +200,8 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
             } as Record<string, 1>,
             {
               unique: true,
-              partialFilterExpression: { externalId: { $type: 'string' } },
-              name: 'bank_feed_idempotent_import',
+              partialFilterExpression: { externalId: { $gte: '' } },
+              name: 'bank_feed_idempotent_import_str',
             },
           );
         } else {
@@ -195,8 +209,8 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
             { bankAccountId: 1, externalId: 1 },
             {
               unique: true,
-              partialFilterExpression: { externalId: { $type: 'string' } },
-              name: 'bank_feed_idempotent_import',
+              partialFilterExpression: { externalId: { $gte: '' } },
+              name: 'bank_feed_idempotent_import_str',
             },
           );
         }
