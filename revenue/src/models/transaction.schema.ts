@@ -169,6 +169,8 @@ export interface TransactionDocument {
       releasedBy?: string;
       reason?: string;
       metadata?: Record<string, unknown>;
+      /** The client's key for this release — see `release({ releaseKey })`. */
+      releaseKey?: string;
     }>;
     metadata?: Record<string, unknown>;
   };

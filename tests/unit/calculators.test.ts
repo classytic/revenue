@@ -207,8 +207,8 @@ describe('validateTaxCalculation', () => {
     expect(validateTaxCalculation({ isApplicable: false, rate: 0, baseAmount: 0, taxAmount: 0, totalAmount: 0, pricesIncludeTax: false })).toBe(true);
   });
 
-  it('valid with 1-unit rounding difference', () => {
-    expect(validateTaxCalculation({ isApplicable: true, rate: 0.15, baseAmount: 10000, taxAmount: 1500, totalAmount: 11501, pricesIncludeTax: false })).toBe(true);
+  it('INVALID with a 1-unit difference: base + tax = total exactly, the exact math leaves no drift', () => {
+    expect(validateTaxCalculation({ isApplicable: true, rate: 0.15, baseAmount: 10000, taxAmount: 1500, totalAmount: 11501, pricesIncludeTax: false })).toBe(false);
   });
 
   it('invalid when off by more than 1', () => {

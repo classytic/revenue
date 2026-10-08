@@ -28,7 +28,7 @@ import {
   AlreadySplitError,
 } from '../../core/errors.js';
 import { calculateCommission } from '../../shared/calculators/commission.js';
-import { calculateTax, getTaxType } from '../../shared/calculators/tax.js';
+import { calculateTax, getTaxType, type TaxCalculation } from '../../shared/calculators/tax.js';
 import { calculateSplits, calculateOrganizationPayout } from '../../shared/calculators/splits.js';
 import { TransactionRefundRepository } from './refund.repository.js';
 
@@ -124,6 +124,12 @@ export class TransactionRepository extends TransactionRefundRepository {
     idempotencyKey?: string;
     /** The payer's own reference (MFS TrxID, bank transfer ref) — stored on `reference`. */
     reference?: string;
+    /**
+     * The tax THIS payment carries, stated by the document it pays (an order's stored breakdown,
+     * apportioned to the payment). When present it is recorded as is — the payment never re-rates a
+     * document that already knows its tax. Integer minor units.
+     */
+    statedTax?: { amount: number; isInclusive: boolean; rate?: number };
   }, ctx: RevenueContext = {}): Promise<TransactionDocument> {
     // Inbound API boundary. `?? default` on an INVALID code would silently
     // re-denominate the payment into the engine default — the charge still
@@ -178,7 +184,7 @@ export class TransactionRepository extends TransactionRefundRepository {
      * require a deploy to take effect on the payment side.
      */
     const taxConfig = typeof this.deps.tax === 'function' ? await this.deps.tax() : (this.deps.tax ?? null);
-    const tax = calculateTax(params.amount, taxCategory, taxConfig);
+    const tax = params.statedTax ? statedTaxOf(params.amount, params.statedTax) : calculateTax(params.amount, taxCategory, taxConfig);
 
     // Provider call (skip for free)
     let gatewayData: Record<string, unknown> = { type: params.gateway };
@@ -941,6 +947,11 @@ export class TransactionRepository extends TransactionRefundRepository {
   async release(transactionId: string, options: {
     amount?: number; recipientId: string; recipientType: string;
     reason?: string; releasedBy?: string; createTransaction?: boolean; metadata?: Record<string, unknown>;
+    /**
+     * The client's key for this release (one per Release action, re-sent on retry). A release under
+     * a key the hold already booked returns the transaction unchanged — no second payout.
+     */
+    releaseKey?: string;
   }, ctx: RevenueContext = {}): Promise<TransactionDocument> {
     // Pre-CAS friendly errors only — the AUTHORITATIVE read is inside the transaction.
     const initial = await this.getById(transactionId, this.optsFromCtx(ctx)) as TransactionDocument | null;
@@ -963,6 +974,9 @@ export class TransactionRepository extends TransactionRefundRepository {
       )) as TransactionDocument | null;
       if (!current) throw new TransactionNotFoundError(transactionId);
       const hold = current.hold;
+      if (options.releaseKey && (hold?.releases ?? []).some((r) => r.releaseKey === options.releaseKey)) {
+        return current;
+      }
       if (!hold || !ACTIVE_HOLD_STATUSES.includes(hold.status)) {
         throw new ValidationError('Transaction does not have an active hold');
       }
@@ -985,12 +999,15 @@ export class TransactionRepository extends TransactionRefundRepository {
       const release = {
         amount: releaseAmount, recipientId: options.recipientId, recipientType: options.recipientType,
         releasedAt, releasedBy: options.releasedBy, reason: options.reason, metadata: options.metadata,
+        ...(options.releaseKey ? { releaseKey: options.releaseKey } : {}),
       };
 
       const result = (await this.findOneAndUpdate<TransactionDocument>(
         {
           _id: current._id,
           'hold.status': { $in: ACTIVE_HOLD_STATUSES },
+          // A key already booked matches nothing: the concurrent duplicate aborts with its payout.
+          ...(options.releaseKey ? { 'hold.releases.releaseKey': { $ne: options.releaseKey } } : {}),
           // THE GUARD. Same write, same document, one round trip.
           $expr: {
             $lte: [
@@ -1180,3 +1197,18 @@ export type {
   RefundView,
   RefundSummary,
 } from './transaction-types.js';
+
+/** A document-stated tax as this payment's tax calculation; refuses a figure the payment cannot carry. */
+function statedTaxOf(amount: number, stated: { amount: number; isInclusive: boolean; rate?: number }): TaxCalculation {
+  if (!Number.isSafeInteger(stated.amount) || stated.amount < 0 || (stated.isInclusive && stated.amount > amount)) {
+    throw new ValidationError(`stated tax ${stated.amount} cannot be carried by a payment of ${amount}`);
+  }
+  return {
+    isApplicable: true,
+    rate: stated.rate ?? 0,
+    baseAmount: stated.isInclusive ? amount - stated.amount : amount,
+    taxAmount: stated.amount,
+    totalAmount: stated.isInclusive ? amount : amount + stated.amount,
+    pricesIncludeTax: stated.isInclusive,
+  };
+}

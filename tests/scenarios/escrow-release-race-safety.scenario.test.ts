@@ -408,3 +408,27 @@ describe('Escrow hold — one hold per transaction', () => {
     );
   }, TIMEOUT);
 });
+
+describe('Escrow release — at most once per releaseKey', () => {
+  it('two PARTIAL releases of 400 under one key pay out 400 once', async () => {
+    if (!mongoAvailable) return;
+    const txn = await createAndVerify(1000);
+    await engine.repositories.transaction.hold(String(txn._id), { reason: 'escrow' });
+    const release = () =>
+      engine.repositories.transaction.release(String(txn._id), {
+        recipientId: 'vendor_A',
+        recipientType: 'seller',
+        amount: 400,
+        releaseKey: 'release-dialog-1',
+      });
+
+    await Promise.allSettled([release(), release()]);
+    const again = await release();
+
+    expect(await releaseOutflows(txn._id)).toHaveLength(1);
+    const final = await reload(txn._id);
+    expect(final.hold!.releasedAmount).toBe(400);
+    expect(final.hold!.releases).toHaveLength(1);
+    expect((again as { hold?: { releasedAmount?: number } }).hold?.releasedAmount).toBe(400);
+  }, TIMEOUT);
+});

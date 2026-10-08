@@ -19,6 +19,8 @@ const holdReleaseSchema = z.object({
   releasedBy: z.string().optional(),
   reason: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  /** The client's key for this release — a release under a booked key is never applied twice. */
+  releaseKey: z.string().optional(),
 });
 
 const holdSchema = z.object({

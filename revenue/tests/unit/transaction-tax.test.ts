@@ -73,19 +73,19 @@ describe('calculateTax — the two bases', () => {
 });
 
 describe('the percent-vs-fraction trap', () => {
-  it('a percentage passed as a fraction produces a plausible WRONG number', () => {
-    /**
-     * This is why `defineRevenue` rejects `defaultRate > 1` at bind.
-     *
-     * 15 instead of 0.15 divides by 16 rather than 1.15 — an effective ~94% tax.
-     * The result is a positive integer under the gross, so every downstream check
-     * (balanced journal, tax <= amount, net >= 0) still passes. Only a human
-     * reading the number would notice, and nobody reads it.
-     */
-    const wrong = calculateTax(1150, '', { isRegistered: true, defaultRate: 15, pricesIncludeTax: true });
-    expect(wrong.taxAmount).toBe(1078); // vs the correct 150
-    expect(wrong.taxAmount).toBeLessThan(1150); // still "looks like" a tax
-    expect(wrong.taxAmount).not.toBe(150);
+  it('a percentage passed as a fraction is REFUSED, never priced as a plausible ~94% tax', () => {
+    // 15 instead of 0.15 is 1500%: the exact rate math refuses it rather than return 1078 of 1150.
+    expect(() => calculateTax(1150, '', { isRegistered: true, defaultRate: 15, pricesIncludeTax: true })).toThrow(/tax rate/);
+  });
+});
+
+describe('a payment for a document records the document tax (statedTax), never a re-rating', () => {
+  it('calculateTax is exact integer math: 330000 inclusive at 0.15 is 43043, not a float', () => {
+    expect(calculateTax(330_000, '', { isRegistered: true, defaultRate: 0.15, pricesIncludeTax: true })).toMatchObject({
+      taxAmount: 43_043,
+      baseAmount: 286_957,
+      totalAmount: 330_000,
+    });
   });
 });
 

@@ -15,7 +15,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { currencyCode } from '@classytic/primitives/currency';
+import { currencyCode, minorUnitFactor } from '@classytic/primitives/currency';
+import { formatMinorUnits } from '@classytic/primitives/money';
 import type { CurrencyCode } from '@classytic/primitives/currency';
 import { ProviderStatusUnavailableError } from '@classytic/primitives/payment-gateway';
 
@@ -277,7 +278,7 @@ export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware
       return paymentInstructions;
     }
 
-    const amountValue = params.amount.amount;
+    const amountValue = formatInstructionAmount(params.amount.amount, currency);
 
     // Generic fallback
     if (!paymentInfo) {
@@ -301,6 +302,17 @@ export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware
 
     return lines.join('\n');
   }
+}
+
+/**
+ * Minor units -> the customer-facing major amount, at the currency's own exponent.
+ * `formatInstructionAmount(685000, 'BDT')` is `"6,850.00"`; the integer is never printed raw.
+ */
+export function formatInstructionAmount(minor: number, currency: string): string {
+  const decimals = Math.round(Math.log10(minorUnitFactor(currency)));
+  const [whole = '0', fraction] = formatMinorUnits(Math.abs(minor), decimals).split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${minor < 0 ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
 }
 
 export default ManualProvider;
