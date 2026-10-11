@@ -66,13 +66,15 @@ describe('ManualProvider', () => {
     expect(caps.requiresManualVerification).toBe(true);
   });
 
-  it('instructions include amount and currency', async () => {
-    const intent = await provider.createIntent({
-      amount: { amount: 25000, currency: currencyCode('BDT') },
-      metadata: {},
-    }, cmd());
-    expect(intent.instructions).toContain('25000');
-    expect(intent.instructions).toContain('BDT');
+  // Customer-facing: the amount prints in MAJOR units at the currency's own exponent, never the minor integer.
+  it('instructions show the major amount at the currency exponent', async () => {
+    const shown = async (amount: number, code: string) =>
+      String((await provider.createIntent({ amount: { amount, currency: currencyCode(code) }, metadata: {} }, cmd())).instructions);
+    const bdt = await shown(25000, 'BDT');
+    expect(bdt).toContain('Payment Amount: 250.00 BDT');
+    expect(bdt).not.toContain('25000');
+    expect(await shown(150000, 'JPY')).toContain('Payment Amount: 150,000 JPY');
+    expect(await shown(1234567, 'KWD')).toContain('Payment Amount: 1,234.567 KWD');
   });
 
   it('uses custom paymentInstructions from metadata', async () => {
