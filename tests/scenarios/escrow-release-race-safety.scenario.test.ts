@@ -21,11 +21,14 @@
  *   4. Over-release past `heldAmount` is refused rather than silently recorded.
  */
 
-import { MongoError } from 'mongodb';
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { bindRevenue } from '../helpers/bind-revenue.js';
 import { FakeProvider } from '../helpers/fake-provider.js';
+
+// The driver class mongoose itself uses. mongokit's retry tests `instanceof` against this one, and a separate
+// `mongodb` install (mongodb-memory-server hoists its own) is a different class, so its errors are never retried.
+const { MongoError } = mongoose.mongo;
 import {
   clearCollections,
   connectToMongoDB,

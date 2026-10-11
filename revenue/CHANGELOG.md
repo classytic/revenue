@@ -3,7 +3,13 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 2.13.0 — unreleased
+## 2.14.0 — 2026-10-12
+
+> 2.13.0 was never published: this release carries everything since 2.12.0.
+
+### Changed — peer floors raised to current
+
+`@classytic/mongokit` `>=3.39.0` → **`>=3.41.0`**, `@classytic/primitives` `>=0.28.0` → **`>=0.31.1`**, `@classytic/repo-core` `>=0.28.0` → **`>=0.31.0`**, `@classytic/tax-core` `>=0.4.0` → **`>=0.6.0`** (the tax calculator imports `@classytic/tax-core/math`, which no published release before 0.6.0 contains), `mongoose` `>=9.4.1` → **`>=9.11.0`** (mongokit 3.41 requires it). Verified on a fresh install from npm.
 
 ### Breaking — `PAYOUT_METHOD` spells payment kinds the standard way
 Values are `PaymentMethodKind`s plus `platform_balance`: `mobile_wallet` → `mobile_money`, `crypto` →
