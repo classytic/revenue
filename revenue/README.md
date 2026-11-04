@@ -840,3 +840,26 @@ import {
 ## License
 
 MIT
+
+## Payment create identity and transaction boundary
+
+For positive new intents, call `transaction.createPaymentIntent` after the caller MongoDB transaction commits. The engine first persists a private request fingerprint and a tenant-scoped create claim. The same key must preserve provider, exact money, method kind, source document, payer, tax and request metadata. Changed facts fail with `revenue.intent.conflict` (409) before provider I/O. Unknown outcomes prohibit alternate providers under that key. Provider redrive still requires an explicit idempotency guarantee within its declared lifetime. Read-only transaction replay and zero-amount records may join a caller session.
+
+The unique `attempt_create_identity` index covers create-intent keys independently of provider, and the schema requires every create-intent attempt to carry its request fingerprint and the provider key it sent. Keep fingerprints private. This engine version assumes the attempts collection was written by the same major line (2.15+): there is no import or backfill path for attempts created by earlier versions.
+
+## Recording a transfer already made
+
+`repositories.settlement.recordExternalTransfer(input, ctx)` records completed
+staff-attested cash evidence, without invoking a gateway. It requires an active
+caller-owned Mongo session and a transactional outbox. Pass organization/actor context,
+a stable physical transfer key, recipient, positive integer minor amount, currency,
+reference, note, transferredAt and source identity. Keep the same key across requests
+that refer to the same physical receipt; altered immutable evidence conflicts. Both
+Mongo and public identities are deterministic, so the identity fence also works before
+secondary indexes are provisioned. Never use this verb to assert provider verification.
+
+The external-transfer integration test needs a Mongo replica set. It starts an isolated in-memory one by default;
+set `TEST_MONGODB_URI` to run it against a real replica set (`vitest run tests/integration/external-transfer.test.ts`).
+It checks active-transaction enforcement, atomic outbox rollback, exact replay,
+changed evidence, tenant isolation, future-time rejection and concurrent identity
+without secondary indexes. Gateway execution and accounting consumers remain separate.

@@ -1,29 +1,6 @@
 import { currencyCode } from '@classytic/primitives/currency';
 import { bindRevenue } from '../helpers/bind-revenue.js';
-/**
- * Scenario 03 — Multi-provider failover with preserved idempotency key.
- *
- * Real-world: Stripe is returning 500s on `createIntent`. The host's retry
- * policy falls back to SSLCOMMERZ with the SAME idempotency key (the order id).
- * After SSLCOMMERZ captures, Stripe eventually recovers and retroactively
- * delivers a webhook for the original attempt (Stripe may have created the
- * intent on their side even though the client saw a 500).
- *
- *   - First attempt: primary provider throws — no transaction written.
- *   - Retry with same idempotencyKey on the fallback: creates one transaction,
- *     returns it.
- *   - Second retry on fallback with SAME idempotencyKey: returns the EXISTING
- *     transaction; no duplicate write; no duplicate event.
- *   - Late webhook from the recovered PRIMARY provider for an unknown session:
- *     returns null (no transaction found), no side-effects.
- *   - Transaction count for that idempotencyKey is exactly 1.
- *
- * Competitor gap: Multi-provider resilience is manual in Stripe, Adyen, and
- * Recurly — you own the idempotency ledger yourself. Revenue's repository
- * returns the existing transaction from a prior `idempotencyKey` match before
- * ever touching the provider, so failover loops and retry storms can't
- * double-charge.
- */
+/** A primary timeout retains its command identity across all providers. */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
@@ -164,92 +141,35 @@ beforeAll(async () => { mongoAvailable = await connectToMongoDB(); }, TIMEOUT);
 afterAll(async () => { await disconnectFromMongoDB(); });
 beforeEach(async () => { if (mongoAvailable) await clearCollections(); });
 
-describe('Scenario 03 — Multi-provider failover preserves idempotency', () => {
-  it('falls back to the secondary provider and refuses to double-charge on retry', async () => {
-    if (!mongoAvailable) return;
-
-    const published: DomainEvent[] = [];
-    const primary = new FlakyPrimary();
-    const fallback = new FallbackSslcz();
+describe('Scenario 03 — Provider changes cannot fork an unresolved command', () => {
+  it('blocks failover while the primary creation outcome is unknown', async () => {
+    expect(mongoAvailable).toBe(true);
+    const primary = new FlakyPrimary(); const fallback = new FallbackSslcz();
     primary.failFirstNCreateCalls(1);
-
-    const engine = await bindRevenue({
-      connection: mongoose.connection,
-      defaultCurrency: 'BDT',
-      providers: { stripe: primary, sslcommerz: fallback },
-      scope: false,
-      forceRecreate: true,
-      eventTransport: {
-        name: 't',
-        async publish(event) { published.push(event); },
-        async subscribe() { return () => {}; },
-      },
-    });
-    await warmModels(engine);
-
+    const engine = bindRevenue({ connection: mongoose.connection, defaultCurrency: 'BDT', providers: { stripe: primary, sslcommerz: fallback }, scope: false, forceRecreate: true });
+    await warmModels(engine); await engine.models.PaymentAttempt.init();
     try {
-      const idemKey = 'order_OX42'; // host's order id — stable across providers
+      const input = { amount: 100000, gateway: 'stripe', methodKind: 'card' as const, data: { customerId: 'buyer_fo' }, idempotencyKey: 'order_OX42' };
+      await expect(engine.repositories.transaction.createPaymentIntent(input)).rejects.toThrow(IntentOutcomeUnknownError);
+      await expect(engine.repositories.transaction.createPaymentIntent({ ...input, gateway: 'sslcommerz' })).rejects.toMatchObject({ code: 'revenue.intent.conflict', status: 409 });
+      expect(primary.intentAttempts).toBe(1); expect(fallback.intentAttempts).toBe(0);
+      expect(await engine.repositories.transaction.count({ idempotencyKey: input.idempotencyKey })).toBe(0);
+      expect(await engine.repositories.paymentAttempt.count({ operation: 'create-intent', idempotencyKey: input.idempotencyKey })).toBe(1);
+    } finally { await engine.close(); }
+  }, TIMEOUT);
 
-      // Attempt 1: primary throws a raw 503. The three-valued classifier maps an
-      // un-decorated throw to `unknown` (the gateway MAY have created an intent we
-      // never recorded — see this scenario's own header), so createPaymentIntent
-      // raises IntentOutcomeUnknownError, not the raw 503. No transaction is written
-      // (the throw precedes the persist), which the count assertion below confirms.
-      await expect(
-        engine.repositories.transaction.createPaymentIntent({
-          amount: 100000, gateway: 'stripe', methodKind: 'card',
-          data: { customerId: 'buyer_fo' },
-          idempotencyKey: idemKey,
-        }),
-      ).rejects.toThrow(IntentOutcomeUnknownError);
-
-      const postFailureCount = await engine.repositories.transaction.count({
-        idempotencyKey: idemKey,
-      });
-      expect(postFailureCount).toBe(0);
-
-      // Attempt 2: fallback succeeds — ONE transaction exists under the idemKey
-      const firstSuccess = await engine.repositories.transaction.createPaymentIntent({
-        amount: 100000, gateway: 'sslcommerz', methodKind: 'card',
-        data: { customerId: 'buyer_fo' },
-        idempotencyKey: idemKey,
-      });
-      expect(firstSuccess).not.toBeNull();
-      expect(firstSuccess.method).toBe('sslcommerz');
-      expect(fallback.intentAttempts).toBe(1);
-
-      // Attempt 3: client retries the fallback with the same idemKey (network
-      // hiccup on the response) — MUST return the existing, no extra provider call
-      const retried = await engine.repositories.transaction.createPaymentIntent({
-        amount: 100000, gateway: 'sslcommerz', methodKind: 'card',
-        data: { customerId: 'buyer_fo' },
-        idempotencyKey: idemKey,
-      });
-      expect(String(retried._id)).toBe(String(firstSuccess._id));
-      expect(fallback.intentAttempts).toBe(1); // no extra provider call
-
-      // Exactly one row under the idempotency key
-      const finalCount = await engine.repositories.transaction.count({
-        idempotencyKey: idemKey,
-      });
-      expect(finalCount).toBe(1);
-
-      // Exactly one monetization.created event
-      const created = published.filter(e => e.type === REVENUE_EVENTS.MONETIZATION_CREATED);
-      expect(created).toHaveLength(1);
-
-      // Even if client accidentally retries on the PRIMARY with same idemKey,
-      // the idempotency check returns the existing row before calling primary
-      const crossProviderRetry = await engine.repositories.transaction.createPaymentIntent({
-        amount: 100000, gateway: 'stripe', methodKind: 'card',
-        data: { customerId: 'buyer_fo' },
-        idempotencyKey: idemKey,
-      });
-      expect(String(crossProviderRetry._id)).toBe(String(firstSuccess._id));
-      expect(primary.intentAttempts).toBe(1); // primary NOT re-hit — still just the initial 503
-    } finally {
-      await engine.close();
-    }
+  it('replays identical facts and rejects a changed provider after creation', async () => {
+    expect(mongoAvailable).toBe(true);
+    const primary = new FlakyPrimary(); const fallback = new FallbackSslcz();
+    const engine = bindRevenue({ connection: mongoose.connection, defaultCurrency: 'BDT', providers: { stripe: primary, sslcommerz: fallback }, scope: false, forceRecreate: true });
+    await warmModels(engine); await engine.models.PaymentAttempt.init();
+    try {
+      const input = { amount: 100000, gateway: 'sslcommerz', methodKind: 'card' as const, data: { customerId: 'buyer_fo' }, idempotencyKey: 'order_REPLAY' };
+      const first = await engine.repositories.transaction.createPaymentIntent(input);
+      expect(String((await engine.repositories.transaction.createPaymentIntent(input))._id)).toBe(String(first._id));
+      await expect(engine.repositories.transaction.createPaymentIntent({ ...input, gateway: 'stripe' })).rejects.toMatchObject({ status: 409 });
+      expect(primary.intentAttempts).toBe(0); expect(fallback.intentAttempts).toBe(1);
+    } finally { await engine.close(); }
   }, TIMEOUT);
 
   it('late webhook from the recovered primary for an orphan session is a no-op', async () => {
@@ -268,7 +188,7 @@ describe('Scenario 03 — Multi-provider failover preserves idempotency', () => 
     await warmModels(engine);
 
     try {
-      // Fallback captured the order — primary was never able to write to revenue
+      // This independent command used the secondary from the start.
       const captured = await engine.repositories.transaction.createPaymentIntent({
         amount: 50000, gateway: 'sslcommerz', methodKind: 'card',
         data: { customerId: 'buyer_late_wh' },

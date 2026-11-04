@@ -48,14 +48,14 @@
     "url": "git+https://github.com/classytic/revenue.git"
   },
   "devDependencies": {
-    "@classytic/dev-tools": "^0.2.0",
-    "@classytic/mongokit": "^3.41.0",
-    "@classytic/primitives": ">=0.31.1",
-    "@classytic/repo-core": ">=0.31.0",
-    "@vitest/coverage-v8": "^3.2.4",
-    "mongodb-memory-server": "^11.0.1",
-    "mongoose": "^9.11.1",
-    "typescript": "^5.6.3",
-    "vitest": "^3.2.4"
+    "@classytic/dev-tools": "^0.2.1",
+    "@classytic/mongokit": "^3.44.0",
+    "@classytic/primitives": "^0.36.0",
+    "@classytic/repo-core": "^0.38.0",
+    "@vitest/coverage-v8": "^5.1.0",
+    "mongodb-memory-server": "^11.3.0",
+    "mongoose": "^9.11.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   }
 }

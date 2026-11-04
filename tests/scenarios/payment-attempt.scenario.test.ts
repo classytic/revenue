@@ -1,4 +1,6 @@
+import { intentRequestFingerprint } from '../../revenue/src/providers/intent-identity.js';
 import { currencyCode } from '@classytic/primitives/currency';
+import { createHash } from 'node:crypto';
 import { bindRevenue } from '../helpers/bind-revenue.js';
 /**
  * Scenario: PaymentAttempt — durable attempt record written BEFORE provider I/O (phase 3).
@@ -29,10 +31,10 @@ import {
   IntentOutcomeUnknownError,
   RefundOutcomeUnknownError,
   TRANSACTION_STATUS,
-  backfillCreatePaymentAttempts,
 } from '../../revenue/src/index.js';
 import type {
   CreateIntentParams,
+  PaymentCommandContext,
   PaymentResult,
   ProviderIntent,
   RefundResult,
@@ -61,9 +63,13 @@ class FakeProvider extends PaymentProvider {
   public statusResult: 'succeeded' | 'failed' = 'succeeded';
   constructor() { super({}); }
 
-  async createIntent(params: CreateIntentParams): Promise<ProviderIntent> {
+  override getCapabilities() {
+    return { ...super.getCapabilities(), supportsIdempotentCreate: true, idempotentCreateWindowMs: null };
+  }
+
+  async createIntent(params: CreateIntentParams, command?: PaymentCommandContext): Promise<ProviderIntent> {
     if (this.failCreate) throw new Error('gateway timeout while creating intent');
-    const id = `fake_pi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const id = `fake_pi_${createHash('sha256').update(command?.idempotencyKey ?? 'standalone').digest('hex').slice(0, 24)}`;
     return {
       id, sessionId: id, paymentIntentId: id,
       provider: 'fake', status: 'requires_payment_method',
@@ -181,7 +187,10 @@ describe('PaymentAttempt — attempt-before-I/O', () => {
     await engine.models.PaymentAttempt.createIndexes();
     await attempts().insertOne({
       operation: 'create-intent', provider: 'fake', idempotencyKey: 'order-inflight',
-      amount: 100000, currency: currencyCode('BDT'), outcome: 'unknown',
+      amount: 100000, currency: currencyCode('BDT'), methodKind: 'card', requestFingerprint: intentRequestFingerprint({ amount: 100000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'order-inflight' }, 'BDT'), outcome: 'unknown',
+    });
+    expect(await engine.repositories.paymentAttempt.getByQuery({ idempotencyKey: 'order-inflight' }, { select: '+requestFingerprint' })).toMatchObject({
+      requestFingerprint: intentRequestFingerprint({ amount: 100000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'order-inflight' }, 'BDT'),
     });
     // A same-key retry must NOT deadlock: it re-drives (provider dedups) and completes.
     const txn = await engine.repositories.transaction.createPaymentIntent({
@@ -248,48 +257,6 @@ describe('Refund read model (listRefunds)', () => {
     expect(rm.refunds[0]!.source).toBe('attempt');
     expect(rm.refunds[0]!.status).toBe('unknown');
     expect(rm.refunds[0]!.amount).toBe(5000);
-  }, TIMEOUT);
-});
-
-describe('backfill create-intent attempts (phase 3d)', () => {
-  it('synthesizes one confirmed attempt per legacy payment_flow txn, idempotently', async () => {
-    if (!mongoAvailable) return;
-    // A pre-phase-3 transaction: has a gateway block but NO PaymentAttempt.
-    const legacy = await mongoose.connection.db!.collection('revenue_transactions').insertOne({
-      publicId: 'legacy-pi-1',
-      type: 'purchase', flow: 'inflow', kind: 'payment_flow',
-      amount: 7000, currency: currencyCode('BDT'), method: 'fake', methodKind: 'card', status: 'verified',
-      gateway: { type: 'fake', sessionId: 'sess_legacy', paymentIntentId: 'pi_legacy' },
-      createdAt: new Date(), updatedAt: new Date(),
-    });
-
-    const res = await backfillCreatePaymentAttempts(engine.models, { log: () => {} });
-    expect(res.created).toBe(1);
-
-    const a = await attempts().findOne({ transactionId: legacy.insertedId, operation: 'create-intent' });
-    expect(a).toBeTruthy();
-    expect(a!.outcome).toBe('confirmed');
-    expect(a!.gateway?.paymentIntentId).toBe('pi_legacy');
-    expect(a!.amount).toBe(7000);
-
-    // Idempotent: a second run creates nothing new for it.
-    const res2 = await backfillCreatePaymentAttempts(engine.models, { log: () => {} });
-    expect(res2.created).toBe(0);
-    expect(await attempts().countDocuments({ transactionId: legacy.insertedId, operation: 'create-intent' })).toBe(1);
-  }, TIMEOUT);
-
-  it('dry-run reports without writing', async () => {
-    if (!mongoAvailable) return;
-    await mongoose.connection.db!.collection('revenue_transactions').insertOne({
-      publicId: 'legacy-pi-2', type: 'purchase', flow: 'inflow', kind: 'payment_flow',
-      amount: 3000, currency: currencyCode('BDT'), method: 'fake', methodKind: 'card', status: 'verified',
-      gateway: { type: 'fake', paymentIntentId: 'pi_legacy_2' },
-      createdAt: new Date(), updatedAt: new Date(),
-    });
-    const res = await backfillCreatePaymentAttempts(engine.models, { dryRun: true, log: () => {} });
-    expect(res.created).toBe(1);
-    expect(res.dryRun).toBe(true);
-    expect(await attempts().countDocuments({})).toBe(0); // nothing written
   }, TIMEOUT);
 });
 
@@ -472,7 +439,7 @@ describe('reconcile is branch-scoped (#5)', () => {
     // A payment attempt owned by branch A.
     const a = await scopedEngine.models.PaymentAttempt.create({
       organizationId: 'branch-A', operation: 'create-intent', provider: 'fake',
-      idempotencyKey: 'xb-1', amount: 1000, currency: currencyCode('BDT'), outcome: 'unknown',
+      idempotencyKey: 'xb-1', providerKey: 'xb-1', requestFingerprint: 'fp-xb-1', amount: 1000, currency: currencyCode('BDT'), outcome: 'unknown',
     });
     // Branch B may not touch it — scoped read yields nothing → "not found (or out of scope)".
     await expect(

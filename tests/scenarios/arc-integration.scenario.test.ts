@@ -216,7 +216,7 @@ describe('Scenario: Arc integration parity', () => {
     }
   }, TIMEOUT);
 
-  it('accepts a session-bearing ctx and threads it into outbox.save for non-tx verbs', async () => {
+  it('threads caller sessions into outbox.save for a free creation with no provider I/O', async () => {
     if (!mongoAvailable) return;
 
     const outbox = new SessionRecordingOutbox();
@@ -239,7 +239,7 @@ describe('Scenario: Arc integration parity', () => {
         await session.withTransaction(async () => {
           await engine.repositories.transaction.createPaymentIntent(
             {
-              amount: 1234,
+              amount: 0,
               gateway: 'fake', methodKind: 'card',
               idempotencyKey: 'pi_cust_host_tx',
               data: { customerId: 'cust_host_tx' },

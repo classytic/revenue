@@ -257,6 +257,8 @@ export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware
 
   getCapabilities(): ProviderCapabilities {
     return {
+      supportsIdempotentCreate: true,
+      idempotentCreateWindowMs: null,
       supportsWebhooks: false,
       supportsRefunds: true,
       supportsPartialRefunds: true,

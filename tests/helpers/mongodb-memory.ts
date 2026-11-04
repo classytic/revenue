@@ -19,13 +19,14 @@
 
 import { createMongoMemory, type MongoMemoryHandle } from '@classytic/mongokit/testkit';
 import mongoose from 'mongoose';
+import { randomUUID } from 'node:crypto';
 
 let handle: MongoMemoryHandle | undefined;
 const workerId =
   process.env.VITEST_WORKER_ID ??
   process.env.JEST_WORKER_ID ??
   `${process.pid}`;
-const dbName = `revenue-test-${workerId}`;
+const dbName = `revenue-test-${workerId}-${randomUUID().slice(0, 8)}`;
 
 /**
  * Connect to in-memory MongoDB replica set (or external if MONGODB_URI is set).
@@ -38,7 +39,7 @@ export async function connectToMongoDB(): Promise<boolean> {
 
     // Honor externally-provided URI first (CI, real replica set, sharded).
     if (process.env.MONGODB_URI) {
-      await mongoose.connect(process.env.MONGODB_URI);
+      await mongoose.connect(process.env.MONGODB_URI, { dbName });
       console.log('✅ Connected to external MongoDB (MONGODB_URI)');
       return true;
     }
@@ -79,6 +80,9 @@ export async function connectToMongoDB(): Promise<boolean> {
  */
 export async function disconnectFromMongoDB(): Promise<void> {
   try {
+    if (mongoose.connection.readyState === 1 && mongoose.connection.name === dbName) {
+      await mongoose.connection.dropDatabase();
+    }
     await mongoose.disconnect();
     if (handle) {
       await handle.stop();

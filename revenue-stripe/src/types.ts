@@ -92,8 +92,13 @@ export interface StripeIntentOptions {
   customerId?: string;
   /** Existing payment method id for off-session capture. */
   paymentMethodId?: string;
-  /** Payment-method types (`['card']`, `['card', 'us_bank_account']`, …). */
-  paymentMethodTypes?: string[];
+  /**
+   * Payment-method types the intent may use (`['card']`,
+   * `['card', 'us_bank_account']`, …). Sent as Stripe's
+   * `allowed_payment_method_types` (stripe-node 23 removed the old
+   * `payment_method_types` create param).
+   */
+  paymentMethodTypes?: Stripe.PaymentIntentCreateParams.AllowedPaymentMethodType[];
   /** Description shown on the Stripe dashboard + receipts. */
   description?: string;
   /** Statement descriptor (capped at 22 chars by Stripe). */

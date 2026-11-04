@@ -27,6 +27,7 @@ import mongoose from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { TRANSACTION_STATUS } from '../../src/enums/transaction.enums.js';
 import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
+import { createProviderRegistry } from '../../src/providers/registry.js';
 
 let mongod: MongoMemoryServer;
 let Transaction: mongoose.Model<Record<string, unknown>>;
@@ -50,6 +51,7 @@ beforeAll(async () => {
     Transaction as never,
   );
   (built as { inject?: (d: unknown) => void }).inject?.({
+    providers: createProviderRegistry(),
     bridges: {},
     outbox: {
       save: async (e: { type: string; payload: Record<string, unknown> }) => {

@@ -329,6 +329,7 @@ describe('Refund race-safety + over-refund guards', () => {
 
     // Capture what the kernel publishes for this refund attempt.
     const published: Array<{ type: string; payload: unknown }> = [];
+    if (!engine.events.subscribe) throw new Error('The refund fixture requires a subscribable event transport');
     const unsubscribe = await engine.events.subscribe('payment.*', (e: { type: string; payload: unknown }) => {
       published.push({ type: e.type, payload: e.payload });
     });
@@ -445,15 +446,12 @@ describe('Bank-feed import tenant guard (scoped engine)', () => {
     if (!mongoAvailable) return;
     scopedEngine = await bindRevenue({
       connection: mongoose.connection,
+      collectionPrefix: 'tenant_guard_',
       defaultCurrency: 'USD',
       providers: {},
       modules: {
         subscription: false, escrow: false, settlement: false,
-        // Keep bank-feed ON (import() needs its batch plugin) but declare NO
-        // indexes — this engine shares the 'Transaction' collection with the
-        // unscoped engine above, and re-declaring `bank_feed_by_account` with
-        // an org-prefixed key but the same name collides at index build.
-        bankFeed: { enabled: true, indexes: { idempotentImport: false, byAccount: false, matchCandidates: false } },
+        bankFeed: true,
       },
       scope: { enabled: true, fieldType: 'string', required: true },
       forceRecreate: true,

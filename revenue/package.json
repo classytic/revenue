@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "description": "Payment lifecycle engine — transactions, subscriptions, escrow, settlements, commissions. MongoKit-powered, Arc-compatible, framework-agnostic.",
   "type": "module",
   "sideEffects": false,
@@ -103,30 +103,30 @@
     "LICENSE"
   ],
   "peerDependencies": {
-    "@classytic/mongokit": ">=3.41.0",
-    "@classytic/primitives": ">=0.31.1",
-    "@classytic/repo-core": ">=0.31.0",
+    "@classytic/mongokit": ">=3.44.0",
+    "@classytic/primitives": ">=0.36.0",
+    "@classytic/repo-core": ">=0.38.0",
     "@classytic/tax-core": ">=0.6.0",
     "@classytic/validation": ">=0.6.0",
-    "mongoose": ">=9.11.0",
-    "zod": ">=4.0.0"
+    "mongoose": ">=9.11.4",
+    "zod": ">=4.6.7"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@classytic/dev-tools": "^0.2.0",
-    "@classytic/mongokit": "^3.41.0",
-    "@classytic/revenue-manual": "*",
-    "@classytic/primitives": ">=0.31.1",
-    "@classytic/repo-core": ">=0.31.0",
+    "@classytic/dev-tools": "^0.2.1",
+    "@classytic/mongokit": "^3.44.0",
+    "@classytic/revenue-manual": "^1.0.1",
+    "@classytic/primitives": "^0.36.0",
+    "@classytic/repo-core": "^0.38.0",
     "@classytic/tax-core": ">=0.6.0",
     "@classytic/validation": ">=0.6.0",
-    "@types/node": "^22.8.7",
-    "mongoose": "^9.11.1",
-    "publint": "^0.3.23",
-    "tsdown": "^0.22.14",
-    "typescript": "^5.6.3",
-    "zod": "^4.1.13"
+    "@types/node": "^26.6.6",
+    "mongoose": "^9.11.4",
+    "publint": "^0.3.25",
+    "tsdown": "^0.23.5",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.7"
   }
 }

@@ -13,8 +13,31 @@ import { currencyCode } from '@classytic/primitives/currency';
  */
 
 import type Stripe from 'stripe';
-import type { PaymentResult } from '@classytic/primitives/payment-gateway';
+import type { PaymentResult, ProviderIntentStatus } from '@classytic/primitives/payment-gateway';
 import { stripePaymentIntentToKind } from './method-kind.js';
+
+const PROVIDER_INTENT_STATUSES: ReadonlySet<string> = new Set<ProviderIntentStatus>([
+  'requires_payment_method',
+  'requires_confirmation',
+  'requires_action',
+  'processing',
+  'requires_capture',
+  'canceled',
+  'succeeded',
+]);
+
+/**
+ * Stripe PaymentIntent status → the engine's closed `ProviderIntentStatus`.
+ *
+ * stripe-node 23 types `PaymentIntent.status` as an OPEN union (`… | string`):
+ * Stripe may add a status without a major. Every status the engine knows
+ * passes through unchanged; an unknown one becomes `'processing'` —
+ * non-terminal, so it is never read as paid or failed, and verify/webhooks
+ * settle it later.
+ */
+export function mapIntentStatus(status: string): ProviderIntentStatus {
+  return PROVIDER_INTENT_STATUSES.has(status) ? (status as ProviderIntentStatus) : 'processing';
+}
 
 export interface VerifyDeps {
   stripe: Stripe;

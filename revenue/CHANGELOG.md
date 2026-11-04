@@ -3,6 +3,58 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.15.0 — 2026-11-04
+
+### Changed — peer floors to the latest published
+
+`@classytic/mongokit >=3.44.0`, `@classytic/primitives >=0.36.0`, `@classytic/repo-core >=0.38.0`, `mongoose >=9.11.4`, `zod >=4.6.7`; `@classytic/tax-core` and `@classytic/validation` were already at the latest. Dev toolchain: TypeScript 7, tsdown 0.23, vitest 5.
+
+### ⚠ Removed — `backfillCreatePaymentAttempts` and the legacy-attempt paths
+
+- `backfillCreatePaymentAttempts` (with `BackfillPaymentAttemptsOptions` / `BackfillPaymentAttemptsResult`) is removed. It synthesised fingerprint-less create attempts for transactions that predate attempts, which this release no longer accepts.
+- **Data requirement:** 2.15 assumes the attempts collection was written by the 2.15 engine. A database that holds create-intent attempts from earlier versions is not upgrade-supported; start from an empty attempts collection (nothing was in production when this was decided). The create path no longer skips the fingerprint check for an attempt without one, holds it as "unknown outcome", or falls back to the raw key for an attempt without a `providerKey`.
+- `requestFingerprint` and `providerKey` stay optional in the TypeScript type (`requestFingerprint` is `select: false`, and `confirm` / `refund` attempts have neither).
+
+### Hardened — immutable create identity
+
+- Persist a private request fingerprint before provider I/O and reject changed amount, currency, provider, method kind, source, payer, tax or request metadata under the same key. A new tenant-scoped unique create key blocks cross-provider failover after an unresolved response. Positive new intent creation refuses caller-owned MongoDB sessions; read-only replay and free transactions remain supported.
+- Every create-intent attempt now carries its request fingerprint and the provider key it sent: both are required by the schema, and the unique `attempt_create_identity` index (one create key, one provider) covers every create attempt. There is no tolerance for attempts without them.
+
+### Hardened — first browser-return execution
+
+- Query and correlate provider readiness before claiming first execution. Unready or unavailable approval cannot consume that claim. Subsequent returns still query the original attempt. Creation-key correlation rejects a mislinked obligation even if its gateway block was copied.
+
+### Added — private payment-return authorization
+
+- `transaction.confirmReturn` binds an expiring creation-time proof to the provider intent, stored merchant scope and payment amount/currency. Only success returns can authorize `confirm`; cancel/failure strings cannot decide money state. Proofs are stored as digests on PaymentAttempt, excluded from ordinary reads/history and globally unique before tenant discovery. A failed private write withholds checkout and retains the create claim.
+
+### Added — durable payment confirmation
+
+- `transaction.confirm(id, ctx)` records one `confirm` attempt before executing an explicit-confirmation provider. Retries query; amount, currency, provider and merchant-reference mismatches remain unresolved. Final payment state, attempt outcome and outbox event commit together. The command requires a transactional outbox and refuses caller-owned sessions.
+- The old `verify` path refuses explicit-confirmation providers. `ConfirmationOutcomeUnknownError` distinguishes uncertainty from a failed payment.
+- Unresolved create commands are redriven only when the provider explicitly advertises `supportsIdempotentCreate` and its `idempotentCreateWindowMs` has not expired. A null window declares no expiry. Custom idempotent adapters must declare both; adapters without a guarantee retain the unresolved attempt. Manual declares deterministic IDs without expiry; Stripe declares its documented 24-hour lifetime.
+
+The country adapter implementation is documented in `../revenue-bd/README.md`; merchant sandbox validation and shared browser-return transport remain release gates.
+
+### Added — refunds issued outside the engine are recorded
+
+A refund made in the gateway's own dashboard or API used to leave the transaction `verified`: no refund child, no `refundedAmount`, no `payment.refunded`, so the ledger said the money was still held. `handleWebhook` now records any refund the provider reports through `WebhookEvent.data.refund` (primitives 0.35) via the new `transaction.recordProviderRefund`. It is the same reserve→finalize path as `refund()`, minus the provider call because the money already moved: the same atomic cap, one refund child, the original flipped to `partially_refunded`/`refunded`, ledger and notification bridges, one `payment.refunded`.
+
+- Idempotent on the gateway refund id (`provider-refund:<provider>:<refundId>`): a redelivered event, or the `refund.created` + `refund.updated` pair for one refund, records once.
+- A refund carrying the engine's own `commandRef` is skipped: `refund()` / `reconcileAttempt` already own it, so it is never counted twice.
+- A refund larger than what remains is refused and logged for an operator. No reservation is left behind.
+- The refund attempt keeps the gateway refund id as `providerReference`, so a crash between reserve and finalize resolves through normal reconciliation.
+
+### Fixed — a hosted checkout's real payment id replaces the session placeholder
+
+At creation a hosted checkout has no payment yet, so `gateway.paymentIntentId` held the session id. It was never corrected, so refunds and disputes (which name the payment, `pi_…`) found no transaction, and `refund()` asked the gateway to reverse a session. `verify()` now stores the payment id the provider reports (`PaymentResult.paymentIntentId`, primitives 0.35) in place of that placeholder. A genuine, distinct payment id is never overwritten.
+
+`verify()` now asks the provider by session id first, matching `handleWebhook`. Once the real payment id is linked, the old payment-id-first order would have handed a `pi_…` to a session lookup. Intent-only providers have no distinct session, so they are unaffected.
+
+### Changed — peer floor
+
+`@classytic/primitives` `>=0.31.1` → **`>=0.35.0`** (`ProviderRefundSignal`, `PaymentResult.paymentIntentId`).
+
 ## 2.14.0 — 2026-10-12
 
 > 2.13.0 was never published: this release carries everything since 2.12.0.

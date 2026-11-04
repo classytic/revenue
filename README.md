@@ -202,6 +202,7 @@ const revenue = Revenue
 |----------|-------------|
 | [Core Package](./revenue/README.md) | Full API reference & examples |
 | [Manual Provider](./revenue-manual/README.md) | Manual payment verification |
+| [Revenue BD](./revenue-bd/README.md) | Local bKash v2 adapter under `/bkash`; callback and merchant sandbox gates pending |
 | [Provider Guide](./docs/guides/PROVIDER_GUIDE.md) | Build custom providers |
 | [Escrow Features](./docs/guides/ESCROW_FEATURES.md) | Hold/release & splits |
 

@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.3.0 — 2026-11-04
+
+### Changed — stripe-node 23 (peer `stripe ^22` → `^23`)
+
+- **`paymentMethodTypes` now reaches Stripe as `allowed_payment_method_types`.**
+  stripe-node 23 removed `payment_method_types` from PaymentIntent create params.
+  The option keeps its name; it is now typed as Stripe's
+  `PaymentIntentCreateParams.AllowedPaymentMethodType[]`, so an unknown method
+  type is a compile error instead of a Stripe 400.
+- **Unknown intent statuses map to `'processing'`.** stripe-node 23 types
+  `PaymentIntent.status` as an open union, so Stripe can add a status without a
+  major. `createIntent` previously passed it straight into the engine's closed
+  `ProviderIntentStatus`. The new `mapIntentStatus` passes known statuses
+  through and maps anything else to non-terminal `'processing'`, which is never
+  read as paid or failed.
+- `engines.node` raised `>=18` → `>=20` (stripe-node 23's floor).
+
+Breaking for hosts: install `stripe@^23`, and pass only Stripe's allowed values
+in `paymentMethodTypes`.
+
+### Added — refunds made in the Stripe dashboard reach the engine
+
+- Every provider (Checkout, Connect, SaaS) reports a SUCCEEDED refund on
+  `refund.created` / `refund.updated` as `WebhookEvent.data.refund` `{ id, amount,
+  commandRef? }`, routed by its PaymentIntent. Pending and failed refunds are not
+  signalled; `refund.updated` reports a pending refund once it settles.
+  `charge.refunded` is deliberately not used: since API 2022-11-15 a Charge no
+  longer embeds its refunds, so it can't say which refund happened or for how much.
+- `commandRef` is the ref this adapter stamps on refunds the engine issues
+  itself, so revenue (2.15) records dashboard refunds and skips its own.
+- Checkout `verifyPayment` reports the session's PaymentIntent as
+  `paymentIntentId` once paid, so revenue links later refunds and disputes (which
+  only name the `pi_…`) to the payment.
+
+Peer floors: `@classytic/primitives` `>=0.26.3` → `>=0.36.0`; `@classytic/revenue` `>=2.9.0` → `>=2.15.0` (the revenue engine that records refunds made outside it). Dev toolchain: TypeScript 7, tsdown 0.23, vitest 5.
+
 ## 0.2.2 — 2026-08-31
 
 ### Added — `wantsRawBody = true` on both Stripe providers

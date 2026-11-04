@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import type { PluginType } from '@classytic/mongokit';
-import type { Model } from 'mongoose';
+import { mongo, type Model } from 'mongoose';
 import type { SettlementDocument } from '../models/settlement.schema.js';
 import type { RevenueContext } from '../core/context.js';
 import type { RevenueBridges } from '../bridges/revenue-bridges.js';
@@ -7,7 +8,7 @@ import { createEvent } from '../events/helpers.js';
 import { REVENUE_EVENTS } from '../events/event-constants.js';
 import { SETTLEMENT_STATUS } from '../enums/settlement.enums.js';
 import { SETTLEMENT_STATE_MACHINE } from '../core/state-machines.js';
-import { InvalidStateTransitionError, SettlementNotFoundError } from '../core/errors.js';
+import { RevenueError, InvalidStateTransitionError, SettlementNotFoundError } from '../core/errors.js';
 import { RevenueRepositoryBase, type BaseRevenueRepoDeps } from './base.repository.js';
 
 /**
@@ -150,6 +151,45 @@ export class SettlementRepository extends RevenueRepositoryBase<
 > {
   constructor(model: Model<SettlementDocument>, plugins: PluginType[] = []) {
     super(model, plugins);
+  }
+
+  /**
+   * Record a transfer already made outside the system. This is staff evidence,
+   * not a disbursement instruction or provider verification. The caller owns the
+   * transaction so earning allocation and canonical cash evidence commit together.
+   */
+  async recordExternalTransfer(input: { key: string; recipientId: string; recipientType: string; type: string;
+    amount: number; currency: string; payoutMethod: string; reference: string; note: string; transferredAt: Date;
+    sourceId: string; sourceModel: string }, ctx: RevenueContext): Promise<SettlementDocument> {
+    if (!(ctx.session instanceof mongo.ClientSession) || !ctx.session.inTransaction() || this.deps.outbox?.transactionalSave !== true) {
+      throw new RevenueError('External transfer evidence requires an active caller transaction and a transactional outbox.', 'revenue.settlement.transaction_required', undefined, 409);
+    }
+    if (!ctx.organizationId || !ctx.actorId || !input.key.trim() || !input.recipientId || !input.recipientType || !input.type
+      || !input.reference.trim() || !input.payoutMethod || !input.sourceId || !input.sourceModel
+      || !Number.isSafeInteger(input.amount) || input.amount <= 0 || !/^[A-Z]{3}$/.test(input.currency)
+      || !Number.isFinite(input.transferredAt.getTime()) || input.transferredAt.getTime() > Date.now()) {
+      throw new RevenueError('Invalid external transfer evidence.', 'revenue.settlement.evidence_invalid', undefined, 422);
+    }
+    const identity = createHash('sha256').update(JSON.stringify([ctx.organizationId, input.key])).digest('hex');
+    const publicId = `XFER-${identity}`;
+    const options = this.optsFromCtx(ctx, { throwOnNotFound: false, lean: true });
+    const fingerprint = createHash('sha256').update(JSON.stringify([input.recipientId, input.recipientType, input.type, input.amount,
+      input.currency, input.payoutMethod, input.reference, input.note, input.transferredAt.toISOString(), input.sourceId, input.sourceModel, ctx.actorId])).digest('hex');
+    const prior = await this.getByQuery({ publicId }, options);
+    if (prior) {
+      if (prior.status === 'completed' && prior.metadata?.externalTransferFingerprint === fingerprint) return prior;
+      throw new RevenueError('Transfer identity was already used for different evidence.', 'revenue.settlement.evidence_conflict', undefined, 409);
+    }
+    const now = new Date();
+    const settlement = await this.create({ _id: new mongo.ObjectId(identity.slice(0, 24)), publicId, recipientId: input.recipientId, recipientType: input.recipientType, type: input.type,
+      amount: input.amount, currency: input.currency, payoutMethod: input.payoutMethod, status: 'completed', scheduledAt: now,
+      processedAt: now, completedAt: now, retryCount: 0, notes: input.note, sourceTransactionIds: [], sourceSplitIds: [],
+      metadata: { evidenceSource: 'staff_attestation', sourceId: input.sourceId, sourceModel: input.sourceModel,
+        transferReference: input.reference, transferredAt: input.transferredAt.toISOString(), recordedBy: ctx.actorId,
+        externalTransferFingerprint: fingerprint } }, options);
+    await this.dispatch(createEvent(REVENUE_EVENTS.SETTLEMENT_COMPLETED, { settlement, completedAt: now }, ctx,
+      { resource: 'settlement', resourceId: settlement.publicId }), ctx);
+    return settlement;
   }
 
   // ─── Domain: Schedule ───────────────────────────────────────────────────

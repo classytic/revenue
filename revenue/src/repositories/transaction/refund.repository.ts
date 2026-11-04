@@ -7,6 +7,7 @@ import type { RevenueContext } from '../../core/context.js';
 import { executeProviderCommand } from '../../providers/execute-command.js';
 import { buildPaymentCommandContext, providerKeyFor } from '../../providers/command-context.js';
 import { PAYMENT_EVENT_TYPE } from '@classytic/primitives/payment-events';
+import type { ProviderRefundSignal } from '@classytic/primitives/payment-gateway';
 import {
   toPaymentRefunded,
   toPaymentUnknown,
@@ -138,109 +139,36 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       });
     }
 
-    // ── RESERVE-BEFORE-I/O + durable refund attempt (phase 3, atomic) ──
-    // The original is NOT flipped to refunded here — that happens only after the
-    // provider confirms. Instead we RESERVE the amount against `pendingRefundAmount`
-    // (which the cap counts), so a concurrent or retried refund cannot double-spend
-    // the remaining balance, and we persist a `pending` refund PaymentAttempt whose
-    // `_id` is the durable anchor + the source of the provider idempotency key. The
-    // reservation `$inc` is atomic per-document; the `$expr` cap makes it race-safe.
-    const refundAttemptId = new Types.ObjectId();
     const refundKey = options.idempotencyKey;
-    const refundProviderKey = providerKeyFor(
+    const reservation = await this.reserveRefund(
+      transaction,
+      refundAmount,
       refundKey,
-      transaction.organizationId ? String(transaction.organizationId) : undefined,
-      this.deps.tenantScopeEnabled === true,
+      {
+        ...(options.reason !== undefined ? { refundReason: options.reason } : {}),
+        ...(options.metadata ? { refundMetadata: options.metadata } : {}),
+      },
+      undefined,
+      ctx,
     );
-    const REFUNDABLE_STATUSES = [
-      TRANSACTION_STATUS.VERIFIED,
-      TRANSACTION_STATUS.COMPLETED,
-      TRANSACTION_STATUS.PARTIALLY_REFUNDED,
-    ];
-    let reserved = false;
-    let capBlocked = false;
-    try {
-      await withTransaction(
-        this.Model.db as unknown as { startSession(): Promise<ClientSession> },
-        async (session) => {
-          const writeOpts = this.optsFromCtx(ctx, { session });
-          const r = await this.findOneAndUpdate(
-            {
-              _id: transaction._id,
-              status: { $in: REFUNDABLE_STATUSES },
-              $expr: {
-                $lte: [
-                  {
-                    $add: [
-                      { $ifNull: ['$refundedAmount', 0] },
-                      { $ifNull: ['$pendingRefundAmount', 0] },
-                      refundAmount,
-                    ],
-                  },
-                  '$amount',
-                ],
-              },
-            },
-            { $inc: { pendingRefundAmount: refundAmount } },
-            { ...writeOpts, returnDocument: 'after' },
-          );
-          if (!r) {
-            capBlocked = true;
-            return; // cap hit or non-refundable status → reserved stays false
-          }
-          // ATOMIC CLAIM: the attempt's `attempt_command_identity` unique index. A
-          // concurrent / retried refund with the SAME (org, refund, provider, key)
-          // throws E11000 here → this withTransaction ABORTS, rolling back the `$inc`
-          // reservation above, and the catch below loads the winner instead. Through the
-          // repo (session-bound) so tenant scope + hooks stay consistent; the unique
-          // index still fires (repo.create reaches Mongo).
-          await attemptRepo.create(
-            {
-              _id: refundAttemptId,
-              transactionId: transaction._id,
-              operation: 'refund',
-              provider: transaction.method,
-              methodKind: transaction.methodKind,
-              idempotencyKey: refundKey,
-              providerKey: refundProviderKey,
-              amount: refundAmount,
-              currency: transaction.currency,
-              outcome: 'pending',
-              // Kept on the attempt so a RECOVERED refund finalizes with the caller's facts.
-              metadata: {
-                ...(options.reason !== undefined ? { refundReason: options.reason } : {}),
-                ...(options.metadata ? { refundMetadata: options.metadata } : {}),
-              },
-            } as never,
-            this.optsFromCtx(ctx, { session }) as never,
-          );
-          reserved = true;
-        },
-        { allowFallback: this.allowNonTransactional });
-    } catch (err) {
-      if (!isDuplicateKeyError(err)) throw err;
-      // Someone already claimed this refund command. Replay a completed refund;
-      // otherwise it is in-flight / unresolved — do NOT reverse again.
-      const existingRefund = await this.getByQuery(
-        { idempotencyKey: refundKey, type: 'refund' },
-        this.optsFromCtx(ctx, { throwOnNotFound: false }),
-      );
-      if (existingRefund) return existingRefund as TransactionDocument;
+    if (reservation.kind === 'replay') return reservation.refund;
+    if (reservation.kind === 'in_progress') {
       throw new ValidationError(
         'a refund for this idempotencyKey is already in progress or unresolved — ' +
           'reconcile the existing attempt before retrying (never reverse twice).',
         { transactionId, idempotencyKey: refundKey },
       );
     }
-    if (!reserved) {
+    if (reservation.kind === 'blocked') {
       // Cap hit or non-refundable status (a duplicate returned/threw above).
       throw new ValidationError(
-        capBlocked
+        reservation.capBlocked
           ? 'refund exceeds captured amount'
           : `Transaction ${transactionId} refund could not be reserved (non-refundable status)`,
         { transactionId, requested: refundAmount },
       );
     }
+    const { attemptId: refundAttemptId, providerKey: refundProviderKey } = reservation;
 
     const provider = this.deps.providers.get(transaction.method);
     const paymentId = transaction.gateway?.paymentIntentId ?? transaction.gateway?.sessionId ?? transactionId;
@@ -387,6 +315,200 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       options.metadata,
     );
     return refundTxn;
+  }
+
+  /**
+   * RECORD a refund the gateway reports as already completed — one issued OUTSIDE the
+   * engine (the provider's dashboard, its API, a support tool). Called from
+   * `handleWebhook` for a `WebhookEvent.data.refund` WITHOUT a `commandRef`; a refund
+   * carrying the engine's own command ref is owned by `refund()` / `reconcileAttempt`
+   * and never recorded twice here.
+   *
+   * The money has already moved, so there is NO provider call. Otherwise it is the same
+   * path as `refund()`: the amount is reserved under the same atomic cap
+   * (`refundedAmount + pendingRefundAmount + this <= amount`), then finalized by the same
+   * `finalizeConfirmedRefund` — one refund child, the original flipped to
+   * partially_refunded/refunded, ledger + notification bridges, one `payment.refunded`.
+   *
+   * Idempotent on the gateway's refund id: the refund child is keyed
+   * `provider-refund:<provider>:<refundId>`, so a redelivered event, or the
+   * `refund.created` + `refund.updated` pair for one refund, records it once. The attempt
+   * carries the refund id as `providerReference`, so a crash between reserve and finalize
+   * is resolved by the normal reconciliation (`refunds.retrieve(re_…)`).
+   *
+   * Returns the refund transaction, or `null` when there is nothing to record: another
+   * delivery is recording it right now, or the reservation is blocked (the gateway
+   * refunded more than the engine can account for — logged for an operator).
+   */
+  async recordProviderRefund(
+    original: TransactionDocument,
+    signal: ProviderRefundSignal,
+    providerName: string,
+    ctx: RevenueContext = {},
+  ): Promise<TransactionDocument | null> {
+    if (!Number.isInteger(signal.amount) || signal.amount <= 0) return null;
+    const refundKey = `provider-refund:${providerName}:${signal.id}`;
+    const reason = 'refunded at the payment provider';
+
+    // Replay first (as refund() does) — a redelivered event never even reaches the reservation.
+    const recorded = await this.getByQuery(
+      { idempotencyKey: refundKey, type: 'refund' },
+      this.optsFromCtx(ctx, { throwOnNotFound: false }),
+    );
+    if (recorded) return recorded as TransactionDocument;
+
+    const reservation = await this.reserveRefund(
+      original,
+      signal.amount,
+      refundKey,
+      { refundReason: reason, refundMetadata: { providerRefundId: signal.id } },
+      signal.id,
+      ctx,
+    );
+    if (reservation.kind === 'replay') return reservation.refund;
+    if (reservation.kind === 'in_progress') return null;
+    if (reservation.kind === 'blocked') {
+      this.deps.logger?.error(
+        '[revenue] provider-reported refund could not be reserved — the gateway refunded more ' +
+          'than this payment can account for, or the payment is not refundable; reconcile manually',
+        {
+          transactionId: String(original._id),
+          providerRefundId: signal.id,
+          amount: signal.amount,
+        },
+      );
+      return null;
+    }
+    const { transaction } = await this.finalizeConfirmedRefund(
+      original,
+      signal.amount,
+      refundKey,
+      reason,
+      reservation.attemptId,
+      ctx,
+      { providerRefundId: signal.id },
+    );
+    return transaction;
+  }
+
+  /**
+   * RESERVE-BEFORE-I/O + durable refund attempt (phase 3, atomic). Shared by `refund()`
+   * and `recordProviderRefund()` so both enforce one cap and one claim.
+   *
+   * The original is NOT flipped to refunded here — that happens only at finalize.
+   * Instead the amount is RESERVED against `pendingRefundAmount` (which the cap counts),
+   * so a concurrent or retried refund cannot double-spend the remaining balance, and a
+   * `pending` refund PaymentAttempt is persisted whose `_id` is the durable anchor + the
+   * source of the provider idempotency key. The reservation `$inc` is atomic
+   * per-document; the `$expr` cap makes it race-safe.
+   *
+   *   - `reserved`    — this call holds the reservation and the attempt.
+   *   - `replay`      — the refund for this key is already recorded.
+   *   - `in_progress` — another caller claimed this key and has not finished.
+   *   - `blocked`     — cap hit or non-refundable status; nothing was written.
+   */
+  private async reserveRefund(
+    transaction: TransactionDocument,
+    refundAmount: number,
+    refundKey: string,
+    attemptMetadata: Record<string, unknown>,
+    providerReference: string | undefined,
+    ctx: RevenueContext,
+  ): Promise<
+    | { kind: 'reserved'; attemptId: Types.ObjectId; providerKey: string }
+    | { kind: 'replay'; refund: TransactionDocument }
+    | { kind: 'in_progress' }
+    | { kind: 'blocked'; capBlocked: boolean }
+  > {
+    const attemptRepo = this.deps.paymentAttempts;
+    if (!attemptRepo) {
+      throw new ConfigurationError(
+        'PaymentAttempt repository is not wired — defineRevenue must register it at bind (phase 3 core).',
+      );
+    }
+    const refundAttemptId = new Types.ObjectId();
+    const refundProviderKey = providerKeyFor(
+      refundKey,
+      transaction.organizationId ? String(transaction.organizationId) : undefined,
+      this.deps.tenantScopeEnabled === true,
+    );
+    const REFUNDABLE_STATUSES = [
+      TRANSACTION_STATUS.VERIFIED,
+      TRANSACTION_STATUS.COMPLETED,
+      TRANSACTION_STATUS.PARTIALLY_REFUNDED,
+    ];
+    let reserved = false;
+    let capBlocked = false;
+    try {
+      await withTransaction(
+        this.Model.db as unknown as { startSession(): Promise<ClientSession> },
+        async (session) => {
+          const writeOpts = this.optsFromCtx(ctx, { session });
+          const r = await this.findOneAndUpdate(
+            {
+              _id: transaction._id,
+              status: { $in: REFUNDABLE_STATUSES },
+              $expr: {
+                $lte: [
+                  {
+                    $add: [
+                      { $ifNull: ['$refundedAmount', 0] },
+                      { $ifNull: ['$pendingRefundAmount', 0] },
+                      refundAmount,
+                    ],
+                  },
+                  '$amount',
+                ],
+              },
+            },
+            { $inc: { pendingRefundAmount: refundAmount } },
+            { ...writeOpts, returnDocument: 'after' },
+          );
+          if (!r) {
+            capBlocked = true;
+            return; // cap hit or non-refundable status → reserved stays false
+          }
+          // ATOMIC CLAIM: the attempt's `attempt_command_identity` unique index. A
+          // concurrent / retried refund with the SAME (org, refund, provider, key)
+          // throws E11000 here → this withTransaction ABORTS, rolling back the `$inc`
+          // reservation above, and the catch below loads the winner instead. Through the
+          // repo (session-bound) so tenant scope + hooks stay consistent; the unique
+          // index still fires (repo.create reaches Mongo).
+          await attemptRepo.create(
+            {
+              _id: refundAttemptId,
+              transactionId: transaction._id,
+              operation: 'refund',
+              provider: transaction.method,
+              methodKind: transaction.methodKind,
+              idempotencyKey: refundKey,
+              providerKey: refundProviderKey,
+              amount: refundAmount,
+              currency: transaction.currency,
+              outcome: 'pending',
+              // A gateway-reported refund already has its id — reconciliation retrieves by it.
+              ...(providerReference !== undefined ? { providerReference } : {}),
+              // Kept on the attempt so a RECOVERED refund finalizes with the caller's facts.
+              metadata: attemptMetadata,
+            } as never,
+            this.optsFromCtx(ctx, { session }) as never,
+          );
+          reserved = true;
+        },
+        { allowFallback: this.allowNonTransactional });
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+      // Someone already claimed this refund command. Replay a completed refund;
+      // otherwise it is in-flight / unresolved — do NOT reverse again.
+      const existingRefund = await this.getByQuery(
+        { idempotencyKey: refundKey, type: 'refund' },
+        this.optsFromCtx(ctx, { throwOnNotFound: false }),
+      );
+      if (existingRefund) return { kind: 'replay', refund: existingRefund as TransactionDocument };
+      return { kind: 'in_progress' };
+    }
+    if (!reserved) return { kind: 'blocked', capBlocked };
+    return { kind: 'reserved', attemptId: refundAttemptId, providerKey: refundProviderKey };
   }
 
   /**
@@ -659,7 +781,10 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
           // The key the provider was SENT; an attempt with no `providerKey` sent the raw key.
           idempotencyKey: attempt.providerKey ?? attempt.idempotencyKey,
           ...(attempt.providerReference ? { refundRef: attempt.providerReference } : {}),
-        }),
+        }, buildPaymentCommandContext({
+          operation: 'observe-refund', subjectId: String(original._id), organizationId: ctxScoped.organizationId,
+          idempotencyKey: attempt.providerKey ?? attempt.idempotencyKey,
+        })),
       );
 
       if (status.outcome === 'confirmed' && status.value.status === 'succeeded') {
@@ -732,7 +857,10 @@ export abstract class TransactionRefundRepository extends TransactionBankFeedRep
       // create); there is nothing to resolve server-side.
       return { attemptId, previousOutcome, resolved: false, note: 'no provider reference — awaiting same-key retry' };
     }
-    const status = await executeProviderCommand(() => provider.getStatus(providerRef));
+    const status = await executeProviderCommand(() => provider.getStatus(providerRef, buildPaymentCommandContext({
+      operation: 'observe-intent', subjectId: String(attempt._id), organizationId: ctxScoped.organizationId,
+      idempotencyKey: attempt.providerKey ?? attempt.idempotencyKey,
+    })));
     if (status.outcome === 'confirmed' && status.value.status === 'failed') {
       const claimed = await attemptRepo.claim(
         String(attempt._id),

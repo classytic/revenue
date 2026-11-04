@@ -29,6 +29,7 @@ import { verifyPayment, paymentIntentToResult } from '../lib/verify.js';
 import { refund, getRefundStatus } from '../lib/refund.js';
 import { stripePaymentIntentToKind } from '../lib/method-kind.js';
 import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
+import { withRefundSignal } from '../lib/refund-signal.js';
 
 const DEFAULT_PLATFORM_FEE_PERCENT = 1;
 
@@ -158,6 +159,8 @@ export class StripeConnectProvider extends StripeProviderBase {
       type: event.type,
       data: {
         ...(paymentIntentId ? { paymentIntentId } : {}),
+        // A completed refund (dashboard/API or ours) — see lib/refund-signal.
+        ...withRefundSignal(event),
         objectId: obj.id,
       },
       ...(methodKind ? { methodKind } : {}),
@@ -179,6 +182,8 @@ export class StripeConnectProvider extends StripeProviderBase {
 
   getCapabilities(): ProviderCapabilities {
     return {
+      supportsIdempotentCreate: true,
+      idempotentCreateWindowMs: 24 * 60 * 60 * 1000,
       supportsWebhooks: true,
       supportsRefunds: true,
       supportsPartialRefunds: true,

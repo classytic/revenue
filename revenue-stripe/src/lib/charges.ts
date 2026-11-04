@@ -18,6 +18,7 @@ import type {
   ProviderIntent,
 } from '@classytic/primitives/payment-gateway';
 import type { StripeIntentOptions } from '../types.js';
+import { mapIntentStatus } from './verify.js';
 
 export interface CreateIntentDeps {
   stripe: Stripe;
@@ -71,7 +72,7 @@ export async function createIntent(
     createParams.statement_descriptor = stripeOpts.statementDescriptor.slice(0, 22);
   if (stripeOpts.captureMethod) createParams.capture_method = stripeOpts.captureMethod;
   if (stripeOpts.paymentMethodTypes?.length)
-    createParams.payment_method_types = stripeOpts.paymentMethodTypes;
+    createParams.allowed_payment_method_types = stripeOpts.paymentMethodTypes;
   if (stripeOpts.customerId) createParams.customer = stripeOpts.customerId;
   if (stripeOpts.paymentMethodId) {
     createParams.payment_method = stripeOpts.paymentMethodId;
@@ -99,7 +100,7 @@ export async function createIntent(
   return {
     id: intent.id,
     provider: 'stripe',
-    status: intent.status,
+    status: mapIntentStatus(intent.status),
     amount: { amount: intent.amount, currency: currencyCode(intent.currency.toUpperCase()) },
     paymentIntentId: intent.id,
     sessionId: null,

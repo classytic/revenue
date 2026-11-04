@@ -293,11 +293,28 @@ export class IntentOutcomeUnknownError extends Error {
   constructor(idempotencyKey: string, details: { causeCode?: string } = {}) {
     super(
       `Payment intent outcome UNKNOWN (idempotency key ${idempotencyKey}). The provider may ` +
-        'have created an intent that was never recorded locally. Retry only with the SAME ' +
-        'idempotency key, so the gateway replays rather than creating a second intent.',
+        'have created an intent that was never recorded locally. Reconcile before another ' +
+        'create; a same-key retry is safe only when the gateway guarantees idempotency.',
     );
     this.name = 'IntentOutcomeUnknownError';
     this.idempotencyKey = idempotencyKey;
     if (details.causeCode !== undefined) this.causeCode = details.causeCode;
+  }
+}
+
+/** Reject invalid, expired or uncorrelated returns without revealing payment existence. */
+export class PaymentReturnRejectedError extends Error {
+  readonly code = 'PAYMENT_RETURN_REJECTED';
+  readonly status = 403;
+  constructor() { super('Payment return could not be verified.'); this.name = 'PaymentReturnRejectedError'; }
+}
+
+/** Execution may have moved money. Retrying this command queries the existing attempt. */
+export class ConfirmationOutcomeUnknownError extends Error {
+  readonly code = 'CONFIRMATION_OUTCOME_UNKNOWN';
+  readonly status = 502;
+  constructor(readonly transactionId: string) {
+    super('Payment confirmation is unresolved. Reconcile the existing attempt before another payment.');
+    this.name = 'ConfirmationOutcomeUnknownError';
   }
 }

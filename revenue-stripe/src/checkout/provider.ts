@@ -35,6 +35,7 @@ import type { StripeCheckoutProviderConfig, StripeRefundOptions } from '../types
 import { refund, getRefundStatus } from '../lib/refund.js';
 import { stripePaymentIntentToKind } from '../lib/method-kind.js';
 import { buildWebhookEnrichment } from '../lib/webhook-meta.js';
+import { withRefundSignal } from '../lib/refund-signal.js';
 
 export class StripeCheckoutProvider extends StripeProviderBase {
   public override readonly name: string = 'stripe-checkout';
@@ -235,6 +236,8 @@ export class StripeCheckoutProvider extends StripeProviderBase {
       type: event.type,
       data: {
         ...(paymentIntentId ? { paymentIntentId } : {}),
+        // A completed refund (dashboard/API or ours) — see lib/refund-signal.
+        ...withRefundSignal(event),
         /**
          * `sessionId` — the field the revenue kernel actually looks a
          * transaction up by.
@@ -274,12 +277,20 @@ export class StripeCheckoutProvider extends StripeProviderBase {
 
   getCapabilities(): ProviderCapabilities {
     return {
+      supportsIdempotentCreate: true,
+      idempotentCreateWindowMs: 24 * 60 * 60 * 1000,
       supportsWebhooks: true,
       supportsRefunds: true,
       supportsPartialRefunds: true,
       requiresManualVerification: false,
     };
   }
+}
+
+/** The PaymentIntent behind a Checkout session — `null` until the customer pays. */
+function paymentIntentIdOf(session: Stripe.Checkout.Session): string | undefined {
+  const pi = session.payment_intent;
+  return typeof pi === 'string' ? pi : (pi?.id ?? undefined);
 }
 
 function checkoutSessionToResult(session: Stripe.Checkout.Session): PaymentResult {
@@ -293,6 +304,9 @@ function checkoutSessionToResult(session: Stripe.Checkout.Session): PaymentResul
       currency: currencyCode((session.currency ?? 'usd').toUpperCase()),
     },
     paidAt: paid && session.created ? new Date(session.created * 1000) : undefined,
+    // The session is what we verify by, but refunds/disputes name the PaymentIntent —
+    // report it so the engine can link them back to this payment.
+    ...(paymentIntentIdOf(session) ? { paymentIntentId: paymentIntentIdOf(session) } : {}),
     metadata: {
       checkoutSessionStatus: session.status ?? '',
       paymentStatus: session.payment_status,

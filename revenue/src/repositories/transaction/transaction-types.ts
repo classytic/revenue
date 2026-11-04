@@ -93,7 +93,7 @@ export interface RefundView {
  */
 export interface PaymentAttemptView {
   id: string;
-  operation: 'create-intent' | 'refund';
+  operation: 'create-intent' | 'confirm' | 'refund';
   provider: string;
   methodKind?: string;
   /** `unknown` is a REAL outcome, not a failure — see the three-valued result contract. */

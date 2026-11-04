@@ -21,6 +21,8 @@ export async function warmModels(engine: RevenueEngine): Promise<void> {
 
   tasks.push(models.Transaction.createCollection().catch(() => undefined));
   tasks.push(models.Transaction.init());
+  tasks.push(models.PaymentAttempt.createCollection().catch(() => undefined));
+  tasks.push(models.PaymentAttempt.init());
 
   if (models.Subscription) {
     tasks.push(models.Subscription.createCollection().catch(() => undefined));

@@ -228,7 +228,7 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
     existing,
     schema: () => {
       const attemptSchema = buildPaymentAttemptSchema({ scoped: scope.enabled });
-      injectTenantField(attemptSchema, scope);
+      injectTenantField(attemptSchema, scope, { skipIndexes: ['attempt_return_proof_str'] });
       // Auto-index for PaymentAttempt follows the Transaction flag (no dedicated override key).
       applyAutoIndex(attemptSchema, 'Transaction', autoIndex);
       return attemptSchema;

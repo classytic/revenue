@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 — 2026-11-04
+
+### Added — the provider declares an idempotent create
+
+`supportsIdempotentCreate: true` with `idempotentCreateWindowMs: null` (no expiry). Creating a manual payment has no external side effect, so re-driving an unresolved create under the same key is safe; `@classytic/revenue` 2.15 reads these capability flags before it will redrive a create.
+
+### Changed — peer floors
+
+`@classytic/revenue >=2.15.0`, `@classytic/primitives >=0.36.0`. Dev toolchain: TypeScript 7, tsdown 0.23, vitest 5.
+
 ## 1.0.1 — 2026-10-12
 
 ### Fixed — the payment instructions showed the minor-unit integer, not the amount

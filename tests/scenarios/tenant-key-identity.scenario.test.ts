@@ -1,3 +1,4 @@
+import { intentRequestFingerprint } from '../../revenue/src/providers/intent-identity.js';
 /**
  * On a tenant-scoped engine a caller's idempotency key is the tenant's own: two tenants may use
  * the same key, and the provider (possibly ONE shared account) is sent a tenant-namespaced key.
@@ -13,6 +14,9 @@ import { bindRevenue } from '../helpers/bind-revenue.js';
 
 /** Dedups on the key like a real gateway, and records what it was sent. */
 class KeyedProvider extends FakeProvider {
+  override getCapabilities() {
+    return { ...super.getCapabilities(), supportsIdempotentCreate: true, idempotentCreateWindowMs: null };
+  }
   readonly intentKeys: string[] = [];
   readonly refundKeys: string[] = [];
   private byKey = new Map<string, Awaited<ReturnType<FakeProvider['createIntent']>>>();
@@ -89,7 +93,7 @@ describe('tenant-scoped idempotency identity', () => {
     expect(provider.intentKeys).toHaveLength(2);
   });
 
-  it('re-driving an attempt made before namespacing re-sends the raw key it was sent', async () => {
+  it('a stored attempt re-sends exactly the provider key it first sent, even when it was the raw key', async () => {
     const attempts = mongoose.connection.collection('revenue_payment_attempts');
     const names = (await mongoose.connection.db!.listCollections().toArray()).map((c) => c.name);
     const collection = names.find((n) => /payment.?attempt/i.test(n));
@@ -100,6 +104,8 @@ describe('tenant-scoped idempotency identity', () => {
       provider: 'fake',
       methodKind: 'card',
       idempotencyKey: 'legacy-1',
+      providerKey: 'legacy-1',
+      requestFingerprint: intentRequestFingerprint({ amount: 1000, gateway: 'fake', methodKind: 'card', idempotencyKey: 'legacy-1' }, 'USD'),
       amount: 1000,
       currency: 'USD',
       outcome: 'pending',

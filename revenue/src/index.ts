@@ -94,13 +94,6 @@ export type { PaymentAttemptDocument } from './models/payment-attempt.schema.js'
 export type { SubscriptionDocument } from './models/subscription.schema.js';
 export type { SettlementDocument } from './models/settlement.schema.js';
 
-// ─── Phase 3: PaymentAttempt backfill (one attempt per existing payment_flow txn) ───
-export {
-  backfillCreatePaymentAttempts,
-  type BackfillPaymentAttemptsOptions,
-  type BackfillPaymentAttemptsResult,
-} from './backfill/payment-attempts.js';
-
 // ─── Repositories ───
 export {
   TransactionRepository,

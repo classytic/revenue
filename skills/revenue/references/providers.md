@@ -1,6 +1,12 @@
 # Building Custom Providers
 
-All payment providers extend `PaymentProvider` and implement 5 required methods. The system handles retry, circuit breaker, and event emission — providers only deal with gateway communication.
+New adapters implement `PaymentProviderPort` from `@classytic/primitives/payment-gateway` directly and need no Revenue-engine runtime dependency. The source contract is authoritative; older builder/DTO examples below are historical and do not describe the current port.
+
+For Bangladesh use `@classytic/revenue-bd/bkash` (local development implementation); follow `revenue-bd/README.md` for the v2 API, token-store and callback requirements. Do not reconstruct bKash from the older sketch below. Nagad and profiles are not implemented entries.
+
+`confirmPayment` is an optional money-moving command, advertised by `supportsConfirmation`. Revenue's `transaction.confirm` claims execution before I/O and requires a transactional outbox. Subsequent calls query rather than execute again. `verifyPayment` and `getStatus` remain read-only; Revenue refuses the old verify path for explicit-confirmation providers. `PaymentResult.merchantReference`, amount, currency and provider identity are checked before finalization. Timeouts remain unknown.
+
+Declare `supportsIdempotentCreate: true` and `idempotentCreateWindowMs` only when same-key creates really are deduplicated. A null window means no expiry; a positive integer bounds retries from the original attempt timestamp. Revenue blocks unresolved-create redrive after expiry or without both declarations. Manual uses null and Stripe uses 24 hours; bKash declares no create guarantee. Local claims alone cannot deduplicate an external gateway write.
 
 ## PaymentProvider Base Class
 
@@ -394,3 +400,5 @@ The system automatically:
 3. Updates transaction status based on event type
 4. Emits `webhook.processed` event
 5. Checks idempotency (duplicate webhooks are ignored)
+
+Hosted browser returns use `ProviderIntent.returnProof` and `transaction.confirmReturn`. Persist only a digest on the attempt; never expose the raw token in transaction metadata. The opt-in Spine POST exchange and Commerce Client subpath are separate from the gateway GET landing page. Only execute/query results decide money state. See `revenue-bd/README.md`.

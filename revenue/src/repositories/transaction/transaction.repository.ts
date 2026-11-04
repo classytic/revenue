@@ -3,6 +3,8 @@ import type { Model } from 'mongoose';
 import { Types } from 'mongoose';
 import type { TransactionDocument } from '../../models/transaction.schema.js';
 import type { RevenueContext } from '../../core/context.js';
+import { storedReturnProof } from '../../providers/return-proof.js';
+import { assertIntentIdentity, intentRequestFingerprint, rejectIntentIdentity } from '../../providers/intent-identity.js';
 import { executeProviderCommand } from '../../providers/execute-command.js';
 import { buildPaymentCommandContext, providerKeyFor } from '../../providers/command-context.js';
 import { currencyCode } from '@classytic/primitives/currency';
@@ -30,7 +32,7 @@ import {
 import { calculateCommission } from '../../shared/calculators/commission.js';
 import { calculateTax, getTaxType, type TaxCalculation } from '../../shared/calculators/tax.js';
 import { calculateSplits, calculateOrganizationPayout } from '../../shared/calculators/splits.js';
-import { TransactionRefundRepository } from './refund.repository.js';
+import { TransactionConfirmationRepository } from './confirmation.repository.js';
 
 /**
  * Common webhook-signature header names across gateways (Stripe, GitHub-style
@@ -103,7 +105,7 @@ function extractWebhookSignature(headers?: Record<string, string>): string {
  * (PACKAGE_RULES §4). Composite results store the secondary docs on
  * the primary's `metadata` / `relatedTransactionId`.
  */
-export class TransactionRepository extends TransactionRefundRepository {
+export class TransactionRepository extends TransactionConfirmationRepository {
   constructor(model: Model<TransactionDocument>, plugins: PluginType[] = []) {
     super(model, plugins);
   }
@@ -140,6 +142,14 @@ export class TransactionRepository extends TransactionRefundRepository {
         ? this.deps.defaultCurrency
         : currencyCode(params.currency);
     const provider = this.deps.providers.get(params.gateway);
+    if (!Number.isSafeInteger(params.amount) || params.amount < 0) throw new ValidationError('Payment amount must be safe, non-negative whole minor units.');
+    const requestFingerprint = intentRequestFingerprint(params, currency);
+    const assertReplay = async (transaction: TransactionDocument) => {
+      assertIntentIdentity(params, currency, transaction);
+      const attempt = await this.deps.paymentAttempts?.getByQuery({ operation: 'create-intent', provider: params.gateway, idempotencyKey: params.idempotencyKey }, this.optsFromCtx(ctx, { select: '+requestFingerprint', throwOnNotFound: false }));
+      if (attempt && attempt.requestFingerprint !== requestFingerprint) rejectIntentIdentity();
+      return transaction;
+    };
 
     // Idempotency
     if (params.idempotencyKey) {
@@ -147,8 +157,10 @@ export class TransactionRepository extends TransactionRefundRepository {
         { idempotencyKey: params.idempotencyKey },
         this.optsFromCtx(ctx, { throwOnNotFound: false }),
       );
-      if (existing) return existing;
+      if (existing) return assertReplay(existing);
     }
+
+    if (params.amount > 0 && ctx.session) throw new ValidationError('Payment intent creation must run outside a caller transaction.');
 
     // Commission
     const commissionRate = this.deps.commission?.defaultRate ?? 0;
@@ -240,6 +252,7 @@ export class TransactionRepository extends TransactionRefundRepository {
             methodKind: params.methodKind,
             idempotencyKey: intentKey,
             providerKey,
+            requestFingerprint,
             amount: params.amount,
             currency,
             outcome: 'pending',
@@ -249,21 +262,30 @@ export class TransactionRepository extends TransactionRefundRepository {
       } catch (err) {
         if (!isDuplicateKeyError(err)) throw err;
         // This command identity is already claimed. Load it (branch-scoped):
-        const claimedBy = (await attemptRepo.getByQuery(
+        const claimedBy = await attemptRepo.getByQuery(
           {
             operation: 'create-intent',
-            provider: params.gateway,
             idempotencyKey: intentKey,
           },
-          this.optsFromCtx(ctx, { throwOnNotFound: false }),
-        )) as { _id?: unknown; transactionId?: unknown; providerKey?: string } | null;
+          this.optsFromCtx(ctx, { select: '+requestFingerprint', throwOnNotFound: false }),
+        );
+        if (claimedBy && (claimedBy.provider !== params.gateway || claimedBy.amount !== params.amount || claimedBy.currency !== currency || claimedBy.methodKind !== params.methodKind
+          || claimedBy.requestFingerprint !== requestFingerprint)) rejectIntentIdentity();
         if (claimedBy?.transactionId) {
           // Already produced a transaction → replay it (idempotent).
           const txn = await this.getById(
             String(claimedBy.transactionId),
             this.optsFromCtx(ctx, { throwOnNotFound: false }),
           );
-          if (txn) return txn as TransactionDocument;
+          if (txn) return assertReplay(txn);
+        }
+        if (!claimedBy) throw new IntentOutcomeUnknownError(intentKey, { causeCode: 'status_unavailable' });
+        const capability = provider.getCapabilities();
+        const window = capability.idempotentCreateWindowMs;
+        const age = claimedBy?.createdAt instanceof Date ? Date.now() - claimedBy.createdAt.getTime() : Number.NaN;
+        const withinWindow = window === null || (typeof window === 'number' && Number.isSafeInteger(window) && window > 0 && age >= 0 && age < window);
+        if (capability.supportsIdempotentCreate !== true || !withinWindow) {
+          throw new IntentOutcomeUnknownError(intentKey, { causeCode: 'status_unavailable' });
         }
         // #2: pending/unknown claim (in-flight or a lost-response orphan). RE-DRIVE
         // rather than deadlock: reuse the existing attempt and fall through to the
@@ -273,8 +295,8 @@ export class TransactionRepository extends TransactionRefundRepository {
         // → replay), so two racing re-drives converge on ONE transaction.
         if (claimedBy?._id) {
           createAttemptId = claimedBy._id as Types.ObjectId;
-          // Re-send EXACTLY what the first attempt sent; an attempt with no `providerKey` sent the raw key.
-          providerKey = claimedBy.providerKey ?? intentKey;
+          // Re-send EXACTLY what the first attempt sent.
+          providerKey = claimedBy.providerKey ?? providerKey;
         }
       }
 
@@ -284,6 +306,7 @@ export class TransactionRepository extends TransactionRefundRepository {
         ...(ctx.organizationId ? { organizationId: ctx.organizationId } : {}),
         idempotencyKey: providerKey,
       });
+      const intentStartedAt = Date.now();
       const intentOutcome = await executeProviderCommand(
         () =>
           provider.createIntent(
@@ -359,6 +382,16 @@ export class TransactionRepository extends TransactionRefundRepository {
         });
       }
       const intent = intentOutcome.value;
+      // A private proof must be durable before its checkout URL can leave this command.
+      if (intent.returnProof) {
+        try {
+          const returnProof = storedReturnProof(intent, intentStartedAt, ctx.organizationId);
+          const saved = await attemptRepo.update(String(createAttemptId), { returnProof }, this.optsFromCtx(ctx));
+          if (!saved) throw new ConfigurationError('Payment return credential was not persisted.');
+        } catch {
+          throw new IntentOutcomeUnknownError(intentKey, { causeCode: 'status_unavailable' });
+        }
+      }
       gatewayData = {
         type: params.gateway,
         sessionId: intent.sessionId,
@@ -367,6 +400,7 @@ export class TransactionRepository extends TransactionRefundRepository {
           clientSecret: intent.clientSecret,
           paymentUrl: intent.paymentUrl,
           instructions: intent.instructions,
+          merchantReference: intentCommand.merchantReference,
         },
       };
       // Attempt confirmed — record the gateway identifiers on the durable row.
@@ -440,7 +474,7 @@ export class TransactionRepository extends TransactionRefundRepository {
           { idempotencyKey: effectiveIdempotencyKey },
           this.optsFromCtx(ctx, { throwOnNotFound: false }),
         );
-        if (existing) return existing as TransactionDocument;
+        if (existing) return assertReplay(existing);
       }
       throw err;
     }
@@ -488,8 +522,19 @@ export class TransactionRepository extends TransactionRefundRepository {
     if (!transaction) throw new TransactionNotFoundError(paymentIntentId);
 
     const provider = this.deps.providers.get(transaction.method);
-    const intentId = transaction.gateway?.paymentIntentId ?? transaction.gateway?.sessionId ?? paymentIntentId;
-    const paymentResult = await provider.verifyPayment(intentId as string);
+    if (provider.getCapabilities().supportsConfirmation) {
+      throw new ValidationError('This provider requires the durable confirm command; verification cannot execute payments.');
+    }
+    // Session FIRST — the same order handleWebhook verifies in. A hosted checkout verifies
+    // by its session; once its real payment id has been linked (below), reading the
+    // payment id first would hand a `pi_…` to a session lookup. For intent-only flows
+    // there is no distinct session, so this still resolves to the payment id.
+    const intentId = transaction.gateway?.sessionId ?? transaction.gateway?.paymentIntentId ?? paymentIntentId;
+    const reference = transaction.gateway?.metadata?.merchantReference;
+    const paymentResult = await provider.verifyPayment(String(intentId), buildPaymentCommandContext({
+      operation: 'verify', subjectId: String(transaction._id), organizationId: ctx.organizationId,
+      ...(typeof reference === 'string' ? { merchantReference: reference } : {}),
+    }));
 
     let newStatus: string;
     if (paymentResult.status === 'succeeded') newStatus = TRANSACTION_STATUS.VERIFIED;
@@ -498,6 +543,21 @@ export class TransactionRepository extends TransactionRefundRepository {
     else newStatus = TRANSACTION_STATUS.PROCESSING;
 
     const set: Record<string, unknown> = {};
+    // A hosted checkout verifies by its SESSION, but refunds and disputes only name the
+    // payment. At creation no payment exists yet, so `gateway.paymentIntentId` holds the
+    // session id as a placeholder; replace it with the real payment id the provider now
+    // reports, so those later events (routed by `gateway.paymentIntentId`) find this
+    // transaction and `refund()` reverses the payment rather than a session. A genuine,
+    // distinct payment id is never overwritten.
+    const storedPaymentId = transaction.gateway?.paymentIntentId;
+    const reportedPaymentId = paymentResult.paymentIntentId;
+    if (
+      reportedPaymentId &&
+      reportedPaymentId !== storedPaymentId &&
+      (!storedPaymentId || storedPaymentId === transaction.gateway?.sessionId)
+    ) {
+      set['gateway.paymentIntentId'] = reportedPaymentId;
+    }
     if (newStatus === TRANSACTION_STATUS.VERIFIED) {
       set.verifiedAt = new Date();
       set.verifiedBy = options.verifiedBy;
@@ -603,6 +663,9 @@ export class TransactionRepository extends TransactionRefundRepository {
   ): Promise<TransactionDocument> {
     const transaction = await this.getById(id, this.optsFromCtx(ctx)) as TransactionDocument | null;
     if (!transaction) throw new TransactionNotFoundError(id);
+    if (this.deps.providers.has(transaction.method) && this.deps.providers.get(transaction.method).getCapabilities().supportsConfirmation) {
+      throw new ValidationError('This payment outcome belongs to the provider; reconcile its confirmation instead of rejecting it manually.');
+    }
 
     // Machine-gated CAS — same as verify(). An illegal source (already-verified
     // / terminal) throws InvalidStateTransitionError natively, which hosts map
@@ -682,6 +745,9 @@ export class TransactionRepository extends TransactionRefundRepository {
   ): Promise<TransactionDocument> {
     const transaction = await this.getById(id, this.optsFromCtx(ctx)) as TransactionDocument | null;
     if (!transaction) throw new TransactionNotFoundError(id);
+    if (this.deps.providers.has(transaction.method) && this.deps.providers.get(transaction.method).getCapabilities().supportsConfirmation) {
+      throw new ValidationError('This provider has no operator void integration; reconcile the payment or refund a verified collection.');
+    }
 
     // Captured BEFORE the CAS — afterwards the row reads `cancelled` and the
     // fact of whether money had been recognised is no longer readable from it.
@@ -812,6 +878,20 @@ export class TransactionRepository extends TransactionRefundRepository {
       ),
       ctx,
     );
+
+    /**
+     * A refund the gateway completed. Without our command ref it was issued OUTSIDE the
+     * engine (dashboard, API) and is recorded through the normal reserve→finalize path;
+     * with it, `refund()` / `reconcileAttempt` already own it and recording here would
+     * count it twice.
+     */
+    const refundSignal = webhookEvent.data?.refund;
+    if (refundSignal) {
+      if (!refundSignal.commandRef) {
+        await this.recordProviderRefund(updated as TransactionDocument, refundSignal, providerName, ctx);
+      }
+      return ((await this.getByQuery({ _id: updated._id }, readOpts)) ?? updated) as TransactionDocument;
+    }
 
     if (
       updated.status === TRANSACTION_STATUS.PENDING ||
