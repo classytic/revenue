@@ -11,6 +11,7 @@ import type { RevenueBridges } from '../../bridges/revenue-bridges.js';
 import type { CommissionConfig } from '../../engine/engine-types.js';
 import type { TaxConfig } from '../../shared/calculators/tax.js';
 import type { PaymentAttemptRepository } from '../payment-attempt.repository.js';
+import type { ReturnProofRouteStore } from '../../providers/return-proof-routes.js';
 
 /**
  * Deps for the transaction repository. Extends {@link BaseRevenueRepoDeps}
@@ -59,6 +60,8 @@ export interface TransactionRepoDeps extends BaseRevenueRepoDeps {
    * `defineRevenue`; the create/refund paths require it.
    */
   paymentAttempts?: PaymentAttemptRepository;
+  /** Digest -> tenant directory read by `confirmReturn` before the tenant is known. Core: injected by `defineRevenue`. */
+  returnProofRoutes?: ReturnProofRouteStore;
 }
 
 /**

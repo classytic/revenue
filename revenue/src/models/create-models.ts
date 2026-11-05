@@ -21,6 +21,7 @@ import {
 import { buildSubscriptionSchema, type SubscriptionDocument } from './subscription.schema.js';
 import { buildSettlementSchema, type SettlementDocument } from './settlement.schema.js';
 import { buildPaymentAttemptSchema, type PaymentAttemptDocument } from './payment-attempt.schema.js';
+import { buildReturnProofRouteSchema, type ReturnProofRouteDocument } from './return-proof-route.schema.js';
 import type { ResolvedTenantConfig } from '@classytic/repo-core/tenant';
 import { assertIndexDeclaration, injectTenantField, type IndexDeclaration } from './inject-tenant.js';
 
@@ -32,6 +33,8 @@ export interface RevenueModels {
    * call so an orphaned/unknown intent is always visible. See payment-attempt.schema.ts.
    */
   PaymentAttempt: Model<PaymentAttemptDocument>;
+  /** Digest -> owning tenant for browser returns. Core, deliberately not tenant-scoped. See return-proof-route.schema.ts. */
+  ReturnProofRoute: Model<ReturnProofRouteDocument>;
   Subscription?: Model<SubscriptionDocument>;
   Settlement?: Model<SettlementDocument>;
 }
@@ -58,7 +61,7 @@ export interface RevenueSchemaOptions {
   settlement?: RevenueModelExtensions;
 }
 
-export const REVENUE_MODEL_NAMES = ['Transaction', 'PaymentAttempt', 'Subscription', 'Settlement'] as const;
+export const REVENUE_MODEL_NAMES = ['Transaction', 'PaymentAttempt', 'ReturnProofRoute', 'Subscription', 'Settlement'] as const;
 
 /** Auto-index policy: a single flag, or a per-model override map. */
 export type RevenueAutoIndex = boolean | Partial<Record<'Transaction' | 'Subscription' | 'Settlement', boolean>>;
@@ -70,6 +73,7 @@ export type RevenueAutoIndex = boolean | Partial<Record<'Transaction' | 'Subscri
 const DEFAULT_COLLECTIONS = {
   Transaction: 'revenue_transactions',
   PaymentAttempt: 'revenue_payment_attempts',
+  ReturnProofRoute: 'revenue_return_proof_routes',
   Subscription: 'revenue_subscriptions',
   Settlement: 'revenue_settlements',
 } as const;
@@ -180,12 +184,21 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
           { name: 'idempotencyKey_str', unique: true, partialFilterExpression: { idempotencyKey: { $gte: '' } } },
         );
       }
-      txnSchema.index(
-        { publicId: 1 },
-        // No `deletedAt: null` clause (2026-08-14, soft delete removed) — an unmaintained
-        // clause there is an escape hatch from uniqueness that re-mints public ids.
-        { name: 'publicId_str', unique: true, partialFilterExpression: { publicId: { $gte: '' } } },
-      );
+      // No `deletedAt: null` clause (2026-08-14, soft delete removed) — an unmaintained
+      // clause there is an escape hatch from uniqueness that re-mints public ids.
+      // Per tenant on a field-scoped engine: ids are minted randomly and nothing looks a transaction up
+      // by publicId without a tenant, while a global unique index made the collection unshardable by tenant.
+      if (scope.enabled && scope.strategy === 'field') {
+        txnSchema.index(
+          { [scope.tenantField]: 1, publicId: 1 } as Record<string, 1>,
+          { name: 'transaction_public_id_identity', unique: true, partialFilterExpression: { publicId: { $gte: '' } } },
+        );
+      } else {
+        txnSchema.index(
+          { publicId: 1 },
+          { name: 'publicId_str', unique: true, partialFilterExpression: { publicId: { $gte: '' } } },
+        );
+      }
 
       // 3.0: idempotent bank-feed re-import — gated by `bankFeedIndexes.idempotentImport`.
       // Declared AFTER injection, so for scoped configs we explicitly prepend the tenant
@@ -228,7 +241,7 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
     existing,
     schema: () => {
       const attemptSchema = buildPaymentAttemptSchema({ scoped: scope.enabled });
-      injectTenantField(attemptSchema, scope, { skipIndexes: ['attempt_return_proof_str'] });
+      injectTenantField(attemptSchema, scope);
       // Auto-index for PaymentAttempt follows the Transaction flag (no dedicated override key).
       applyAutoIndex(attemptSchema, 'Transaction', autoIndex);
       return attemptSchema;
@@ -271,12 +284,25 @@ export function defineRevenueModels(config: DefineRevenueModelsConfig): ModelBlu
     });
   }
 
+  // ReturnProofRoute (always): a routing directory, so NO tenant injection.
+  specs.push({
+    name: 'ReturnProofRoute',
+    collection: prefix + DEFAULT_COLLECTIONS.ReturnProofRoute,
+    existing,
+    schema: () => {
+      const routeSchema = buildReturnProofRouteSchema();
+      applyAutoIndex(routeSchema, 'Transaction', autoIndex);
+      return routeSchema;
+    },
+  });
+
   return defineModels<RevenueModels>({
     models: specs,
     assemble: (m) => {
       const models: RevenueModels = {
         Transaction: m.get('Transaction') as Model<TransactionDocument>,
         PaymentAttempt: m.get('PaymentAttempt') as Model<PaymentAttemptDocument>,
+        ReturnProofRoute: m.get('ReturnProofRoute') as unknown as Model<ReturnProofRouteDocument>,
       };
       if (m.has('Subscription')) models.Subscription = m.get('Subscription') as Model<SubscriptionDocument>;
       if (m.has('Settlement')) models.Settlement = m.get('Settlement') as Model<SettlementDocument>;

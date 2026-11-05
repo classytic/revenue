@@ -97,7 +97,8 @@ export function buildPaymentAttemptSchema(config: RevenueSchemaConfig): Schema<P
 
   const schema = new Schema<PaymentAttemptDocument>(fields as any, { timestamps: true });
 
-  // A return proves ownership before tenant discovery; keep this digest lookup globally unique.
+  // Unique per tenant (the tenant field is prepended on a scoped engine). The tenant is discovered from
+  // `revenue_return_proof_routes`, so this index no longer has to be global.
   schema.index({ 'returnProof.digest': 1 }, {
     unique: true, name: 'attempt_return_proof_str',
     partialFilterExpression: { 'returnProof.digest': { $gte: '' } },

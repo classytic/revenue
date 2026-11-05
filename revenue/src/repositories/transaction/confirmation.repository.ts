@@ -29,15 +29,21 @@ export abstract class TransactionConfirmationRepository extends TransactionRefun
       || !['success', 'failure', 'cancel'].includes(input.status)) throw new PaymentReturnRejectedError();
     const attempts = this.deps.paymentAttempts;
     if (!attempts) throw new ConfigurationError('PaymentAttempt repository is not wired.');
-    // This one proof-bound lookup discovers the owner; every subsequent read/write is scoped.
+    // The routing directory discovers the owner from the proof; every read and write after it is scoped.
+    const routes = this.deps.returnProofRoutes;
+    if (!routes) throw new ConfigurationError('Return-proof route store is not wired.');
+    const digest = returnProofDigest(input.provider, input.paymentId, input.token);
+    const route = await routes.find(digest);
+    if (!route || (this.deps.tenantScopeEnabled && !route.organizationId)
+      || (ctx.organizationId && ctx.organizationId !== route.organizationId)) throw new PaymentReturnRejectedError();
+    const routed: RevenueContext = route.organizationId ? { organizationId: route.organizationId } : {};
     const attempt = await attempts.getByQuery({
       operation: 'create-intent', provider: input.provider,
-      'returnProof.digest': returnProofDigest(input.provider, input.paymentId, input.token),
+      'returnProof.digest': digest,
       'returnProof.expiresAt': { $gt: new Date() },
-    }, { bypassTenant: true, throwOnNotFound: false, select: '+returnProof' });
+    }, this.optsFromCtx(routed, { throwOnNotFound: false, select: '+returnProof' }));
     const proof = attempt?.returnProof;
-    if (!attempt || !proof || (this.deps.tenantScopeEnabled && !proof.organizationId)
-      || (ctx.organizationId && ctx.organizationId !== proof.organizationId)) throw new PaymentReturnRejectedError();
+    if (!attempt || !proof || (route.organizationId && proof.organizationId !== route.organizationId)) throw new PaymentReturnRejectedError();
     const owner: RevenueContext = {
       ...(proof.organizationId ? { organizationId: proof.organizationId } : {}),
       ...(ctx.actorId ? { actorId: ctx.actorId } : {}),

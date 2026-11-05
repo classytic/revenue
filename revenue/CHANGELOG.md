@@ -3,6 +3,14 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.16.0 — 2026-11-06
+
+### Changed - every revenue collection is shardable by tenant
+
+- ⚠ `revenue_transactions`: on a field-scoped engine the `publicId` unique index is now `transaction_public_id_identity` = `{ <tenantField>, publicId }` instead of the global `publicId_str` (unscoped engines keep `publicId_str`). Public ids are minted randomly and nothing looks a transaction up by `publicId` without a tenant.
+- ⚠ Browser returns resolve their owner through a new routing directory, `revenue_return_proof_routes` (model `ReturnProofRoute`): `_id` is the credential digest, with the owning tenant and a TTL on `expiresAt`. It is deliberately not tenant-scoped, holds a hash and an owner id only, and is written before the attempt row, so an orphan just expires. `confirmReturn` reads the directory, then reads the attempt with normal tenant scope: the `bypassTenant` read is gone, and `attempt_return_proof_str` is now unique per tenant instead of global. Run `syncIndexes()` to drop the old global indexes. Return credentials issued before this release have no directory row and are rejected, so let in-flight checkouts expire (they are short-lived) before upgrading.
+- Verified on a real sharded cluster: all of `revenue_transactions`, `revenue_payment_attempts` and `revenue_subscriptions` shard by `{ organizationId: 1 }` (one of three before). The directory shards on `{ _id: 'hashed' }` if it ever needs to. `tests/unit/tenant-prefixed-uniques.test.ts` fails if any unique index loses the tenant prefix.
+
 ## 2.15.0 — 2026-11-04
 
 ### Changed — peer floors to the latest published

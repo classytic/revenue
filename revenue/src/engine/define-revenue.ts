@@ -46,6 +46,7 @@ import {
 } from '../providers/bank-feed.js';
 import { InProcessRevenueBus } from '../events/in-process-bus.js';
 import { assertRevenueCapabilities, RevenueCapabilityError } from './ensure-ready.js';
+import { createReturnProofRouteStore } from '../providers/return-proof-routes.js';
 import type { RevenueBridges } from '../bridges/revenue-bridges.js';
 import type {
   BankFeedModuleConfig,
@@ -435,6 +436,7 @@ export function defineRevenue(shape: RevenueShape = {}): RevenueBlueprint {
         // Phase 3: the per-attempt durable record written before provider I/O — the SINGLE
         // persistence path (scoped, CAS-capable). All attempt writes go through it.
         paymentAttempts: repositories.paymentAttempt,
+        returnProofRoutes: createReturnProofRouteStore(models.ReturnProofRoute),
       });
 
       repositories.paymentAttempt.inject({

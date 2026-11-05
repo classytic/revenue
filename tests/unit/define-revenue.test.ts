@@ -45,17 +45,17 @@ describe('defineRevenue — describe is pure', () => {
     expect(mongoose.models.Settlement).toBe(before.Settlement);
   });
 
-  it('exposes model names without a connection (Transaction + PaymentAttempt + Subscription by default)', () => {
+  it('exposes model names without a connection (Transaction + PaymentAttempt + ReturnProofRoute + Subscription by default)', () => {
     const bp = defineRevenue({ scope: false });
     expect(Array.isArray(bp.modelNames)).toBe(true);
-    expect(bp.modelNames).toEqual(['Transaction', 'PaymentAttempt', 'Subscription']);
+    expect(bp.modelNames).toEqual(['Transaction', 'PaymentAttempt', 'Subscription', 'ReturnProofRoute']);
   });
 });
 
 describe('defineRevenue — optional models gate on their module (invariant §11.10)', () => {
   it('omits Subscription when the module is off', () => {
     const bp = defineRevenue({ scope: false, modules: { subscription: false } });
-    expect(bp.modelNames).toEqual(['Transaction', 'PaymentAttempt']);
+    expect(bp.modelNames).toEqual(['Transaction', 'PaymentAttempt', 'ReturnProofRoute']);
     const engine = bp.bind(freshConnection(), RUNTIME);
     expect(engine.models.Subscription).toBeUndefined();
     expect(engine.repositories.subscription).toBeUndefined();

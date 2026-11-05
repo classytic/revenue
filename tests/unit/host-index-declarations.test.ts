@@ -53,11 +53,13 @@ describe('host extraIndexes', () => {
     expect(byName(stl, 'host_stl_by_recipient')).toEqual(['organizationId', 'recipientId']);
   });
 
-  it("the kernel's own global indexes are still unscoped beside a host's", () => {
+  it("the kernel's remaining global indexes stay unscoped beside a host's", () => {
     const engine = defineRevenue({ scope: { fieldType: 'objectId' } }).bind(mongoose.createConnection(), RUNTIME);
     const txn = engine.models.Transaction.schema.indexes() as IndexEntry[];
     const keysOf = (fields: Record<string, unknown>) => Object.keys(fields).join(',');
-    expect(txn.find(([fields]) => keysOf(fields) === 'publicId')).toBeDefined();
+    // A public id is the TENANT's too: unique per tenant, so the collection can be sharded by tenant.
+    expect(txn.find(([fields]) => keysOf(fields) === 'publicId')).toBeUndefined();
+    expect(txn.find(([fields]) => keysOf(fields) === 'organizationId,publicId')).toBeDefined();
     expect(txn.find(([fields]) => keysOf(fields) === 'gateway.paymentIntentId')).toBeDefined();
     // A caller's idempotency key is the TENANT's — never unique across tenants.
     expect(txn.find(([fields]) => keysOf(fields) === 'idempotencyKey')).toBeUndefined();

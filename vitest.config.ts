@@ -1,5 +1,10 @@
+import { availableParallelism } from 'node:os';
 import { defineConfig } from 'vitest/config';
 import path from 'path';
+
+// Workers default to the CPU count (28 cores is ~3 GB of node processes). Cap at 4, fewer on a small host;
+// override with VITEST_MAX_WORKERS. (`poolOptions` is ignored by Vitest 4+, `maxWorkers` is the cap.)
+const maxWorkers = Number(process.env.VITEST_MAX_WORKERS ?? Math.min(4, Math.max(1, availableParallelism() - 1)));
 
 export default defineConfig({
   resolve: {
@@ -15,6 +20,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    maxWorkers,
     /**
      * BOTH the workspace suite and each sub-package's own tests.
      *

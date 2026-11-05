@@ -53,7 +53,7 @@ describeKernelConformance<RevenueBlueprint, RevenueEngine>({
   // and Settlement defaults OFF (src/models/create-models.ts). Pinning it here is what makes
   // a default flip — the kind that silently changes which collections a deployment owns —
   // a failing test rather than a surprise in production.
-  expectedModelNames: ['Transaction', 'PaymentAttempt', 'Subscription'],
+  expectedModelNames: ['Transaction', 'PaymentAttempt', 'ReturnProofRoute', 'Subscription'],
   moduleExports: kernel,
 
   // §11.10 — revenue genuinely gates REGISTRATION, not just materialisation: with

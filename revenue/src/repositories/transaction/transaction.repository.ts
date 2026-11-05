@@ -386,6 +386,11 @@ export class TransactionRepository extends TransactionConfirmationRepository {
       if (intent.returnProof) {
         try {
           const returnProof = storedReturnProof(intent, intentStartedAt, ctx.organizationId);
+          // Route first: an orphaned route (the attempt write below fails) just expires; the reverse order
+          // would leave a checkout URL whose return can never find its owner.
+          const routes = this.deps.returnProofRoutes;
+          if (!returnProof || !routes) throw new ConfigurationError('Return-proof route store is not wired.');
+          await routes.put({ digest: returnProof.digest, expiresAt: returnProof.expiresAt, ...(returnProof.organizationId ? { organizationId: returnProof.organizationId } : {}) });
           const saved = await attemptRepo.update(String(createAttemptId), { returnProof }, this.optsFromCtx(ctx));
           if (!saved) throw new ConfigurationError('Payment return credential was not persisted.');
         } catch {
