@@ -3,6 +3,12 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.16.1 — 2026-11-07
+
+### Changed - peer floors `@classytic/mongokit >=3.45.0`, `@classytic/primitives >=0.37.0`
+
+mongokit 3.45 sends time bounds as server-side `maxTimeMS`; on mongoose 9.12 (this package's floor) the MongoDB driver 7.8 ignores `timeoutMS`, so under mongokit 3.44 every bound was silently lost. A host must not pass `timeoutMS` to `mongoose.connect()`. No kernel behaviour changed; the suite passes on mongokit 3.45 and primitives 0.37.
+
 ## 2.16.0 — 2026-11-06
 
 ### Changed - every revenue collection is shardable by tenant

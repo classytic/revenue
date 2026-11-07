@@ -21,5 +21,12 @@ describe('manual payment instructions amount', () => {
     expect(formatInstructionAmount(287615, 'BDT')).toBe('2,876.15');
     expect(formatInstructionAmount(150000, 'JPY')).toBe('150,000');
     expect(formatInstructionAmount(1234567, 'KWD')).toBe('1,234.567');
+    expect(formatInstructionAmount(-1050, 'USD')).toBe('-10.50');
+  });
+
+  it('an unknown currency throws instead of printing a two-decimal guess', () => {
+    for (const code of ['ZZZ', 'jpy', '']) {
+      expect(() => formatInstructionAmount(1000, code)).toThrow(/unknown currency/i);
+    }
   });
 });

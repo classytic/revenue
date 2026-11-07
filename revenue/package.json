@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue",
-  "version": "2.16.0",
+  "version": "2.16.1",
   "description": "Payment lifecycle engine — transactions, subscriptions, escrow, settlements, commissions. MongoKit-powered, Arc-compatible, framework-agnostic.",
   "type": "module",
   "sideEffects": false,
@@ -103,8 +103,8 @@
     "LICENSE"
   ],
   "peerDependencies": {
-    "@classytic/mongokit": ">=3.44.0",
-    "@classytic/primitives": ">=0.36.0",
+    "@classytic/mongokit": ">=3.45.0",
+    "@classytic/primitives": ">=0.37.0",
     "@classytic/repo-core": ">=0.38.0",
     "@classytic/tax-core": ">=0.6.0",
     "@classytic/validation": ">=0.6.0",
@@ -116,9 +116,9 @@
   },
   "devDependencies": {
     "@classytic/dev-tools": "^0.2.1",
-    "@classytic/mongokit": "^3.44.0",
+    "@classytic/mongokit": "^3.45.0",
     "@classytic/revenue-manual": "^1.0.1",
-    "@classytic/primitives": "^0.36.0",
+    "@classytic/primitives": "^0.37.0",
     "@classytic/repo-core": "^0.38.0",
     "@classytic/tax-core": ">=0.6.0",
     "@classytic/validation": ">=0.6.0",

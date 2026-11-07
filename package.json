@@ -49,8 +49,8 @@
   },
   "devDependencies": {
     "@classytic/dev-tools": "^0.2.1",
-    "@classytic/mongokit": "^3.44.0",
-    "@classytic/primitives": "^0.36.0",
+    "@classytic/mongokit": "^3.45.0",
+    "@classytic/primitives": "^0.37.0",
     "@classytic/repo-core": "^0.38.0",
     "@vitest/coverage-v8": "^5.1.0",
     "mongodb-memory-server": "^11.3.0",

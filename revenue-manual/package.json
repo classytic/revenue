@@ -1,6 +1,6 @@
 {
   "name": "@classytic/revenue-manual",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Manual payment provider for @classytic/revenue - Reference implementation",
   "type": "module",
   "sideEffects": false,
@@ -51,11 +51,11 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@classytic/primitives": ">=0.36.0",
+    "@classytic/primitives": ">=0.37.0",
     "@classytic/revenue": ">=2.15.0"
   },
   "devDependencies": {
-    "@classytic/primitives": "^0.36.0",
+    "@classytic/primitives": "^0.37.0",
     "publint": "^0.3.25",
     "tsdown": "^0.23.5",
     "typescript": "^7.0.2",

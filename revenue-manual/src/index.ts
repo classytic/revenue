@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { currencyCode, minorUnitFactor } from '@classytic/primitives/currency';
+import { currencyCode } from '@classytic/primitives/currency';
 import { formatMinorUnits } from '@classytic/primitives/money';
 import type { CurrencyCode } from '@classytic/primitives/currency';
 import { ProviderStatusUnavailableError } from '@classytic/primitives/payment-gateway';
@@ -311,8 +311,7 @@ export class ManualProvider implements PaymentProviderPort, DefaultCurrencyAware
  * `formatInstructionAmount(685000, 'BDT')` is `"6,850.00"`; the integer is never printed raw.
  */
 export function formatInstructionAmount(minor: number, currency: string): string {
-  const decimals = Math.round(Math.log10(minorUnitFactor(currency)));
-  const [whole = '0', fraction] = formatMinorUnits(Math.abs(minor), decimals).split('.');
+  const [whole = '0', fraction] = formatMinorUnits(Math.abs(minor), currency).split('.');
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return `${minor < 0 ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
 }

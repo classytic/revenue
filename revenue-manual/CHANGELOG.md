@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 — 2026-11-07
+
+### Changed - peer `@classytic/primitives >=0.37.0` (the exponent read below needs it)
+
+### ⚠ Changed — `formatInstructionAmount` throws for an unknown currency
+
+It reads the exponent through `formatMinorUnits(minor, currency)` (`@classytic/primitives` Unreleased), which throws `UnknownCurrencyError` for a code that is not ISO 4217; before, `minorUnitFactor` assumed two decimals for it. Peer floor: the `@classytic/primitives` release that ships `currencyExponent`.
+
 ## 1.1.0 — 2026-11-04
 
 ### Added — the provider declares an idempotent create
