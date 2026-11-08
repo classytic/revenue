@@ -37,6 +37,15 @@ describeKernelConformance<RevenueBlueprint, RevenueEngine>({
 
   connect: async () => mongoose.createConnection(),
 
+  // Tenancy ON: every unique index must lead with the tenant field (scale decision D7).
+  tenantUniques: {
+    tenantField: 'organizationId',
+    bindScoped: (connection) =>
+      kernel
+        .defineRevenue({ scope: { enabled: true, fieldType: 'string' }, autoIndex: false })
+        .bind(connection, { defaultCurrency: 'USD', allowNonTransactional: true, logger: silentLogger }),
+  },
+
   // These connections are never opened, so mongokit cannot OBSERVE transaction support and
   // reports it unknown — which revenue's boot gate (correctly) refuses. Every check here is
   // registry-level, so accepting the degradation explicitly is the honest way to say "no

@@ -7,7 +7,8 @@
   "workspaces": [
     "revenue",
     "revenue-manual",
-    "revenue-stripe"
+    "revenue-stripe",
+    "revenue-bd"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
@@ -49,7 +50,7 @@
   },
   "devDependencies": {
     "@classytic/dev-tools": "^0.2.1",
-    "@classytic/mongokit": "^3.45.0",
+    "@classytic/mongokit": "^3.46.0",
     "@classytic/primitives": "^0.37.0",
     "@classytic/repo-core": "^0.38.0",
     "@vitest/coverage-v8": "^5.1.0",

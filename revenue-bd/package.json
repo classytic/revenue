@@ -1,0 +1,32 @@
+{
+  "name": "@classytic/revenue-bd",
+  "version": "0.1.0",
+  "description": "Bangladesh payment adapters over the Classytic payment-gateway port, isolated by provider subpath.",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "engines": { "node": ">=22.18.0" },
+  "files": ["dist", "README.md"],
+  "exports": {
+    "./bkash": {
+      "types": "./dist/bkash/index.d.mts",
+      "default": "./dist/bkash/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build && npm run check:bundle"
+  },
+  "peerDependencies": { "@classytic/primitives": ">=0.35.0" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "publint": "^0.3.23",
+    "tsdown": "0.23.4",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
+  }
+}
